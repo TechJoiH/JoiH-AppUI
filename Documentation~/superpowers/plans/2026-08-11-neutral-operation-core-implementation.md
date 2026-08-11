@@ -195,7 +195,7 @@ public void RequestCancellation_SignalsOperationToken_BeforeTerminalCompletion()
 Run:
 
 ```powershell
-& 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' -batchmode -nographics -projectPath 'D:\UGit\JoiH-AppUI-Lab\UnityTestProject' -runTests -testPlatform EditMode -testFilter 'Joi.H.AppUI.Tests.AppUIOperationContractTests' -testResults 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-task1-red.xml' -logFile 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-task1-red.log' -quit
+& 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' -batchmode -nographics -projectPath 'D:\UGit\JoiH-AppUI-Lab\UnityTestProject' -runTests -testPlatform EditMode -testFilter 'Joi.H.AppUI.Tests.AppUIOperationContractTests' -testResults 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-task1-red.xml' -logFile 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-task1-red.log'
 ```
 
 Expected: compilation fails because `IUIOperationSource<>`, `AppUIOperationDescriptor` and related Core types do not yet exist.
@@ -877,7 +877,7 @@ Expected: no matches. Then run `git diff --check`.
 - [ ] **Step 2: Run full EditMode tests**
 
 ```powershell
-& 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' -batchmode -nographics -projectPath 'D:\UGit\JoiH-AppUI-Lab\UnityTestProject' -runTests -testPlatform EditMode -testResults 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-editmode.xml' -logFile 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-editmode.log' -quit
+& 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' -batchmode -nographics -projectPath 'D:\UGit\JoiH-AppUI-Lab\UnityTestProject' -runTests -testPlatform EditMode -testResults 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-editmode.xml' -logFile 'D:\UGit\JoiH-AppUI-Lab\extraction\neutral-operation-editmode.log'
 ```
 
 Expected: all tests pass, zero compilation errors.

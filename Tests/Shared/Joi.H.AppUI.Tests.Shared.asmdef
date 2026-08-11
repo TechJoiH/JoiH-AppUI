@@ -1,11 +1,8 @@
 {
-  "name": "Joi.H.AppUI.Tests.Runtime",
+  "name": "Joi.H.AppUI.Tests.Shared",
   "rootNamespace": "Joi.H.AppUI.Tests",
   "references": [
-    "Joi.H.AppUI.Core",
-    "Joi.H.AppUI.Runtime",
-    "Joi.H.AppUI.Tests.Shared",
-    "UniTask"
+    "Joi.H.AppUI.Core"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"
