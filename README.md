@@ -342,7 +342,3 @@ Samples~/Basic Integration/SampleAppUIInstaller.cs
 - [接入与资源适配](Documentation~/integration.md)
 - [Binding 工作流](Documentation~/binding-workflow.md)
 - [验证与发布门禁](Documentation~/validation.md)
-
-## UniTask 为什么被保留
-
-UniTask 提供与 Unity PlayerLoop 集成的低分配 `async`/`await`。AppUI 使用它处理页面加载、显示/隐藏动画、串行操作、取消检查以及异步打开和关闭流程，避免把运行时调度强制建立在标准 `Task` 上。
