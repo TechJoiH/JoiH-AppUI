@@ -1,0 +1,17 @@
+{
+  "name": "Joi.H.AppUI.Samples.Basic",
+  "rootNamespace": "Joi.H.AppUI.Samples.Basic",
+  "references": [
+    "Joi.H.AppUI.Runtime",
+    "UniTask"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
