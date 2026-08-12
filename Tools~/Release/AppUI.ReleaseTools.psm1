@@ -958,9 +958,50 @@ function Invoke-AppUIProcess {
 
     $resolvedFile = (Get-Command $FilePath -ErrorAction Stop).Source
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $escapedArguments = @(
+        foreach ($argument in $ArgumentList) {
+            $value = if ($null -eq $argument) { '' } else { [string]$argument }
+            if ($value -notmatch '[\s"]') {
+                $value
+                continue
+            }
+
+            $builder = New-Object System.Text.StringBuilder
+            [void]$builder.Append('"')
+            $backslashCount = 0
+            for ($index = 0; $index -lt $value.Length; $index++) {
+                $character = $value[$index]
+                if ($character -eq '\') {
+                    $backslashCount++
+                    continue
+                }
+
+                if ($character -eq '"') {
+                    [void]$builder.Append(('\' * ($backslashCount * 2 + 1)))
+                    [void]$builder.Append('"')
+                    $backslashCount = 0
+                    continue
+                }
+
+                if ($backslashCount -gt 0) {
+                    [void]$builder.Append(('\' * $backslashCount))
+                    $backslashCount = 0
+                }
+
+                [void]$builder.Append($character)
+            }
+
+            if ($backslashCount -gt 0) {
+                [void]$builder.Append(('\' * ($backslashCount * 2)))
+            }
+
+            [void]$builder.Append('"')
+            $builder.ToString()
+        }
+    )
     $process = Start-Process `
         -FilePath $resolvedFile `
-        -ArgumentList $ArgumentList `
+        -ArgumentList $escapedArguments `
         -PassThru `
         -WindowStyle Hidden
     $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
@@ -1037,6 +1078,148 @@ function Invoke-AppUIUnityProcess {
     }
 }
 
+function Test-AppUIBuildEnvironment {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UnityPath,
+
+        [string]$ExpectedUnityVersion = '6000.0.25f1',
+
+        [string]$VsWherePath = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe',
+
+        [AllowEmptyString()]
+        [string]$UnityVersionOverride = '',
+
+        [AllowEmptyString()]
+        [string]$VsInstallationPathOverride = '',
+
+        [switch]$DisableVsWhereDiscovery
+    )
+
+    $resolvedUnity = [System.IO.Path]::GetFullPath($UnityPath)
+    $unityVersion = $UnityVersionOverride
+    if (-not (Test-Path -LiteralPath $resolvedUnity -PathType Leaf)) {
+        return [PSCustomObject][ordered]@{
+            schemaVersion = 'appui-build-environment.v1'
+            gate = 'IL2CPP'
+            Status = 'Blocked'
+            Reason = 'UnityNotFound'
+            UnityVersion = ''
+            ExpectedUnityVersion = $ExpectedUnityVersion
+            VsInstallationPath = ''
+            VcVarsPath = ''
+            Details = "Unity executable does not exist: $resolvedUnity"
+            checkedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($unityVersion)) {
+        $productVersion = [string](Get-Item -LiteralPath $resolvedUnity).VersionInfo.ProductVersion
+        $versionMatch = [regex]::Match($productVersion, '^(?<version>\d+\.\d+\.\d+[fp]\d+)')
+        if ($versionMatch.Success) {
+            $unityVersion = $versionMatch.Groups['version'].Value
+        }
+    }
+
+    if ($unityVersion -ne $ExpectedUnityVersion) {
+        return [PSCustomObject][ordered]@{
+            schemaVersion = 'appui-build-environment.v1'
+            gate = 'IL2CPP'
+            Status = 'Blocked'
+            Reason = 'UnityVersionMismatch'
+            UnityVersion = $unityVersion
+            ExpectedUnityVersion = $ExpectedUnityVersion
+            VsInstallationPath = ''
+            VcVarsPath = ''
+            Details = "Unity version mismatch. Expected=$ExpectedUnityVersion Actual=$unityVersion"
+            checkedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+    }
+
+    $vsInstallationPath = $VsInstallationPathOverride
+    $usingOverride = -not [string]::IsNullOrWhiteSpace($VsInstallationPathOverride)
+    if (-not $usingOverride -and -not $DisableVsWhereDiscovery) {
+        $resolvedVsWhere = [System.IO.Path]::GetFullPath($VsWherePath)
+        if (Test-Path -LiteralPath $resolvedVsWhere -PathType Leaf) {
+            $vsOutput = & $resolvedVsWhere `
+                -version '[17.0,18.0)' `
+                -products * `
+                -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                -property installationPath 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $vsInstallationPath = @($vsOutput | Where-Object {
+                    -not [string]::IsNullOrWhiteSpace([string]$_)
+                } | Select-Object -First 1)
+                if ($vsInstallationPath.Count -gt 0) {
+                    $vsInstallationPath = [string]$vsInstallationPath[0]
+                }
+                else {
+                    $vsInstallationPath = ''
+                }
+            }
+        }
+    }
+
+    $vcVarsPath = if ([string]::IsNullOrWhiteSpace($vsInstallationPath)) {
+        ''
+    } else {
+        Join-Path $vsInstallationPath 'VC\Auxiliary\Build\vcvars64.bat'
+    }
+    if ([string]::IsNullOrWhiteSpace($vsInstallationPath) -or
+        -not (Test-Path -LiteralPath $vcVarsPath -PathType Leaf)) {
+        return [PSCustomObject][ordered]@{
+            schemaVersion = 'appui-build-environment.v1'
+            gate = 'IL2CPP'
+            Status = 'Blocked'
+            Reason = 'MissingToolchain'
+            UnityVersion = $unityVersion
+            ExpectedUnityVersion = $ExpectedUnityVersion
+            VsInstallationPath = $vsInstallationPath
+            VcVarsPath = $vcVarsPath
+            Details = 'Visual Studio 2022 C++ Build Tools with vcvars64.bat were not found.'
+            checkedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+    }
+
+    if (-not $usingOverride -and -not $DisableVsWhereDiscovery) {
+        $probeCommand = 'call "' + $vcVarsPath + '" >nul && ' +
+            'if not defined WindowsSdkDir exit /b 3 && ' +
+            'where cl.exe >nul && where link.exe >nul && where rc.exe >nul'
+        $probe = Invoke-AppUIProcess `
+            -FilePath 'cmd.exe' `
+            -ArgumentList @('/d', '/s', '/c', $probeCommand) `
+            -TimeoutSeconds 30
+        if ($probe.Status -ne 'Passed') {
+            return [PSCustomObject][ordered]@{
+                schemaVersion = 'appui-build-environment.v1'
+                gate = 'IL2CPP'
+                Status = 'Blocked'
+                Reason = 'ToolchainProbeFailed'
+                UnityVersion = $unityVersion
+                ExpectedUnityVersion = $ExpectedUnityVersion
+                VsInstallationPath = $vsInstallationPath
+                VcVarsPath = $vcVarsPath
+                Details = "vcvars64.bat did not expose cl.exe, link.exe, rc.exe and WindowsSdkDir. ExitCode=$($probe.ExitCode)"
+                checkedAtUtc = [DateTime]::UtcNow.ToString('o')
+            }
+        }
+    }
+
+    return [PSCustomObject][ordered]@{
+        schemaVersion = 'appui-build-environment.v1'
+        gate = 'IL2CPP'
+        Status = 'Passed'
+        Reason = 'None'
+        UnityVersion = $unityVersion
+        ExpectedUnityVersion = $ExpectedUnityVersion
+        VsInstallationPath = $vsInstallationPath
+        VcVarsPath = $vcVarsPath
+        Details = 'Unity and Visual Studio 2022 C++ toolchain preflight passed.'
+        checkedAtUtc = [DateTime]::UtcNow.ToString('o')
+    }
+}
+
 function Get-AppUIJsonEvidenceGate {
     [CmdletBinding()]
     param(
@@ -1109,6 +1292,9 @@ function New-AppUIReleaseReport {
         [Parameter(Mandatory = $true)]
         [string]$PlannedTag,
 
+        [ValidateSet('PreTag', 'Formal')]
+        [string]$Mode = 'PreTag',
+
         [AllowEmptyString()]
         [string]$ResolvedTag = '',
 
@@ -1136,6 +1322,16 @@ function New-AppUIReleaseReport {
     $expectedTag = 'v' + $ExpectedPackageVersion
     if ($PlannedTag -ne $expectedTag) {
         throw "Release report plannedTag mismatch. Expected=$expectedTag Actual=$PlannedTag"
+    }
+
+    if ($Mode -eq 'PreTag' -and
+        -not [string]::IsNullOrWhiteSpace($ResolvedTag)) {
+        throw "PreTag release report must not resolve a tag."
+    }
+
+    if ($Mode -eq 'Formal' -and
+        [string]::IsNullOrWhiteSpace($ResolvedTag)) {
+        throw "Formal release report requires ResolvedTag."
     }
 
     if (-not [string]::IsNullOrWhiteSpace($ResolvedTag) -and
@@ -1173,23 +1369,32 @@ function New-AppUIReleaseReport {
         $unityVersion = [string]$bindingDocument.unityVersion
     }
 
-    $allRequiredPassed = @(
+    $requiredStatuses = @(
         $editMode.Status,
         $playMode.Status,
         $binding.status,
         $mono.status,
         $il2cpp.status
-    ) -notcontains 'Failed' -and @(
-        $editMode.Status,
-        $playMode.Status,
-        $binding.status,
-        $mono.status,
-        $il2cpp.status
-    ) -notcontains 'NotRun'
+    )
+    if ($Mode -eq 'Formal') {
+        $requiredStatuses += @(
+            $commitSmoke.status,
+            $tagSmoke.status
+        )
+    }
+    $overallStatus = if ($requiredStatuses -contains 'Failed') {
+        'Failed'
+    } elseif ($requiredStatuses -contains 'Blocked' -or
+              $requiredStatuses -contains 'NotRun') {
+        'Blocked'
+    } else {
+        'Passed'
+    }
 
     $report = [ordered]@{
         schemaVersion = 'appui-release-report.v1'
-        status = if ($allRequiredPassed) { 'Passed' } else { 'Blocked' }
+        mode = $Mode
+        status = $overallStatus
         repository = [string]$identity.repository
         sourceCommit = [string]$identity.sourceCommit
         sourceTree = [string]$identity.sourceTree
@@ -1394,6 +1599,7 @@ Export-ModuleMember -Function @(
     'Read-AppUINUnit3Result',
     'Invoke-AppUIProcess',
     'Invoke-AppUIUnityProcess',
+    'Test-AppUIBuildEnvironment',
     'New-AppUIReleaseReport',
     'Protect-AppUILog',
     'Test-AppUIArtifactSecrets',

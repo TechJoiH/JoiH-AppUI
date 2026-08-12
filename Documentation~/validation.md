@@ -109,6 +109,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIP
 
 远端 Commit 或 Tag Smoke 使用 `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`。该脚本只接受 TechJoiH 官方仓库的 40 位 Commit 或 SemVer Tag URL。
 
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1 `
+  -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#<commit-or-tag>' `
+  -ExpectedPackageVersion '0.2.0-pre.2' `
+  -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
+  -RunRoot D:\AppUIValidation\git-smoke
+```
+
 ## Passed、Failed 与 Blocked
 
 - `Passed`：当前候选、当前环境和当前步骤存在完整成功证据；
@@ -117,6 +125,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIP
 - `NotRun`：尚未进入该阶段，例如 Tag 创建前的 Tag URL Smoke。
 
 每个 Unity 子进程默认最多运行 120 秒。超时后工具终止该精确进程，当前流水线停止；不得继续后续步骤，也不得用旧候选的结果补齐本次报告。`Blocked` 不是 `Passed`，也不是 `Known Incompatible`。
+
+完整运行前会先验证 Unity 精确版本，并通过 `vswhere.exe` 只接受 Visual Studio 2022（17.x）C++ toolchain。`vcvars64.bat` 必须能暴露 `cl.exe`、`link.exe`、`rc.exe` 与 `WindowsSdkDir`；否则写出 `build-environment.json` 并以 `Blocked/MissingToolchain` 或 `Blocked/ToolchainProbeFailed` 停止。
 
 ## 报告与 Artifact
 
@@ -131,6 +141,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIP
 - 每个 Gate 的证据文件和耗时。
 
 正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再扫描 `ghp_`、`github_pat_`、Authorization Header 和私钥标记；秘密审计失败时不创建 Release。
+
+`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成脱敏且通过秘密审计的 `appui-v0.2.0-pre.2-logs.zip`。候选仓库不接收这些运行产物。
 
 ## 当前 `0.2.0-pre.2` 候选证据
 

@@ -21,6 +21,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PlannedTag,
 
+    [ValidateSet('PreTag', 'Formal')]
+    [string]$Mode = 'PreTag',
+
     [AllowEmptyString()]
     [string]$ResolvedTag = '',
 
@@ -40,5 +43,6 @@ New-AppUIReleaseReport `
     -ExpectedSourceTree $ExpectedSourceTree `
     -ExpectedPackageVersion $ExpectedPackageVersion `
     -PlannedTag $PlannedTag `
+    -Mode $Mode `
     -ResolvedTag $ResolvedTag `
     -RepositoryPath $RepositoryPath | Format-List

@@ -92,7 +92,19 @@ if ($StopAfter -eq 'Snapshot') {
     exit 0
 }
 
+$buildEnvironment = Test-AppUIBuildEnvironment `
+    -UnityPath $UnityPath `
+    -ExpectedUnityVersion '6000.0.25f1'
+$buildEnvironment | ConvertTo-Json -Depth 6 | Set-Content `
+    -LiteralPath (Join-Path $evidenceRoot 'build-environment.json') `
+    -Encoding UTF8
+if ($buildEnvironment.Status -ne 'Passed') {
+    throw "Build environment is blocked. Gate=$($buildEnvironment.gate) Reason=$($buildEnvironment.Reason). $($buildEnvironment.Details)"
+}
+
 $consumerRoot = Join-Path $resolvedRunRoot 'consumer'
+$logRoot = Join-Path $resolvedRunRoot 'logs'
+[System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
 New-AppUIConsumerWorkspace `
     -TemplatePath (Join-Path $snapshot.PackageRoot 'Validation~\Unity6000.0Consumer') `
     -DestinationPath $consumerRoot `
@@ -106,7 +118,7 @@ function Invoke-Gate {
     $result = Invoke-AppUIUnityProcess `
         -UnityPath $UnityPath `
         -ProjectPath $consumerRoot `
-        -LogFile (Join-Path $evidenceRoot ($Name + '.log')) `
+        -LogFile (Join-Path $logRoot ($Name + '.log')) `
         -Arguments $Arguments `
         -TimeoutSeconds $TimeoutSeconds
     if ($result.Status -ne 'Passed') {
@@ -164,6 +176,21 @@ if ((Test-Path -LiteralPath (Join-Path $evidenceRoot 'editmode.xml')) -and
         -ExpectedSourceTree $identity.SourceTree `
         -ExpectedPackageVersion $identity.PackageVersion `
         -PlannedTag $PlannedTag | Out-Null
+}
+
+if (Test-Path -LiteralPath $logRoot -PathType Container) {
+    Test-AppUIArtifactSecrets `
+        -Path $logRoot `
+        -ThrowOnSecret | Out-Null
+    $userProfilePath = [Environment]::GetFolderPath(
+        [Environment+SpecialFolder]::UserProfile)
+    New-AppUISanitizedLogArchive `
+        -InputDirectory $logRoot `
+        -OutputArchive (Join-Path $evidenceRoot (
+            'appui-' + $PlannedTag + '-logs.zip')) `
+        -RepositoryPath $resolvedRepository `
+        -ConsumerPath $consumerRoot `
+        -UserProfilePath $userProfilePath | Out-Null
 }
 
 if ($null -ne $pipelineFailure) {

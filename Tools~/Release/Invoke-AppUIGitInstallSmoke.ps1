@@ -1,19 +1,18 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$RepositoryPath,
-
-    [Parameter(Mandatory = $true)]
-    [string]$SourceCommit,
-
-    [Parameter(Mandatory = $true)]
     [string]$PackageReference,
 
     [Parameter(Mandatory = $true)]
     [string]$UnityPath,
 
     [Parameter(Mandatory = $true)]
+    [string]$ExpectedPackageVersion,
+
+    [Parameter(Mandatory = $true)]
     [string]$RunRoot,
+
+    [string]$RepositoryPath = (Get-Location).Path,
 
     [ValidateRange(1, 86400)]
     [int]$TimeoutSeconds = 120
@@ -27,6 +26,8 @@ Import-Module $modulePath -Force
 if ($PackageReference -notmatch '^https://github\.com/TechJoiH/JoiH-AppUI\.git#(?:[0-9a-f]{40}|v[0-9A-Za-z][0-9A-Za-z.+-]*)$') {
     throw "Git install smoke only accepts an immutable AppUI commit SHA or SemVer tag URL."
 }
+$sourceRef = $PackageReference.Substring(
+    $PackageReference.LastIndexOf('#') + 1)
 
 $resolvedRunRoot = [System.IO.Path]::GetFullPath($RunRoot)
 if (Test-Path -LiteralPath $resolvedRunRoot) {
@@ -36,8 +37,11 @@ if (Test-Path -LiteralPath $resolvedRunRoot) {
 [System.IO.Directory]::CreateDirectory($resolvedRunRoot) | Out-Null
 $snapshot = Export-AppUICandidateSnapshot `
     -RepositoryPath $RepositoryPath `
-    -SourceRef $SourceCommit `
+    -SourceRef $sourceRef `
     -DestinationPath (Join-Path $resolvedRunRoot 'snapshot')
+if ($snapshot.PackageVersion -ne $ExpectedPackageVersion) {
+    throw "Git smoke package version mismatch. Expected=$ExpectedPackageVersion Actual=$($snapshot.PackageVersion)"
+}
 $evidenceRoot = Join-Path $resolvedRunRoot 'evidence'
 $consumerRoot = Join-Path $resolvedRunRoot 'consumer'
 [System.IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
@@ -46,7 +50,7 @@ New-AppUIConsumerWorkspace `
     -DestinationPath $consumerRoot `
     -PackageReference $PackageReference | Out-Null
 
-$env:APPUI_EXPECTED_PACKAGE_VERSION = $snapshot.PackageVersion
+$env:APPUI_EXPECTED_PACKAGE_VERSION = $ExpectedPackageVersion
 $env:APPUI_VALIDATION_OUTPUT = $evidenceRoot
 function Invoke-SmokeUnityStep {
     param([string]$Name, [string[]]$Arguments)

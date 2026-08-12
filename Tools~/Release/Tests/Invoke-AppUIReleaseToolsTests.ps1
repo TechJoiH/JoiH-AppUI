@@ -514,6 +514,58 @@ guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 -TimeoutSeconds 1
             Assert-Equal 'Blocked' $result.Status 'Timed out process was not blocked.'
             Assert-True $result.TimedOut 'Timed out process did not report TimedOut.'
+
+            $spaceRoot = Join-Path $testRoot 'process path with spaces'
+            $argumentScript = Join-Path $spaceRoot 'write marker.ps1'
+            $markerPath = Join-Path $spaceRoot 'marker with spaces.txt'
+            Set-Utf8NoBomContent $argumentScript @'
+param([string]$MarkerPath)
+[System.IO.File]::WriteAllText($MarkerPath, 'passed')
+'@
+            $spaceResult = Invoke-AppUIProcess `
+                -FilePath $powershellPath `
+                -ArgumentList @('-NoProfile', '-File', $argumentScript, '-MarkerPath', $markerPath) `
+                -TimeoutSeconds 10
+            Assert-Equal 'Passed' $spaceResult.Status 'Process runner did not preserve arguments with spaces.'
+            Assert-True (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Process argument with spaces did not reach the child.'
+        }
+
+        Invoke-Test 'Unity and VS2022 C++ preflight reports supported and blocked environments' {
+            $preflightRoot = Join-Path $testRoot 'preflight'
+            $unity = Join-Path $preflightRoot 'Unity.exe'
+            $vswhere = Join-Path $preflightRoot 'vswhere.exe'
+            $vsInstall = Join-Path $preflightRoot 'VS2022'
+            Set-Utf8NoBomContent $unity 'fixture'
+            Set-Utf8NoBomContent $vswhere 'fixture'
+            Set-Utf8NoBomContent (Join-Path $vsInstall 'VC\Auxiliary\Build\vcvars64.bat') '@echo off'
+
+            $blocked = Test-AppUIBuildEnvironment `
+                -UnityPath $unity `
+                -ExpectedUnityVersion '6000.0.25f1' `
+                -UnityVersionOverride '6000.0.25f1' `
+                -VsWherePath $vswhere `
+                -DisableVsWhereDiscovery
+            Assert-Equal 'Blocked' $blocked.Status 'Missing VS2022 toolchain was not blocked.'
+            Assert-Equal 'MissingToolchain' $blocked.Reason 'Missing VS2022 toolchain reason was wrong.'
+
+            $passed = Test-AppUIBuildEnvironment `
+                -UnityPath $unity `
+                -ExpectedUnityVersion '6000.0.25f1' `
+                -UnityVersionOverride '6000.0.25f1' `
+                -VsWherePath $vswhere `
+                -VsInstallationPathOverride $vsInstall
+            Assert-Equal 'Passed' $passed.Status 'Valid VS2022 fixture was rejected.'
+            Assert-Equal '6000.0.25f1' $passed.UnityVersion 'Unity version was not preserved.'
+            Assert-Equal $vsInstall $passed.VsInstallationPath 'VS2022 path was not preserved.'
+
+            $wrongUnity = Test-AppUIBuildEnvironment `
+                -UnityPath $unity `
+                -ExpectedUnityVersion '6000.0.25f1' `
+                -UnityVersionOverride '6000.0.26f1' `
+                -VsWherePath $vswhere `
+                -VsInstallationPathOverride $vsInstall
+            Assert-Equal 'Blocked' $wrongUnity.Status 'Wrong Unity version was accepted.'
+            Assert-Equal 'UnityVersionMismatch' $wrongUnity.Reason 'Wrong Unity block reason was wrong.'
         }
 
         Invoke-Test 'Release report enforces candidate identity and tag contract' {
@@ -552,6 +604,46 @@ guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                     -ExpectedPackageVersion '1.2.3-test.1' `
                     -PlannedTag 'v1.2.4'
             } 'plannedTag' 'Mismatched planned tag was accepted.'
+
+            Set-Utf8NoBomContent (Join-Path $evidence 'build-windowsil2cpp.json') '{"result":"Failed","totalTimeMs":200}'
+            $failedReport = New-AppUIReleaseReport `
+                -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                -EvidenceRoot $evidence `
+                -OutputPath (Join-Path $evidence 'failed-report.json') `
+                -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                -ExpectedPackageVersion '1.2.3-test.1' `
+                -PlannedTag 'v1.2.3-test.1'
+            Assert-Equal 'Failed' $failedReport.status 'A failed build was mislabeled as Blocked.'
+
+            Set-Utf8NoBomContent (Join-Path $evidence 'build-windowsil2cpp.json') '{"result":"Succeeded","totalTimeMs":200}'
+            $formalRepository = Join-Path $testRoot 'formal-report-repository'
+            $formalCommit = New-SnapshotTestRepository $formalRepository
+            $formalTree = Invoke-TestGit $formalRepository rev-parse "$formalCommit^{tree}"
+            $formalRemote = Join-Path $testRoot 'formal-report-remote.git'
+            Invoke-TestGit $testRoot init --bare $formalRemote | Out-Null
+            Invoke-TestGit $formalRepository remote add origin $formalRemote | Out-Null
+            Invoke-TestGit $formalRepository tag v9.8.7-test.1 $formalCommit | Out-Null
+            Invoke-TestGit $formalRepository push --quiet origin refs/tags/v9.8.7-test.1 | Out-Null
+            $formalEvidence = Join-Path $testRoot 'formal-report-evidence'
+            New-ReleaseEvidenceFixture `
+                -Path $formalEvidence `
+                -SourceCommit $formalCommit `
+                -SourceTree $formalTree `
+                -Version '9.8.7-test.1'
+            Remove-Item -LiteralPath (Join-Path $formalEvidence 'commit-git-install-smoke.json') -Force
+            $formalWithoutSmoke = New-AppUIReleaseReport `
+                -IdentityPath (Join-Path $formalEvidence 'candidate-identity.json') `
+                -EvidenceRoot $formalEvidence `
+                -OutputPath (Join-Path $formalEvidence 'formal-without-smoke.json') `
+                -ExpectedSourceCommit $formalCommit `
+                -ExpectedSourceTree $formalTree `
+                -ExpectedPackageVersion '9.8.7-test.1' `
+                -PlannedTag 'v9.8.7-test.1' `
+                -ResolvedTag 'v9.8.7-test.1' `
+                -RepositoryPath $formalRepository `
+                -Mode Formal
+            Assert-Equal 'Blocked' $formalWithoutSmoke.status 'Formal report passed without Commit/Tag smoke.'
         }
 
         Invoke-Test 'Artifact sanitization redacts paths and rejects secrets' {
@@ -607,13 +699,17 @@ guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 'BindAndValidate',
                 'BuildMono',
                 'BuildIl2Cpp',
-                'New-AppUIReleaseReport'
+                'New-AppUIReleaseReport',
+                'Test-AppUIBuildEnvironment',
+                'build-environment.json',
+                'New-AppUISanitizedLogArchive'
             )) {
                 Assert-True ($preTagText.Contains($token)) "Pre-tag entry point is missing contract token: $token"
             }
 
             $gitSmokeText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Invoke-AppUIGitInstallSmoke.ps1') -Raw -Encoding UTF8
             Assert-True ($gitSmokeText -match '40-character|SemVer') 'Git smoke does not document immutable refs.'
+            Assert-True ($gitSmokeText.Contains('ExpectedPackageVersion')) 'Git smoke public ExpectedPackageVersion parameter is missing.'
             Assert-True ($gitSmokeText.Contains('commit-git-install-smoke.json')) 'Commit smoke output is missing.'
             Assert-True ($gitSmokeText.Contains('tag-git-install-smoke.json')) 'Tag smoke output is missing.'
         }
