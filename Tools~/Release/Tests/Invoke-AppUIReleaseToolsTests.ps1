@@ -1004,6 +1004,8 @@ set "PATH=$toolRoot;%PATH%"
         }
 
         Invoke-Test 'Release entry points expose the documented orchestration contract' {
+            Assert-True ($null -ne (Get-Command Resolve-AppUIRemoteTagIdentity -ErrorAction SilentlyContinue)) `
+                'Tag smoke remote Tag identity command is not exported by the release tools module.'
             foreach ($relativePath in @(
                 '..\Invoke-AppUIPreTagValidation.ps1',
                 '..\Invoke-AppUIGitInstallSmoke.ps1',
@@ -1116,7 +1118,7 @@ set "PATH=$toolRoot;%PATH%"
             $repositoryRoot = [System.IO.Path]::GetFullPath(
                 (Join-Path $PSScriptRoot '..\..\..'))
             $package = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-            Assert-Equal '0.2.0-pre.2' $package.version 'Planned package version drifted.'
+            Assert-Equal '0.2.0-pre.3' $package.version 'Planned package version drifted.'
             Assert-Equal '6000.0' $package.unity 'Official Unity target drifted.'
             Assert-Equal 1 @($package.dependencies.PSObject.Properties).Count 'Package gained an undeclared dependency.'
             Assert-Equal '2.0.0' $package.dependencies.'com.unity.ugui' 'UGUI dependency drifted.'
@@ -1152,8 +1154,9 @@ set "PATH=$toolRoot;%PATH%"
             }
 
             $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw -Encoding UTF8
-            Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2')) 'README does not show the planned immutable tag URL.'
+            Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.3')) 'README does not show the planned immutable tag URL.'
             Assert-True ($readme.Contains('Planned tag; install only after it appears on the GitHub Release page.')) 'README does not warn that the planned tag is unavailable before release.'
+            Assert-True ($readme.Contains('v0.2.0-pre.2') -and $readme.Contains('Failed Release Attempt')) 'README does not preserve the failed pre.2 release attempt.'
             Assert-True ($readme -notmatch 'git#main|\.git#main') 'README recommends main as a production install.'
             Assert-True ($readme.Contains('Historical Development Evidence')) 'README does not separate historical candidate evidence.'
 
@@ -1166,6 +1169,7 @@ set "PATH=$toolRoot;%PATH%"
                 Assert-True ($validation.Contains($evidenceBoundary)) "Validation docs blur current and historical evidence: $evidenceBoundary"
             }
             Assert-True ($validation -match '(?s)Current Candidate Evidence.*Package resolve.*IL2CPP.*NotRun') 'Validation docs do not mark current candidate Consumer gates NotRun.'
+            Assert-True ($validation.Contains('v0.2.0-pre.2') -and $validation.Contains('Tag Smoke')) 'Validation docs omit the immutable pre.2 Tag smoke failure.'
 
             $implementationPlan = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\superpowers\plans\2026-08-12-single-official-unity-line-implementation.md') -Raw -Encoding UTF8
             foreach ($obsoleteName in @('Read-AppUINUnitResult', 'Protect-AppUIReleaseArtifact')) {

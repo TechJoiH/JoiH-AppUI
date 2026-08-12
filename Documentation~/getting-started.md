@@ -9,10 +9,10 @@
 在 Package Manager 选择 `Add package from git URL...`：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.3
 ```
 
-`v0.2.0-pre.2` 是计划中的候选 Tag，只有它实际出现在 GitHub Release 页面后才可按此地址安装。真实项目应使用 [Officially Supported Releases](supported-unity-versions.md#officially-supported-releases) 中列出的不可变 Tag，不要使用无版本 URL 或 `main`；评估尚未发布的候选时必须固定精确 Commit。
+`v0.2.0-pre.3` 是计划中的候选 Tag，只有它实际出现在 GitHub Release 页面后才可按此地址作为官方预发布版本安装。`v0.2.0-pre.2` 虽然已有不可变 Tag，但其 Tag smoke 失败且没有 GitHub Release，不属于 Officially Supported Releases。真实项目应使用[官方发布清单](supported-unity-versions.md#officially-supported-releases)中的不可变 Tag，不要使用无版本 URL 或 `main`；评估尚未发布的候选时必须固定精确 Commit。
 
 AppUI 只依赖 UGUI，不要求安装第三方异步包。
 

@@ -1,6 +1,24 @@
 # Changelog
 
-## [0.2.0-pre.2] - Unreleased
+## [0.2.0-pre.3] - Unreleased
+
+### Fixed
+
+- Exported the remote Tag identity resolver required by the standalone Tag URL smoke entry point.
+- Added a regression test that imports the release module and verifies the Tag smoke dependency is publicly callable.
+
+### Release policy
+
+- All Pre-tag, Commit SHA, Tag URL and release evidence must be regenerated for the new `0.2.0-pre.3` Commit and Tree.
+- `v0.2.0-pre.2` remains immutable and is never moved, deleted or reused.
+
+## [0.2.0-pre.2] - 2026-08-12 (Tag only; no GitHub Release)
+
+### Failed Release Attempt
+
+- Full Pre-tag validation, Mono/IL2CPP builds and Commit SHA Git URL smoke passed for Commit `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc`.
+- The immutable Tag was created, but Tag URL smoke stopped before Unity because the release module did not export `Resolve-AppUIRemoteTagIdentity`.
+- No GitHub Release was created, and this Tag is not an Officially Supported Release.
 
 ### Added
 
@@ -16,12 +34,6 @@
 - Added bounded remote Git queries that distinguish timeout and unavailable remotes from valid release-readiness states.
 - Hardened sanitized Unity log archives to redact all remaining local path roots and fail the Pre-tag gate if a secret or absolute machine path survives.
 - `ReleaseScope` now invalidates matching in-flight and queued Open requests before an instance exists; late successful loads cannot reopen the page and release their Lease once.
-
-### Remaining release gates
-
-- Complete the clean Consumer pipeline, including the IL2CPP gate, for the exact candidate.
-- Push the exact tested candidate, run Commit SHA Git URL smoke, create the immutable Tag only after explicit authorization, then run Tag URL smoke.
-- Publish the external report and sanitized evidence before declaring an Officially Supported Release.
 
 ## [0.2.0-pre.1]
 

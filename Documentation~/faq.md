@@ -58,7 +58,7 @@ Unity 6.0 / `6000.0` 是 AppUI 当前主要开发、真实项目使用和完整�
 
 ## Official Target 和 Officially Supported 有什么区别？
 
-Official Target 是官方投入开发和验证的目标环境。Officially Supported 是某个精确 AppUI Tag 在精确 Unity 版本中完成全部门禁后的发布状态。当前目标是 Unity 6.0，但计划中的 `0.2.0-pre.2` 仍缺 IL2CPP、远端 Commit 与 Tag 安装证据，因此尚不是 Officially Supported Release。
+Official Target 是官方投入开发和验证的目标环境。Officially Supported 是某个精确 AppUI Tag 在精确 Unity 版本中完成全部门禁后的发布状态。当前目标是 Unity 6.0；`v0.2.0-pre.2` 因 Tag smoke 工具缺陷而停止且没有 GitHub Release，新的 `0.2.0-pre.3` 仍需从零完成全部门禁，因此目前没有 Officially Supported Release。
 
 ## Community Port 和 Community Verified 有什么区别？
 

@@ -1,7 +1,7 @@
 {
   "name": "com.joih.appui",
   "displayName": "Joi.H AppUI",
-  "version": "0.2.0-pre.2",
+  "version": "0.2.0-pre.3",
   "unity": "6000.0",
   "description": "A data-driven UGUI page, layer, lifecycle, input, focus, binding, and notice framework for Unity.",
   "author": {

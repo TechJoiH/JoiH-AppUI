@@ -51,7 +51,7 @@ https://github.com/TechJoiH/JoiH-AppUI.git#<40-character-commit-sha>
 只有 Commit SHA Smoke 通过并再次获得明确授权，才创建普通 SemVer Tag。Tag 创建后使用另一个全新 Consumer 安装：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.3
 ```
 
 Tag Smoke 失败时不移动、不删除并重建同名 Tag。修复必须发布新版本。
@@ -106,9 +106,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/New-AppUICons
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIPreTagValidation.ps1 `
   -RepositoryPath (Get-Location).Path `
   -SourceCommit <40-character-commit> `
-  -PlannedTag v0.2.0-pre.2 `
+  -PlannedTag v0.2.0-pre.3 `
   -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
-  -RunRoot D:\AppUIValidation\v0.2.0-pre.2-local
+  -RunRoot D:\AppUIValidation\v0.2.0-pre.3-local
 ```
 
 远端 Commit 或 Tag Smoke 使用 `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`。该脚本只接受 TechJoiH 官方仓库的 40 位 Commit 或 SemVer Tag URL。
@@ -116,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIP
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1 `
   -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#<commit-or-tag>' `
-  -ExpectedPackageVersion '0.2.0-pre.2' `
+  -ExpectedPackageVersion '0.2.0-pre.3' `
   -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
   -RunRoot D:\AppUIValidation\git-smoke
 ```
@@ -148,37 +148,41 @@ Commit 与 Tag Smoke 可以来自各自独立 Run Root；`New-AppUIReleaseReport
 
 正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再把 Unity、SDK、工具链等其余本机绝对路径根泛化为 `<LOCAL_PATH_ROOT>/`，随后扫描残留绝对路径、`ghp_`、`github_pat_`、Authorization Header 和私钥标记；任一审计失败时不创建 Release。结构化 Release Artifact 不执行这种泛化，未列入替换边界的绝对路径仍会被拒绝。
 
-`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成同时通过秘密与本机路径审计的 `appui-v0.2.0-pre.2-logs.zip`。候选仓库不接收这些运行产物。
+`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成同时通过秘密与本机路径审计的 `appui-v0.2.0-pre.3-logs.zip`。候选仓库不接收这些运行产物。
 
 Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式报告、Package Manifest、EditMode/PlayMode XML、Binding、Mono/IL2CPP、Commit/Tag Smoke 和日志 ZIP 复制到新的 `artifacts/` 目录。九个文本文件都会执行同样的路径脱敏与秘密审计；目录必须恰好包含十个文件才能进入 GitHub Release。
 
 创建 Tag 前可运行 `Tools~/Release/Test-AppUIReleaseReadiness.ps1`。它只读解析远端 `main` 和 Tag：只有远端 `main` 正好等于候选且 Tag 尚不存在时返回 `ReadyForTag`；未推送为 `NotPushed`，仅本地存在同名 Tag 为 `LocalTagExists`，远端同名 Tag 已指向候选为 `TagExists`，指向其他提交为 `TagConflict`。所有远端查询最多等待 30 秒；网络或远端错误返回 `Blocked/RemoteUnavailable`，超时返回 `Blocked/Timeout`，不会误报候选或 Tag 状态。它不会执行 push、Tag 或 Release 操作。
 
-## 当前 `0.2.0-pre.2` 验证状态
+## `v0.2.0-pre.2` Failed Release Attempt
 
-框架开发阶段曾在独立 Consumer 对前序实现候选完成以下验证：
+`v0.2.0-pre.2` 已作为不可变 annotated Tag 固定到 Commit `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc`、Tree `0aabbfad926cb5722cceee73dcad200e3eac3343`。该候选的完整 Pre-tag、Binding、EditMode 134/134、PlayMode 17/17、Mono、IL2CPP 与 Commit SHA Git URL smoke 均通过；Tag Smoke 在进入 Unity 前失败，因为 `Invoke-AppUIGitInstallSmoke.ps1` 调用的 `Resolve-AppUIRemoteTagIdentity` 没有从发布模块导出。
+
+因此没有创建 GitHub Release，该 Tag 不是 Officially Supported Release，也不会移动、删除或复用。这个失败属于发布工具集成缺陷，不是 Unity 或 AppUI Runtime 的 `Known Incompatible` 证据。
+
+## 当前 `0.2.0-pre.3` 验证状态
+
+`pre.2` 的结果现在属于 `Historical Development Evidence`，仅证明先前候选和门禁的大部分链路曾工作，不能复用于 `pre.3`。新的精确候选必须重新执行：
 
 - Unity：`6000.0.25f1`；
-- Package Manager、Basic Integration、Domain Reload：通过；
-- Binding：0 Error、0 Warning、8 Info；
-- EditMode：134/134 通过；
-- PlayMode：17/17 通过；
-- Windows x64 Mono Development Build：通过，0 Error、0 Warning；
-- Windows x64 IL2CPP：因缺少可用的 Windows C++ toolchain 未通过。
+- Package Manager、Basic Integration、Domain Reload；
+- Binding、EditMode、PlayMode；
+- Windows x64 Mono 与 IL2CPP；
+- Commit SHA 与新的不可变 Tag Git URL smoke。
 
 这些结果属于 `Historical Development Evidence`，用于证明 Consumer、Fixture 与门禁实现可工作，但它们绑定前序 Commit，**不能作为当前精确发布候选的 Release 证据复用**。任何候选 Tree 变化后，都必须用新的 Run Root 从 Static Policy 重新执行完整流程。
 
 当前最新干净候选的 `Current Candidate Evidence` 状态是：
 
-- Static Policy：`Passed`；
-- Candidate Snapshot 与 Commit/Tree/Version/Manifest Hash：`Passed`；
+- Static Policy：`NotRun`，等待新的精确 `pre.3` Commit；
+- Candidate Snapshot 与 Commit/Tree/Version/Manifest Hash：`NotRun`，不得复用 `pre.2` 身份；
 - Unity `6000.0.25f1` 版本检查：`Passed`；
 - Visual Studio 2022 C++ 工具链预检：`Passed`；
 - 当前候选的 Package resolve、Sample、Binding、EditMode、PlayMode、Mono、IL2CPP：`NotRun`，等待从新的精确候选和 Run Root 执行完整流水线；
 - 远端 Commit SHA Smoke：`NotRun`；
 - 不可变 Tag 与 Tag URL Smoke：`NotRun`。
 
-因此 `0.2.0-pre.2` 当前仍是 Official Target 下的未发布候选。当前候选的 Consumer 全门禁、IL2CPP、远端 Commit、不可变 Tag 与 Tag URL 证据全部完成前，不得登记为 Officially Supported Release。
+因此 `0.2.0-pre.3` 当前仍是 Official Target 下的未发布候选。当前候选的 Consumer 全门禁、IL2CPP、远端 Commit、不可变 Tag 与 Tag URL 证据全部完成前，不得登记为 Officially Supported Release。
 
 ## 人工验收
 

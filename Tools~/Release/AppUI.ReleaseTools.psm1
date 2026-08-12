@@ -2373,6 +2373,7 @@ function New-AppUIReleaseArtifacts {
 
 Export-ModuleMember -Function @(
     'Resolve-AppUIGitIdentity',
+    'Resolve-AppUIRemoteTagIdentity',
     'Test-AppUISemVerTag',
     'Invoke-AppUIGitRemoteText',
     'Test-AppUIReleaseReadiness',

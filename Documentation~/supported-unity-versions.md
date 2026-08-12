@@ -22,7 +22,15 @@ AppUI 的官方目标由项目自身的验证策略决定，不与 Unity 当前�
 
 目前没有完成全部发布门禁的不可变官方 Tag。
 
-当前计划发布的 `0.2.0-pre.2` 是 Unity 6 Official Target 下的预发布候选。框架开发阶段已有前序候选的外部 Consumer、Binding、EditMode、PlayMode 和 Mono 构建证据，但发布证据不能跨 Commit 复用；本机 Unity 与 Visual Studio 2022 C++ 工具链预检已经通过，当前最新候选仍需从新的 Run Root 完成全部 Consumer 门禁，也尚未完成远端 Commit、不可变 Tag 和 Tag URL 安装冒烟，因此不能标记为 `Officially Supported`。
+当前计划发布的 `0.2.0-pre.3` 是 Unity 6 Official Target 下的新预发布候选。发布证据不能跨 Commit 或版本复用；它仍需从新的 Run Root 完成全部 Consumer、Commit SHA、不可变 Tag 与 Tag URL 门禁，因此目前不能标记为 `Officially Supported`。
+
+### Failed Release Attempts
+
+| Tag | Commit | 状态 | 原因 |
+|---|---|---|---|
+| `v0.2.0-pre.2` | `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc` | `Failed Release Attempt` | Pre-tag、Mono/IL2CPP 与 Commit SHA smoke 通过；Tag smoke 因发布工具未导出远端 Tag 解析命令而在进入 Unity 前失败，没有 GitHub Release |
+
+失败尝试不是第六种兼容状态，也不是 `Known Incompatible`：它描述的是发布流水线没有完成，不代表该 AppUI/Unity 组合已确认不兼容。对应 Tag 保持不可变，但不会进入 Officially Supported Releases。
 
 官方 Release 记录必须包含：
 
