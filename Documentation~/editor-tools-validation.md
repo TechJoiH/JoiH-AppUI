@@ -1,0 +1,33 @@
+# Editor Tools & Validation
+
+## 工具入口
+
+- `Assets > App UI > Create Page Definition`
+- `Assets > App UI > Create Group Definition`
+- `Tools > Joi.H AppUI > Binding Validation`
+- `Tools > Joi.H AppUI > Validate Input Policies`
+- `Tools > Joi.H AppUI > Validate Focus P0`
+- `Tools > Joi.H AppUI > Open Focus Runtime Trace`
+
+## 推荐日常流程
+
+1. 创建/修改 Controller 与 Prefab；
+2. Generate Bindings；
+3. 等待编译；
+4. Bind References；
+5. 运行 Binding、Input、Focus 验证；
+6. 在最终场景实际测试鼠标、键盘、手柄和 Cancel；
+7. 运行 EditMode/PlayMode；
+8. 发布前完成 Player Build。
+
+验证器是只读门禁，不应在 Build 时偷偷生成或修复资产。自动化证明契约，不替代字体、布局、动画、点击面积和视觉层级的人工验收。
+
+## CI 建议
+
+- 检查 Runtime 与 package.json 不含项目命名空间和未声明第三方依赖；
+- EditMode 覆盖 Definition、Operation、Focus、Input、Binding 与 Lease；
+- PlayMode 覆盖打开/刷新/关闭、取消、晚到加载与真实 EventSystem Raycast；
+- 从干净消费项目安装包并完成 Domain Reload；
+- 至少在一个目标平台做 IL2CPP Development Build。
+
+当前证据和版本数字见[验证与发布门禁](validation.md)。

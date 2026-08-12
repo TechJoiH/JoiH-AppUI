@@ -1,77 +1,60 @@
-# Integration
+# 接入与资源适配
 
-## Composition root
+## 组合根
 
-`AppUIRuntimeHost` is intentionally small. It resolves the manager and layer
-roots, selects values from `AppUIRuntimeProfile`, injects an asset provider, and
-initializes the manager once. It does not create an EventSystem, load scenes, or
-mark objects as persistent.
-
-For a Resources-only application, keep **Use Resources Provider When Missing**
-enabled. For another resource stack, disable **Initialize On Awake** and inject a
-provider from the application's earlier composition root.
-
-## Custom asset provider
+`AppUIRuntimeHost` 负责把 Profile、Registry、LayerRoot 与项目提供的三项能力交给 Manager。它不自动初始化、不创建 EventSystem、不加载场景，也不把 Root 标为 DontDestroyOnLoad。
 
 ```csharp
-public sealed class ProjectUIAssetProvider : IUIAssetProvider
+AppUIInitializationResult result = runtimeHost.Initialize(
+    new AppUIRuntimeDependencies(
+        projectOperationFactory,
+        projectAssetProvider,
+        projectExecutionContext));
+```
+
+缺少任一项会返回结构化失败，不存在 fallback。
+
+## 自定义 Provider
+
+```csharp
+public interface IUIAssetProvider
 {
-    public bool TryLoad<T>(
+    bool TryLoad<T>(string assetId, out UIAssetLoadResult<T> result)
+        where T : UnityEngine.Object;
+
+    IUIOperation<UIAssetLoadResult<T>> Load<T>(
         string assetId,
-        out UIAssetLoadResult<T> result)
-        where T : UnityEngine.Object
-    {
-        result = UIAssetLoadResult<T>.Failure(
-            UIAssetLoadStatus.SynchronousLoadUnsupported,
-            "This provider is asynchronous only.");
-        return false;
-    }
-
-    public async UniTask<UIAssetLoadResult<T>> LoadAsync<T>(string assetId)
-        where T : UnityEngine.Object
-    {
-        ProjectHandle<T> handle = await LoadProjectAssetAsync<T>(assetId);
-        if (!handle.Succeeded)
-        {
-            return UIAssetLoadResult<T>.Failure(
-                UIAssetLoadStatus.ProviderFailed,
-                handle.Error);
-        }
-
-        return UIAssetLoadResult<T>.Success(
-            handle.Asset,
-            new UIAssetLease(handle.Release));
-    }
+        CancellationToken cancellationToken)
+        where T : UnityEngine.Object;
 }
 ```
 
-Notice prefabs are loaded through the optional synchronous entry point. When a
-provider returns `SynchronousLoadUnsupported`, Notice falls back to its built-in
-UGUI view; page loading remains asynchronous.
+若不支持同步加载，`TryLoad` 返回 false，并将状态设为 `SynchronousLoadUnsupported`，Runtime 才会调用 `Load`。若同步查询明确得到 NotFound，则不应再启动异步请求。
 
-For non-Resources asset IDs, implement `IUIEditorAssetIdResolver` in an Editor
-assembly and register it with `UIEditorAssetIdResolverRegistry.SetResolver`.
-The binding sync and prefab validation tools then use the same ID convention as
-the runtime provider.
+成功加载可返回：
 
-## Host shutdown order
+```csharp
+UIAssetLoadResult<GameObject>.Success(
+    prefab,
+    new UIAssetLease(handle.Release));
+```
 
-1. Stop new UI commands in the application.
-2. Close or release active scene scopes.
-3. Call `AppUIRuntimeHost.Shutdown()`.
-4. Dispose the application provider.
-5. Destroy the UI root if the application owns it per scene.
+Provider 的异步实现只需返回项目 Operation；可以在项目程序集内把现有异步类型映射到 `IUIOperation<T>`。不要把具体 handle 暴露给 Controller。
 
-This order prevents an AppUI lease from calling into a provider that has already
-been shut down.
+## Editor AssetId
 
-## Generic input mapping
+非标准 AssetId 可在 Editor 程序集中实现 `IUIEditorAssetIdResolver` 并注册到 `UIEditorAssetIdResolverRegistry`。Binding 与 Definition 创建工具便能使用与运行时相同的 ID 规则。
 
-The package exposes `PrimaryPointer`, `SecondaryPointer`, `PointerMotion`,
-`ViewportPan`, `ViewportZoom`, `ContextAction`, `Custom1`, and `Custom2`. A host
-maps its input actions to these categories before calling
-`AppUIInputHitResolver.Shared.IsPointerBlocked(position, channel)`.
+## Shutdown 顺序
 
-Use `AppUIInputPolicyRoot` for the page default and nested `AppUIInputZone`
-components for exceptions. Avoid adding raycast targets to decorative child
-graphics; the input validator reports common accidental blockers.
+1. 停止新请求；
+2. ReleaseScope/UnbindScene；
+3. `AppUIRuntimeHost.Shutdown()`；
+4. 销毁项目 Provider；
+5. 销毁 UI Root。
+
+这个顺序确保 AppUI 归还 Lease 时 Provider 仍然存活。
+
+## Sample 的定位
+
+Basic Integration 提供 `CallbackUIOperationFactory`、`UnityMainThreadExecutionContext` 和 `InMemoryUIAssetProvider`。它用于学习和冒烟验证，不代表推荐所有项目复制其内部实现。成熟项目通常直接适配已有调度器与资源服务。

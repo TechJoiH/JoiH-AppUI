@@ -1,10 +1,18 @@
-# Basic Integration
+# Basic Integration Sample
 
-1. Add `GlobalUIRoot`, `AppUIManager`, and `AppUIRuntimeHost` to the UI root.
-2. Assign an `AppUIRuntimeProfile` and the required layer roots.
-3. Disable `Initialize On Awake` on the host.
-4. Add `SampleAppUIInstaller` and register prefab asset IDs in its list.
+这个 Sample 演示一种零第三方依赖的接入方式：
 
-The sample provider demonstrates the adapter boundary. A production project can
-replace it with an Addressables, AssetBundle, remote-content, or custom cache
-provider without changing AppUI.
+- `CallbackUIOperationFactory`：纯回调 Operation；
+- `UnityMainThreadExecutionContext`：捕获 Unity 主线程上下文；
+- `InMemoryUIAssetProvider`：显式 AssetId 到对象引用表，不使用 Resources；
+- `SampleAppUIInstaller`：创建三项依赖并调用 `AppUIRuntimeHost.Initialize`。
+
+使用：
+
+1. 准备 `GlobalUIRoot`、`AppUIManager`、`AppUIRuntimeHost` 和 LayerRoot；
+2. 配置 Runtime Profile 与 Page Registry；
+3. 添加 `SampleAppUIInstaller`；
+4. 在 Assets 列表中将 Definition 的 PrefabAssetId 映射到页面 Prefab；
+5. Play 后通过 `runtimeHost.Manager.Service.Open(...)` 发起请求。
+
+这些类型只随 Sample 导入，不在 AppUI Core/Runtime 中注册默认实现。生产项目可以全部替换为自己的 Operation、Addressables/AssetBundle Provider 和主线程调度器。

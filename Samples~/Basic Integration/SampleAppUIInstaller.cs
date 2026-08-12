@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using UnityEngine;
 using UnityObject = UnityEngine.Object;
 
@@ -28,12 +27,6 @@ namespace Joi.H.AppUI.Samples.Basic
         private List<SampleUIAssetEntry> assets =
             new List<SampleUIAssetEntry>();
 
-        [SerializeField]
-        private MonoBehaviour operationFactorySource;
-
-        [SerializeField]
-        private MonoBehaviour executionContextSource;
-
         private void Awake()
         {
             if (runtimeHost == null)
@@ -49,23 +42,12 @@ namespace Joi.H.AppUI.Samples.Basic
                 return;
             }
 
-            IUIOperationFactory operationFactory =
-                operationFactorySource as IUIOperationFactory;
-            IAppUIExecutionContext executionContext =
-                executionContextSource as IAppUIExecutionContext;
-            if (operationFactory == null || executionContext == null)
-            {
-                Debug.LogError(
-                    "<Joi.H.AppUI.Sample> Assign project-owned " +
-                    "IUIOperationFactory and IAppUIExecutionContext components.",
-                    this);
-                return;
-            }
-
-            DirectReferenceUIAssetProvider assetProvider =
-                new DirectReferenceUIAssetProvider(
-                    assets,
-                    operationFactory);
+            CallbackUIOperationFactory operationFactory =
+                new CallbackUIOperationFactory();
+            UnityMainThreadExecutionContext executionContext =
+                UnityMainThreadExecutionContext.CaptureCurrent();
+            InMemoryUIAssetProvider assetProvider =
+                new InMemoryUIAssetProvider(operationFactory, assets);
             AppUIInitializationResult result = runtimeHost.Initialize(
                 new AppUIRuntimeDependencies(
                     operationFactory,
@@ -81,77 +63,4 @@ namespace Joi.H.AppUI.Samples.Basic
         }
     }
 
-    public sealed class DirectReferenceUIAssetProvider : IUIAssetProvider
-    {
-        private readonly Dictionary<string, UnityObject> assetById =
-            new Dictionary<string, UnityObject>(StringComparer.Ordinal);
-        private readonly IUIOperationFactory operationFactory;
-
-        public DirectReferenceUIAssetProvider(
-            IReadOnlyList<SampleUIAssetEntry> entries,
-            IUIOperationFactory operationFactory)
-        {
-            this.operationFactory = operationFactory ??
-                throw new ArgumentNullException(nameof(operationFactory));
-            if (entries == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < entries.Count; i++)
-            {
-                SampleUIAssetEntry entry = entries[i];
-                if (entry == null ||
-                    string.IsNullOrWhiteSpace(entry.AssetId) ||
-                    entry.Asset == null)
-                {
-                    continue;
-                }
-
-                assetById[entry.AssetId] = entry.Asset;
-            }
-        }
-
-        public bool TryLoad<T>(
-            string assetId,
-            out UIAssetLoadResult<T> result)
-            where T : UnityObject
-        {
-            if (string.IsNullOrWhiteSpace(assetId))
-            {
-                result = UIAssetLoadResult<T>.Failure(
-                    UIAssetLoadStatus.InvalidAssetId,
-                    "Asset id is empty.");
-                return false;
-            }
-
-            if (!assetById.TryGetValue(assetId, out UnityObject asset) ||
-                !(asset is T typedAsset))
-            {
-                result = UIAssetLoadResult<T>.Failure(
-                    UIAssetLoadStatus.NotFound,
-                    "Asset was not registered. AssetId=" + assetId);
-                return false;
-            }
-
-            result = UIAssetLoadResult<T>.Success(typedAsset);
-            return true;
-        }
-
-        public IUIOperation<UIAssetLoadResult<T>> Load<T>(
-            string assetId,
-            CancellationToken cancellationToken)
-            where T : UnityObject
-        {
-            IUIOperationSource<UIAssetLoadResult<T>> source =
-                operationFactory.Create<UIAssetLoadResult<T>>(
-                    AppUIOperationDescriptor.Create(
-                        "SampleLoad:" + (assetId ?? string.Empty),
-                        cancellationToken));
-            source.TrySetRunning();
-            TryLoad(assetId, out UIAssetLoadResult<T> result);
-            source.TrySetSucceeded(result);
-            return source.Operation;
-        }
-    }
 }
