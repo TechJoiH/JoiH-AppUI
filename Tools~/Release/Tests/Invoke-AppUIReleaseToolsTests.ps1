@@ -884,18 +884,21 @@ set "PATH=$toolRoot;%PATH%"
             [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
             $raw = Join-Path $artifactRoot 'raw.log'
             $safe = Join-Path $artifactRoot 'safe.log'
-            Set-Utf8NoBomContent $raw 'repo=C:\work\repo consumer=C:\work\consumer user=C:\Users\Tester'
+            Set-Utf8NoBomContent $raw 'repo=C:\work\repo consumer=C:\work\consumer user=C:\Users\Tester tool=D:\PrivateTools\sdk.exe'
             Protect-AppUILog `
                 -InputPath $raw `
                 -OutputPath $safe `
                 -RepositoryPath 'C:\work\repo' `
                 -ConsumerPath 'C:\work\consumer' `
-                -UserProfilePath 'C:\Users\Tester'
+                -UserProfilePath 'C:\Users\Tester' `
+                -RedactAllLocalPathRoots
             $safeText = Get-Content -LiteralPath $safe -Raw -Encoding UTF8
             Assert-True ($safeText -match '<REPOSITORY>') 'Repository path was not redacted.'
             Assert-True ($safeText -match '<CONSUMER>') 'Consumer path was not redacted.'
             Assert-True ($safeText -match '<USER_PROFILE>') 'User profile path was not redacted.'
+            Assert-True ($safeText -match '<LOCAL_PATH_ROOT>') 'Unlisted absolute path root was not redacted.'
             Assert-True (Test-AppUIArtifactSecrets -Path $safe) 'Sanitized log failed the secret audit.'
+            Assert-True (Test-AppUIArtifactLocalPaths -Path $safe) 'Sanitized log retained an unlisted absolute path.'
 
             Set-Utf8NoBomContent (Join-Path $artifactRoot 'secret.log') 'Authorization: Bearer github_pat_example'
             try {
@@ -917,6 +920,7 @@ set "PATH=$toolRoot;%PATH%"
                 -UserProfilePath 'C:\Users\Tester'
             Assert-True (Test-Path -LiteralPath $archive -PathType Leaf) 'Sanitized log archive was not created.'
             Assert-True ($archiveResult.Sha256 -match '^[0-9a-f]{64}$') 'Sanitized log archive hash was invalid.'
+            Assert-True (Test-AppUIArtifactLocalPaths -Path $archive) 'Sanitized log archive retained an absolute path.'
 
             $secretZipSource = Join-Path $testRoot 'secret-zip-source'
             [System.IO.Directory]::CreateDirectory($secretZipSource) | Out-Null

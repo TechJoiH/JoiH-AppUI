@@ -14,6 +14,7 @@
 - Added an explicit Unity/Visual Studio 2022 C++/Windows SDK preflight with machine-readable `Blocked` evidence before full IL2CPP validation; explicit installation-path overrides are probed instead of trusted.
 - Added strict SemVer, single package manifest, single official Consumer, remote Tag identity and exact ten-artifact release gates.
 - Added bounded remote Git queries that distinguish timeout and unavailable remotes from valid release-readiness states.
+- Hardened sanitized Unity log archives to redact all remaining local path roots and fail the Pre-tag gate if a secret or absolute machine path survives.
 - `ReleaseScope` now invalidates matching in-flight and queued Open requests before an instance exists; late successful loads cannot reopen the page and release their Lease once.
 
 ### Remaining release gates

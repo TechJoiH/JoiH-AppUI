@@ -146,9 +146,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIG
 
 Commit 与 Tag Smoke 可以来自各自独立 Run Root；`New-AppUIReleaseReport.ps1` 通过 `-CommitSmokePath` 与 `-TagSmokePath` 显式组合这些证据，并逐项核对 Commit、Tree、Version、Manifest Hash 与安装 URL，不要求人工复制或修改 Smoke JSON。
 
-正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再扫描 `ghp_`、`github_pat_`、Authorization Header 和私钥标记；秘密审计失败时不创建 Release。
+正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再把 Unity、SDK、工具链等其余本机绝对路径根泛化为 `<LOCAL_PATH_ROOT>/`，随后扫描残留绝对路径、`ghp_`、`github_pat_`、Authorization Header 和私钥标记；任一审计失败时不创建 Release。结构化 Release Artifact 不执行这种泛化，未列入替换边界的绝对路径仍会被拒绝。
 
-`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成脱敏且通过秘密审计的 `appui-v0.2.0-pre.2-logs.zip`。候选仓库不接收这些运行产物。
+`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成同时通过秘密与本机路径审计的 `appui-v0.2.0-pre.2-logs.zip`。候选仓库不接收这些运行产物。
 
 Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式报告、Package Manifest、EditMode/PlayMode XML、Binding、Mono/IL2CPP、Commit/Tag Smoke 和日志 ZIP 复制到新的 `artifacts/` 目录。九个文本文件都会执行同样的路径脱敏与秘密审计；目录必须恰好包含十个文件才能进入 GitHub Release。
 

@@ -1987,7 +1987,9 @@ function Protect-AppUILog {
 
         [string]$RepositoryPath = '',
         [string]$ConsumerPath = '',
-        [string]$UserProfilePath = ''
+        [string]$UserProfilePath = '',
+
+        [switch]$RedactAllLocalPathRoots
     )
 
     $text = Get-Content -LiteralPath $InputPath -Raw -Encoding UTF8
@@ -2015,6 +2017,16 @@ function Protect-AppUILog {
                 $replacement[1],
                 [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
         }
+    }
+
+    if ($RedactAllLocalPathRoots) {
+        # Unity and native build logs contain additional machine-owned paths such as
+        # the Editor, SDK and toolchain locations. Preserve the useful suffix while
+        # removing the local drive or file URI root from every remaining path.
+        $text = [regex]::Replace(
+            $text,
+            '(?i)(?<![a-z])(?:[a-z]:[\\/]|file:[\\/]{1,2})',
+            '<LOCAL_PATH_ROOT>/')
     }
 
     $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
@@ -2220,12 +2232,16 @@ function New-AppUISanitizedLogArchive {
                 -OutputPath $destination `
                 -RepositoryPath $RepositoryPath `
                 -ConsumerPath $ConsumerPath `
-                -UserProfilePath $UserProfilePath
+                -UserProfilePath $UserProfilePath `
+                -RedactAllLocalPathRoots
         }
 
         Test-AppUIArtifactSecrets `
             -Path $temporaryRoot `
             -ThrowOnSecret | Out-Null
+        Test-AppUIArtifactLocalPaths `
+            -Path $temporaryRoot `
+            -ThrowOnPath | Out-Null
         Compress-Archive `
             -Path (Join-Path $temporaryRoot '*') `
             -DestinationPath $resolvedArchive `
@@ -2233,6 +2249,12 @@ function New-AppUISanitizedLogArchive {
         if (-not (Test-Path -LiteralPath $resolvedArchive -PathType Leaf)) {
             throw "Sanitized log archive was not created: $resolvedArchive"
         }
+        Test-AppUIArtifactSecrets `
+            -Path $resolvedArchive `
+            -ThrowOnSecret | Out-Null
+        Test-AppUIArtifactLocalPaths `
+            -Path $resolvedArchive `
+            -ThrowOnPath | Out-Null
     }
     finally {
         if ((Test-Path -LiteralPath $temporaryRoot) -and
