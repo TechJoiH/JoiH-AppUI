@@ -60,6 +60,8 @@ Tools~/Release/
 ├── Invoke-AppUIPreTagValidation.ps1
 ├── Invoke-AppUIGitInstallSmoke.ps1
 ├── New-AppUIReleaseReport.ps1
+├── New-AppUIReleaseArtifacts.ps1
+├── Test-AppUIReleaseReadiness.ps1
 └── Tests/Invoke-AppUIReleaseToolsTests.ps1
 
 Validation~/Unity6000.0Consumer/
@@ -71,17 +73,22 @@ Validation~/Unity6000.0Consumer/
 │   │   │   ├── Adapters/ConsumerOperationFactory.cs
 │   │   │   ├── Adapters/ConsumerExecutionContext.cs
 │   │   │   ├── Adapters/ConsumerAssetProvider.cs
+│   │   │   ├── ConsumerRuntimeInstaller.cs
 │   │   │   ├── Controllers/ConsumerBasicPageController.cs
 │   │   │   ├── Controllers/ConsumerPopupController.cs
 │   │   │   ├── Controllers/ConsumerBindingPageController.cs
+│   │   │   ├── Controllers/ConsumerFocusListController.cs
 │   │   │   └── Joi.H.AppUI.Validation.Consumer.asmdef
 │   │   ├── Editor/
+│   │   │   ├── AppUIConsumerBatchCommand.cs
 │   │   │   ├── AppUIConsumerFixtureCommand.cs
+│   │   │   ├── AppUIConsumerFixturePaths.cs
 │   │   │   ├── AppUIConsumerBindingCommand.cs
 │   │   │   ├── AppUIConsumerBuildCommand.cs
 │   │   │   ├── AppUIConsumerSmokeCommand.cs
 │   │   │   └── Joi.H.AppUI.Validation.Consumer.Editor.asmdef
 │   │   └── Tests/
+│   │       ├── EditMode/AppUIConsumerAdapterTests.cs
 │   │       ├── EditMode/AppUIConsumerEditModeTests.cs
 │   │       ├── EditMode/Joi.H.AppUI.Validation.Consumer.EditModeTests.asmdef
 │   │       ├── PlayMode/AppUIConsumerPlayModeTests.cs
@@ -108,12 +115,23 @@ Validation~/Unity6000.0Consumer/
 
 ```powershell
 Resolve-AppUIGitIdentity -RepositoryPath <path> -SourceRef <ref>
+Test-AppUISemVerTag -Tag <v-semver>
+Test-AppUIReleaseReadiness -RepositoryPath <path> -CandidateCommit <40-sha> -PlannedTag <v-semver>
+Write-AppUIJson -Path <json> -Value <object>
 Export-AppUICandidateSnapshot -RepositoryPath <path> -SourceRef <ref> -DestinationPath <new-dir>
+Test-AppUICandidateSnapshot -PackageRoot <path> -IdentityPath <json> -ManifestPath <json>
 New-AppUIConsumerWorkspace -TemplatePath <path> -DestinationPath <new-dir> -PackageReference <file-or-git-url>
 Test-AppUIPackagePolicy -RepositoryPath <path> -SourceRef <ref>
+Invoke-AppUIProcess -FilePath <exe> -Arguments <string[]> -TimeoutSeconds 120
 Invoke-AppUIUnityProcess -UnityPath <exe> -ProjectPath <path> -Arguments <string[]> -TimeoutSeconds 120
-Read-AppUINUnitResult -Path <xml>
-Protect-AppUIReleaseArtifact -InputPath <path> -OutputPath <path> -Redactions <hashtable>
+Test-AppUIBuildEnvironment -UnityPath <exe> -ExpectedUnityVersion 6000.0.25f1
+Read-AppUINUnit3Result -Path <xml>
+New-AppUIReleaseReport -IdentityPath <json> -EvidenceRoot <path> -OutputPath <json> -PlannedTag <v-semver>
+Protect-AppUILog -InputPath <path> -OutputPath <path> -RepositoryPath <path> -ConsumerPath <path> -UserProfilePath <path>
+Test-AppUIArtifactSecrets -Path <path>
+Test-AppUIArtifactLocalPaths -Path <path>
+New-AppUISanitizedLogArchive -InputDirectory <path> -OutputArchive <zip>
+New-AppUIReleaseArtifacts -SourceDirectory <path> -OutputDirectory <new-dir> -Version <semver>
 ```
 
 候选目录固定结构：
@@ -153,6 +171,8 @@ Task 10：Tag URL 冒烟、Release Artifact、主分支证据索引
 
 任何箭头前的必需门禁失败都停止后续发布动作；失败不会降级成警告。
 
+当前实施状态：Tasks 1-7 已完成并形成精确本地候选；Task 8 的静态策略、Snapshot 与环境预检已执行，环境预检以 `Blocked/MissingToolchain` 停止在 Consumer 物化之前。安装受支持的 Visual Studio 2022 C++ 工具链需要用户授权；Push、Tag 与 GitHub Release 尚未执行。
+
 ---
 
 ### Task 1: Publish the single-line support and community-port policy
@@ -176,7 +196,7 @@ Task 10：Tag URL 冒烟、Release Artifact、主分支证据索引
 - Produces: 面向未知项目背景 Unity 开发者的唯一兼容政策入口和可独立执行的社区移植教程。
 - Does not change: `Runtime/`、`Editor/`、asmdef、`package.json` 或公共 API。
 
-- [ ] **Step 1: Run a failing documentation contract audit**
+- [x] **Step 1: Run a failing documentation contract audit**
 
 在仓库根执行：
 
@@ -191,7 +211,7 @@ if ($missing.Count -gt 0) { throw "Missing policy docs: $($missing -join ', ')" 
 
 Expected: 失败并列出两个尚不存在的文件，证明测试命中真实缺口。
 
-- [ ] **Step 2: Write `supported-unity-versions.md` with mutually exclusive states**
+- [x] **Step 2: Write `supported-unity-versions.md` with mutually exclusive states**
 
 固定结构：
 
@@ -205,7 +225,7 @@ Expected: 失败并列出两个尚不存在的文件，证明测试命中真实�
 
 不得把 `Official Target` 写成第六种兼容状态，不得把 `Unsupported` 写成“确认不能运行”。
 
-- [ ] **Step 3: Write an independently executable community porting guide**
+- [x] **Step 3: Write an independently executable community porting guide**
 
 `community-unity-porting.md` 按以下真实流程写作：
 
@@ -225,7 +245,7 @@ Expected: 失败并列出两个尚不存在的文件，证明测试命中真实�
 
 教程必须让用户从目标 Unity 新工程的 `Packages/packages-lock.json` 选择兼容的 UGUI/TMP 版本，不替用户指定未经验证的旧版实现；示例清单明确属于社区 Fork，不得复制回官方 `main`。
 
-- [ ] **Step 4: Align README and the public documentation path**
+- [x] **Step 4: Align README and the public documentation path**
 
 README 增加：
 
@@ -240,15 +260,15 @@ README 增加：
 
 `getting-started.md` 顶部只增加其他 Unity 版本教程链接，正文继续只讲 Unity 6；`architecture.md` 补充环境差异属于边界适配；`index.md` 注册两篇新文档。
 
-- [ ] **Step 5: Expand FAQ and contribution rules**
+- [x] **Step 5: Expand FAQ and contribution rules**
 
 FAQ 必须逐项回答设计规格第 14.7 节的十个问题。`CONTRIBUTING.md` 增加兼容 PR 审查顺序、Community Verified 必需证据、禁止官方旧版分支/Tag/清单和版本宏散布规则。
 
-- [ ] **Step 6: Record the policy change without claiming a release**
+- [x] **Step 6: Record the policy change without claiming a release**
 
 在 `CHANGELOG.md` 的 `Unreleased` 中记录单一官方 Unity 线、社区移植文档和计划中的 Consumer 门禁；不要把 `0.2.0-pre.2` 写成已发布，也不要创建 Tag。
 
-- [ ] **Step 7: Run link, vocabulary and temporal-language audits**
+- [x] **Step 7: Run link, vocabulary and temporal-language audits**
 
 ```powershell
 $markdown = Get-ChildItem README.md,CONTRIBUTING.md,CHANGELOG.md,Documentation~ -Recurse -File -Filter *.md
@@ -261,7 +281,7 @@ if (-not ($text -match 'Community Port')) { throw 'Community Port is missing.' }
 
 再逐个解析相对 Markdown 链接并确认目标存在，检查代码围栏成对。Expected: 全部通过；搜索 `unity2022`、`unity6` Tag 命名示例不得出现官方双 Tag 方案。
 
-- [ ] **Step 8: Verify the docs-only boundary and commit Task 1**
+- [x] **Step 8: Verify the docs-only boundary and commit Task 1**
 
 ```powershell
 git diff --name-only
@@ -288,7 +308,7 @@ Expected: diff 中不包含 `Runtime/`、`Editor/`、asmdef 或 `package.json`�
 - Produces: 来自精确 Commit 的只读候选包目录、规范化内容 Manifest 与候选身份 JSON。
 - Invariant: 脏工作树和未跟踪文件永远不能进入候选快照。
 
-- [ ] **Step 1: Write failing snapshot tests before the module exists**
+- [x] **Step 1: Write failing snapshot tests before the module exists**
 
 测试脚本使用临时 Git 仓库建立以下用例：
 
@@ -308,7 +328,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Tests/Invoke-
 
 Expected: 因 `AppUI.ReleaseTools.psm1` 或函数不存在而失败。
 
-- [ ] **Step 2: Implement Git identity resolution**
+- [x] **Step 2: Implement Git identity resolution**
 
 `Resolve-AppUIGitIdentity` 必须：
 
@@ -318,17 +338,17 @@ Expected: 因 `AppUI.ReleaseTools.psm1` 或函数不存在而失败。
 - 从 `origin` URL 规范化得到 `TechJoiH/JoiH-AppUI`；
 - 对非 Commit、缺 `package.json`、版本为空或 Git 命令失败明确抛错。
 
-- [ ] **Step 3: Implement archive export from the tracked tree**
+- [x] **Step 3: Implement archive export from the tracked tree**
 
 `Export-AppUICandidateSnapshot` 使用 `git archive --format=zip <sourceCommit>` 导出到新目录，再由 .NET `ZipArchive` 展开到 `candidate/package/`。Windows `bsdtar` 会按本机代码页损坏 UTF-8 Git 路径，因此不得用于候选解压。禁止 `Copy-Item $RepositoryPath`。目标目录必须不存在；工具只创建自己的新目录，不删除未知路径。
 
-- [ ] **Step 4: Implement the normalized content manifest**
+- [x] **Step 4: Implement the normalized content manifest**
 
 使用 `git ls-tree -rz --full-tree <sourceCommit>` 的 NUL 分隔输出获取 Git mode 和原始相对路径，避免空格、Tab 或非 ASCII 文件名被错误切分；对快照文件逐一算 SHA-256。路径转 `/`，按 `StringComparer.Ordinal` 排序，按本计划定义的 length-prefixed 行格式写 `package-manifest.canonical.txt`，再计算总 Hash。
 
 `package-manifest.json` 保存每项的 `path`、`gitMode`、`sha256`；`candidate-identity.json` 保存候选身份。所有 JSON UTF-8 无 BOM、稳定属性顺序、路径不包含本机根目录。
 
-- [ ] **Step 5: Add a thin command wrapper**
+- [x] **Step 5: Add a thin command wrapper**
 
 `New-AppUICandidateSnapshot.ps1` 只负责参数校验、导入模块、调用 `Export-AppUICandidateSnapshot` 和把 identity 输出到 Console；核心逻辑不得复制到脚本。
 
@@ -341,11 +361,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/New-AppUICand
   -DestinationPath 'D:\UGit\JoiH-AppUI-Lab\release-work\snapshot-contract'
 ```
 
-- [ ] **Step 6: Run snapshot tests and a real-repository smoke**
+- [x] **Step 6: Run snapshot tests and a real-repository smoke**
 
 Expected: 临时仓库用例全部通过；真实仓库快照的 `package/package.json` 版本等于 Commit 中的版本，未包含 `.git`、`.worktrees` 或未跟踪计划文件。
 
-- [ ] **Step 7: Commit Task 2**
+- [x] **Step 7: Commit Task 2**
 
 ```powershell
 git add Tools~/Release/AppUI.ReleaseTools.psm1 Tools~/Release/New-AppUICandidateSnapshot.ps1 Tools~/Release/Tests/Invoke-AppUIReleaseToolsTests.ps1
@@ -368,7 +388,7 @@ git commit -m "Add deterministic AppUI candidate snapshots"
 - Produces: 可由 Unity 直接打开的外部 Consumer 工作区。
 - Produces: `Test-AppUIPackagePolicy` 的机器可读结果；任一 Error 返回非零退出码。
 
-- [ ] **Step 1: Add failing materialization and static-policy tests**
+- [x] **Step 1: Add failing materialization and static-policy tests**
 
 新增用例：
 
@@ -385,7 +405,7 @@ git commit -m "Add deterministic AppUI candidate snapshots"
 
 运行 `-TestGroup Consumer,Policy`。Expected: 新函数不存在导致失败。
 
-- [ ] **Step 2: Implement workspace materialization**
+- [x] **Step 2: Implement workspace materialization**
 
 `New-AppUIConsumerWorkspace` 先完整验证模板，再复制到新目录，最后用 `System.Text.Json` 不可用时的 PowerShell JSON 读写方式生成 `Packages/manifest.json`。不要做字符串级 JSON 拼接。模板 Token 必须恰好出现一次。
 
@@ -402,7 +422,7 @@ git commit -m "Add deterministic AppUI candidate snapshots"
 }
 ```
 
-- [ ] **Step 3: Implement static package and repository policy checks**
+- [x] **Step 3: Implement static package and repository policy checks**
 
 `Test-AppUIPackagePolicy` 返回包含 `name`、`status`、`details` 的检查集合，并覆盖：
 
@@ -417,7 +437,7 @@ git commit -m "Add deterministic AppUI candidate snapshots"
 
 生产 Token 扫描限定在生产源与 asmdef，避免 FAQ 对 UniTask/Odin 的解释造成假阳性。
 
-- [ ] **Step 4: Add the command wrapper and rerun all PowerShell tests**
+- [x] **Step 4: Add the command wrapper and rerun all PowerShell tests**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/New-AppUIConsumerWorkspace.ps1 `
@@ -428,7 +448,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/New-AppUICons
 
 在 Task 4 模板尚未存在时，模块单元测试用临时模板验证功能；真实模板 smoke 延后到 Task 4。
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```powershell
 git add Tools~/Release
@@ -466,11 +486,11 @@ git commit -m "Add isolated AppUI consumer materialization"
 - Produces: 不依赖 package Tests、internal 类型或第三方异步包的消费项目自有 Adapter。
 - Does not produce: 场景、Prefab、Definition 或生成 Binding；这些由 Task 5 在仓库外工作区生成。
 
-- [ ] **Step 1: Extend the policy test with the exact template contract**
+- [x] **Step 1: Extend the policy test with the exact template contract**
 
 测试先断言目标文件、Unity `6000.0.25f1`、UGUI `2.0.0`、Test Framework `1.4.5`、`manifest.template.json` Token、禁止目录和 Meta 完整性。Expected: 模板不存在而失败。
 
-- [ ] **Step 2: Create the stripped project settings from the proven consumer**
+- [x] **Step 2: Create the stripped project settings from the proven consumer**
 
 从 `D:/UGit/JoiH-AppUI-Lab/UnityTestProject` 只提取列出的 ProjectSettings，并做以下清理：
 
@@ -481,7 +501,7 @@ git commit -m "Add isolated AppUI consumer materialization"
 - 删除服务 ID、组织 ID、云项目 ID 和本机状态；
 - 不复制 `Packages/packages-lock.json`。
 
-- [ ] **Step 3: Implement the project-owned manual operation factory**
+- [x] **Step 3: Implement the project-owned manual operation factory**
 
 `ConsumerOperationFactory` 提供确定性 `IUIOperationSource<T>`：
 
@@ -492,11 +512,11 @@ git commit -m "Add isolated AppUI consumer materialization"
 
 Runtime asmdef 固定引用 `Joi.H.AppUI.Core`、`Joi.H.AppUI.Runtime`、`UnityEngine.UI`，不得引用 package Tests 或 Sample asmdef；Adapter 类型全部位于 `Joi.H.AppUI.Validation.Consumer` 命名空间。
 
-- [ ] **Step 4: Implement execution context and lease-tracking asset provider**
+- [x] **Step 4: Implement execution context and lease-tracking asset provider**
 
 `ConsumerExecutionContext` 捕获 Unity 主线程 ID，`Post(Action)` 在主线程立即执行，非主线程入队并由验证驱动显式 Drain。`ConsumerAssetProvider` 以字典注册 `UnityEngine.Object`，每次成功 Load 返回独立 `UIAssetLease`，记录 `LoadCount`、`ReleaseCount`、Cancel/Failure，并允许测试显式完成 Pending Load。
 
-- [ ] **Step 5: Write the template README**
+- [x] **Step 5: Write the template README**
 
 README 明确：
 
@@ -507,7 +527,7 @@ README 明确：
 - 官方验证固定 Unity `6000.0.25f1`；
 - 用户自行移植其他 Unity 版本请读 Community Guide。
 
-- [ ] **Step 6: Materialize a real workspace and confirm domain reload**
+- [x] **Step 6: Materialize a real workspace and confirm domain reload**
 
 从当前已提交 Commit 创建快照，再物化模板到新的外部目录。用 Unity 打开：
 
@@ -519,7 +539,7 @@ README 明确：
 
 Expected: Package Manager 解析、Core/Runtime/Consumer Adapter 编译成功；没有从旧 `UnityTestProject` 或 worktree 穿透加载。
 
-- [ ] **Step 7: Run policy tests and commit Task 4**
+- [x] **Step 7: Run policy tests and commit Task 4**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Tests/Invoke-AppUIReleaseToolsTests.ps1 -TestGroup Consumer,Policy
@@ -559,7 +579,7 @@ git commit -m "Add Unity 6000 consumer template"
   - `Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildIl2Cpp`
   - `Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerSmokeCommand.Run`
 
-- [ ] **Step 1: Write failing EditMode and PlayMode tests first**
+- [x] **Step 1: Write failing EditMode and PlayMode tests first**
 
 EditMode 测试覆盖：
 
@@ -580,7 +600,7 @@ PlayMode 测试覆盖：
 
 首次物化并运行 Expected: 因 Controller、Fixture 或生成资产不存在而编译/测试失败。
 
-- [ ] **Step 2: Implement controllers and deterministic fixture generation**
+- [x] **Step 2: Implement controllers and deterministic fixture generation**
 
 Controller 只记录公开生命周期回调和刷新数据。`ConsumerBindingPageController` 必须是 `partial`，手写文件中不声明生成字段。
 
@@ -596,19 +616,19 @@ Fixture 命令使用 `AssetDatabase`、`PrefabUtility`、`EditorSceneManager` �
 
 生成必须幂等：每次先只删除 `Assets/AppUIConsumerGenerated/` 这个精确受控目录，再重建；不得删除模板源目录。
 
-- [ ] **Step 3: Implement the three-stage Binding pipeline**
+- [x] **Step 3: Implement the three-stage Binding pipeline**
 
 第一轮 `CreateFixturesAndGenerateBindings` 对 Prefab Scope 调用 `UIBindingGenerator.Generate` 并写阶段 JSON，然后退出，触发下轮 Unity 编译 `.Bindings.cs`。第二轮 `BindAndValidate` 调用 `UIBindingPrefabBinder.Bind`、`UIBindingValidator.ValidateScope` 和 `UIBindingValidateAllRunner.ValidateAll`，把现有 Binding JSON 报告写到 `APPUI_VALIDATION_OUTPUT`。
 
 任何 Generate/Bind/Validate Error 都抛异常并让 Unity 返回非零；不得在 Validate 阶段自动修复。
 
-- [ ] **Step 4: Implement Sample import and minimum smoke entry point**
+- [x] **Step 4: Implement Sample import and minimum smoke entry point**
 
 `ImportBasicIntegration` 使用 `UnityEditor.PackageManager.UI.Sample.FindByPackage("com.joih.appui", expectedVersion)` 找到 `Basic Integration` 并导入。下一次 Unity invocation 负责验证导入 Sample 编译。
 
 `AppUIConsumerSmokeCommand.Run` 读取已生成场景，通过公开 Runtime Host 完成 Initialize/Open/Close，验证 `PackageInfo.version`，写 `git-install-smoke.json` 后以明确退出码结束。
 
-- [ ] **Step 5: Implement Mono and IL2CPP build entry points**
+- [x] **Step 5: Implement Mono and IL2CPP build entry points**
 
 统一私有 `Build(ScriptingImplementation backend, string label)`：
 
@@ -618,7 +638,7 @@ Fixture 命令使用 `AssetDatabase`、`PrefabUtility`、`EditorSceneManager` �
 - 将 `result`、`totalSize`、`totalTime`、`unityVersion`、`backend`、`outputRelativePath` 写入 `APPUI_VALIDATION_OUTPUT` 下 JSON；
 - 失败抛异常，绝不只写 Console Warning。
 
-- [ ] **Step 6: Execute the consumer pipeline manually in isolated invocations**
+- [x] **Step 6: Execute the consumer pipeline manually in isolated invocations**
 
 顺序固定：
 
@@ -636,7 +656,7 @@ ImportBasicIntegration
 
 每个 Unity 进程使用同一外部 Consumer 路径和独立 Log，最长 120 秒。Expected: 除当前机器已知可能阻塞的 IL2CPP 环境外，其余门禁通过；IL2CPP 若阻塞必须保留为 Blocked，不伪造 Pass。
 
-- [ ] **Step 7: Commit tests, fixtures and commands**
+- [x] **Step 7: Commit tests, fixtures and commands**
 
 ```powershell
 git add Validation~/Unity6000.0Consumer
@@ -653,6 +673,8 @@ git commit -m "Add AppUI consumer integration gates"
 - Create: `Tools~/Release/Invoke-AppUIPreTagValidation.ps1`
 - Create: `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`
 - Create: `Tools~/Release/New-AppUIReleaseReport.ps1`
+- Create: `Tools~/Release/New-AppUIReleaseArtifacts.ps1`
+- Create: `Tools~/Release/Test-AppUIReleaseReadiness.ps1`
 - Modify: `Tools~/Release/Tests/Invoke-AppUIReleaseToolsTests.ps1`
 
 **Interfaces:**
@@ -661,7 +683,7 @@ git commit -m "Add AppUI consumer integration gates"
 - Produces: `pretag-report.json`、NUnit XML、Binding JSON、Mono/IL2CPP JSON、Git smoke JSON、规范化 Hash 清单和已脱敏日志。
 - Invariant: 报告和 Artifact 不进入候选包 Tree，不包含用户名、凭据或本机绝对路径。
 
-- [ ] **Step 1: Add failing parser, timeout, report and redaction tests**
+- [x] **Step 1: Add failing parser, timeout, report and redaction tests**
 
 PowerShell 测试增加：
 
@@ -676,11 +698,11 @@ PowerShell 测试增加：
 
 Expected: 新功能不存在而失败。
 
-- [ ] **Step 2: Implement the bounded Unity process runner**
+- [x] **Step 2: Implement the bounded Unity process runner**
 
 `Invoke-AppUIUnityProcess` 使用 `Start-Process -PassThru`、显式参数数组和独立 Log；120 秒未退出则停止该精确 Process，返回 `Blocked`，并停止当前发布脚本。不得继续运行后续门禁或复用之前候选的结果。
 
-- [ ] **Step 3: Implement the Pre-tag orchestrator**
+- [x] **Step 3: Implement the Pre-tag orchestrator**
 
 `Invoke-AppUIPreTagValidation.ps1` 参数：
 
@@ -696,16 +718,16 @@ Expected: 新功能不存在而失败。
 
 Clean tree 检查在 `SourceCommit == HEAD` 时要求 `git status --porcelain` 为空；若验证历史 Commit，则工作树状态只影响操作者告警，不影响 Commit 快照身份。
 
-- [ ] **Step 4: Implement Git URL smoke orchestration**
+- [x] **Step 4: Implement Git URL smoke orchestration**
 
 `Invoke-AppUIGitInstallSmoke.ps1` 接受 `-PackageReference`，只允许：
 
 - `https://github.com/TechJoiH/JoiH-AppUI.git#<40-sha>`；
 - `https://github.com/TechJoiH/JoiH-AppUI.git#v<semver>`。
 
-脚本创建全新 Consumer，运行 Sample import、Domain Reload、fixture/generate、Binding 第二阶段和 `AppUIConsumerSmokeCommand.Run`，输出 `git-install-smoke.json`。不得复用 Pre-tag 的 `Library` 或 packages-lock。
+脚本创建全新 Consumer，运行 Sample import、Domain Reload、fixture/generate、Binding 第二阶段和 `AppUIConsumerSmokeCommand.Run`。Commit URL 输出 `commit-git-install-smoke.json`，Tag URL 输出 `tag-git-install-smoke.json`；Tag 证据必须先通过远端 Tag 解析绑定到其真实 Commit/Tree。不得复用 Pre-tag 的 `Library` 或 packages-lock。
 
-- [ ] **Step 5: Implement external report generation and identity checks**
+- [x] **Step 5: Implement external report generation and identity checks**
 
 `New-AppUIReleaseReport.ps1` 从候选 Identity、NUnit XML、Binding JSON、Build JSON、Git smoke JSON组合报告。报告固定包含设计规格第 13.1 节字段，并附每个 Gate 的 `status`、`evidenceFile`、`durationMs`。
 
@@ -718,15 +740,15 @@ Pre-tag 报告中：
 
 正式报告中 Tag 必须经 `git ls-remote origin refs/tags/v0.2.0-pre.2` 解析，并验证其 Commit/Tree 与候选一致。
 
-- [ ] **Step 6: Sanitize release artifacts and audit for secrets**
+- [x] **Step 6: Sanitize release artifacts and audit for secrets**
 
-原始本地 Log 保留在操作者外部 Run Root；上传版本先逐文件脱敏，再压缩为 `appui-v0.2.0-pre.2-logs.zip`。报告只记录 Artifact 相对文件名，不记录本机绝对路径。秘密扫描失败时不创建 GitHub Release。
+原始本地 Log 保留在操作者外部 Run Root；上传版本先逐文件脱敏，再压缩为 `appui-v0.2.0-pre.2-logs.zip`。`New-AppUIReleaseArtifacts.ps1` 从显式组装的外部证据目录生成恰好十个最终文件，并对九个文本制品和 ZIP 内条目执行秘密与本地绝对路径审计。报告只记录 Artifact 相对文件名，不记录本机绝对路径。任一审计失败时不创建 GitHub Release。
 
-- [ ] **Step 7: Run all PowerShell tests and a no-build dry run**
+- [x] **Step 7: Run all PowerShell tests and a no-build dry run**
 
 Dry run 使用 fixture XML/JSON 验证报告拼装，不调用 Unity；随后用当前 HEAD 运行到 `-StopAfter StaticPolicy` 和 `-StopAfter Snapshot`。Expected: 单元测试、候选 Identity 和静态门禁通过。
 
-- [ ] **Step 8: Commit Task 6**
+- [x] **Step 8: Commit Task 6**
 
 ```powershell
 git add Tools~/Release
@@ -757,11 +779,11 @@ git commit -m "Add reproducible AppUI release gates"
 - Produces: 用户可复制执行的安装/移植/验证命令和版本为 `0.2.0-pre.2` 的发布候选 Commit。
 - Does not claim: Tag 已存在或 `0.2.0-pre.2` 已 Officially Supported。
 
-- [ ] **Step 1: Run a failing docs-to-tool contract audit**
+- [x] **Step 1: Run a failing docs-to-tool contract audit**
 
 脚本提取文档中的 `Tools~/Release/*.ps1`、`Validation~/Unity6000.0Consumer`、C# `-executeMethod` 名称并断言文件/类型存在；再断言 `package.json.version == 0.2.0-pre.2`。Expected: 版本仍为 `0.2.0-pre.1`，测试失败。
 
-- [ ] **Step 2: Rewrite validation docs around the external consumer**
+- [x] **Step 2: Rewrite validation docs around the external consumer**
 
 `Documentation~/validation.md` 明确区分：
 
@@ -776,7 +798,7 @@ git commit -m "Add reproducible AppUI release gates"
 
 将旧的手工 `UnityTestProject` 路径从公开流程移除。
 
-- [ ] **Step 3: Document exact install channels**
+- [x] **Step 3: Document exact install channels**
 
 README/Getting Started 只推荐正式 Tag：
 
@@ -786,11 +808,11 @@ https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2
 
 但在 Tag 创建前明确标注“计划中的下一候选版本，只有 Release 页面出现后才可按 Tag 安装”。保留本地开发 `file:` 作为贡献者说明，不让真实项目跟随 `main`。
 
-- [ ] **Step 4: Update package version and Changelog**
+- [x] **Step 4: Update package version and Changelog**
 
 将 `package.json.version` 改为 `0.2.0-pre.2`，`unity` 保持 `6000.0`，依赖保持只有 UGUI `2.0.0`。Changelog 新增 `0.2.0-pre.2 - Unreleased`，记录政策文档、外部 Consumer、快照/报告/Tag 门禁；不写“已发布”。
 
-- [ ] **Step 5: Run all static, docs and PowerShell tests**
+- [x] **Step 5: Run all static, docs and PowerShell tests**
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Tests/Invoke-AppUIReleaseToolsTests.ps1 -TestGroup All
@@ -799,7 +821,7 @@ git diff --check
 
 Expected: 无断链、无工具名漂移、无 `main` 生产安装推荐、无 Unity 上游支持周期表述、无 Runtime/Editor 改动。
 
-- [ ] **Step 6: Commit the exact release candidate**
+- [x] **Step 6: Commit the exact release candidate**
 
 ```powershell
 git add README.md CONTRIBUTING.md CHANGELOG.md package.json Documentation~ Validation~ Tools~
@@ -824,7 +846,7 @@ Expected: 工作树干净。记录 `git rev-parse HEAD` 作为唯一候选 Commi
 - Produces: 与该 Commit/Tree/Manifest Hash 绑定的外部 `pretag-report.json` 和脱敏 Artifact。
 - Gate: 必须全部 Passed 才能请求 Push Candidate 权限。
 
-- [ ] **Step 1: Preflight Unity and C++ build environment**
+- [x] **Step 1: Preflight Unity and C++ build environment**
 
 确认 Unity 路径恰为 `6000.0.25f1`。使用 `vswhere.exe` 查找包含 `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` 的 VS 2022 Build Tools，并验证 `vcvars64.bat` 可解析；不要把 VS 2026 检测结果伪装成 VS 2022。
 
@@ -1043,22 +1065,22 @@ git commit -m "Document v0.2.0-pre.2 release evidence"
 
 ## Completion Criteria
 
-- [ ] 官方唯一目标环境固定为 Unity 6.0 / `6000.0`，措辞不依赖 Unity 上游支持周期。
+- [x] 官方唯一目标环境固定为 Unity 6.0 / `6000.0`，措辞不依赖 Unity 上游支持周期。
 - [ ] 官方仓库仍只有一份 `package.json`、一条源码线、一个 Consumer 和普通 SemVer Tag。
-- [ ] 文档严格区分 Official Target 与五种互斥兼容状态。
-- [ ] Community Verified 只保存外部证据索引，不成为官方发行产物或 Gate。
-- [ ] Unity 2022.3/2021.3 是 Community Port；Unsupported 与 Known Incompatible 完全分开。
-- [ ] Community Porting Guide 可由不了解 AppUI 内部实现的开发者独立执行。
-- [ ] 没有提前创建 Compatibility 空壳，版本宏没有进入 Core/Runtime/Binding 生成代码。
-- [ ] `Validation~/Unity6000.0Consumer/` 是无缓存、无绝对路径的仓库内模板。
+- [x] 文档严格区分 Official Target 与五种互斥兼容状态。
+- [x] Community Verified 只保存外部证据索引，不成为官方发行产物或 Gate。
+- [x] Unity 2022.3/2021.3 是 Community Port；Unsupported 与 Known Incompatible 完全分开。
+- [x] Community Porting Guide 可由不了解 AppUI 内部实现的开发者独立执行。
+- [x] 没有提前创建 Compatibility 空壳，版本宏没有进入 Core/Runtime/Binding 生成代码。
+- [x] `Validation~/Unity6000.0Consumer/` 是无缓存、无绝对路径的仓库内模板。
 - [ ] 实际验证发生在仓库外工作区，并安装精确 Commit 导出的候选快照或 Git URL。
-- [ ] 候选 Identity 包含 Commit、Tree、Version 和规范化 Manifest Hash。
-- [ ] Consumer 使用项目自有 Operation/Execution/Asset Adapter，没有默认异步或资源后端。
+- [x] 候选 Identity 包含 Commit、Tree、Version 和规范化 Manifest Hash。
+- [x] Consumer 使用项目自有 Operation/Execution/Asset Adapter，没有默认异步或资源后端。
 - [ ] Basic Page、Popup/Input、Focus List、Binding、Scope、Lease 都有外部集成证据。
 - [ ] EditMode、PlayMode、Binding、Mono、IL2CPP 全部与同一候选 Commit 绑定并 Passed。
 - [ ] Commit SHA 和不可变 Tag Git URL 都在全新 Consumer 中完成安装 smoke。
 - [ ] 正式报告和脱敏 Artifact 位于候选 Commit 外，并与 Tag Commit/Tree/Manifest 一致。
-- [ ] 任一环境 Blocked 或测试 Failed 时未创建/移动官方 Tag。
+- [x] 任一环境 Blocked 或测试 Failed 时未创建/移动官方 Tag。
 - [ ] `v0.2.0-pre.2` 只在全部门禁通过和用户明确授权后发布。
 - [ ] AppUI Core、Provider 注入、公共生命周期和宿主边界没有改变。
 

@@ -1040,6 +1040,7 @@ param([string]$MarkerPath)
                 'Tools~\Release\Invoke-AppUIGitInstallSmoke.ps1',
                 'Tools~\Release\New-AppUIReleaseReport.ps1',
                 'Tools~\Release\New-AppUIReleaseArtifacts.ps1',
+                'Tools~\Release\Test-AppUIReleaseReadiness.ps1',
                 'Validation~\Unity6000.0Consumer\README.md'
             )) {
                 Assert-True (Test-Path -LiteralPath (Join-Path $repositoryRoot $relativePath) -PathType Leaf) "Documented release file is missing: $relativePath"
@@ -1066,6 +1067,31 @@ param([string]$MarkerPath)
             Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2')) 'README does not show the planned immutable tag URL.'
             Assert-True ($readme.Contains('Planned tag; install only after it appears on the GitHub Release page.')) 'README does not warn that the planned tag is unavailable before release.'
             Assert-True ($readme -notmatch 'git#main|\.git#main') 'README recommends main as a production install.'
+            Assert-True ($readme.Contains('Historical Development Evidence')) 'README does not separate historical candidate evidence.'
+
+            $validation = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\validation.md') -Raw -Encoding UTF8
+            foreach ($evidenceBoundary in @(
+                'Historical Development Evidence',
+                'Current Candidate Evidence',
+                'Blocked/MissingToolchain'
+            )) {
+                Assert-True ($validation.Contains($evidenceBoundary)) "Validation docs blur current and historical evidence: $evidenceBoundary"
+            }
+            Assert-True ($validation -match '(?s)Current Candidate Evidence.*Package resolve.*IL2CPP.*NotRun') 'Validation docs do not mark current candidate Consumer gates NotRun.'
+
+            $implementationPlan = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\superpowers\plans\2026-08-12-single-official-unity-line-implementation.md') -Raw -Encoding UTF8
+            foreach ($obsoleteName in @('Read-AppUINUnitResult', 'Protect-AppUIReleaseArtifact')) {
+                Assert-True (-not $implementationPlan.Contains($obsoleteName)) "Implementation plan retains an obsolete release API: $obsoleteName"
+            }
+            foreach ($currentName in @(
+                'Read-AppUINUnit3Result',
+                'Protect-AppUILog',
+                'New-AppUIReleaseArtifacts.ps1',
+                'Test-AppUIReleaseReadiness.ps1',
+                'Blocked/MissingToolchain'
+            )) {
+                Assert-True ($implementationPlan.Contains($currentName)) "Implementation plan is missing current release contract: $currentName"
+            }
         }
     }
 }

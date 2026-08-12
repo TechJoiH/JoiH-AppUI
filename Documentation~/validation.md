@@ -154,9 +154,9 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 
 创建 Tag 前可运行 `Tools~/Release/Test-AppUIReleaseReadiness.ps1`。它只读解析远端 `main` 和 Tag：只有远端 `main` 正好等于候选且 Tag 尚不存在时返回 `ReadyForTag`；未推送为 `NotPushed`，仅本地存在同名 Tag 为 `LocalTagExists`，远端同名 Tag 已指向候选为 `TagExists`，指向其他提交为 `TagConflict`。它不会执行 push、Tag 或 Release 操作。
 
-## 当前 `0.2.0-pre.2` 候选证据
+## 当前 `0.2.0-pre.2` 验证状态
 
-截至当前本地实现阶段：
+框架开发阶段曾在独立 Consumer 对前序实现候选完成以下验证：
 
 - Unity：`6000.0.25f1`；
 - Package Manager、Basic Integration、Domain Reload：通过；
@@ -164,11 +164,21 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 - EditMode：134/134 通过；
 - PlayMode：17/17 通过；
 - Windows x64 Mono Development Build：通过，0 Error、0 Warning；
-- Windows x64 IL2CPP：`Blocked/MissingToolchain`，本机未发现 Unity 该版本可用的 Windows C++ toolchain；
+- Windows x64 IL2CPP：因缺少可用的 Windows C++ toolchain 未通过。
+
+这些结果属于 `Historical Development Evidence`，用于证明 Consumer、Fixture 与门禁实现可工作，但它们绑定前序 Commit，**不能作为当前精确发布候选的 Release 证据复用**。任何候选 Tree 变化后，都必须用新的 Run Root 从 Static Policy 重新执行完整流程。
+
+当前最新干净候选的 `Current Candidate Evidence` 状态是：
+
+- Static Policy：`Passed`；
+- Candidate Snapshot 与 Commit/Tree/Version/Manifest Hash：`Passed`；
+- Unity `6000.0.25f1` 版本检查：`Passed`；
+- Visual Studio 2022 C++ 工具链预检：`Blocked/MissingToolchain`；
+- 当前候选的 Package resolve、Sample、Binding、EditMode、PlayMode、Mono、IL2CPP：`NotRun`，因为流水线已在环境预检处停止；
 - 远端 Commit SHA Smoke：`NotRun`；
 - 不可变 Tag 与 Tag URL Smoke：`NotRun`。
 
-因此 `0.2.0-pre.2` 当前仍是 Official Target 下的未发布候选。IL2CPP、远端 Commit、不可变 Tag 与 Tag URL 证据全部完成前，不得登记为 Officially Supported Release。
+因此 `0.2.0-pre.2` 当前仍是 Official Target 下的未发布候选。当前候选的 Consumer 全门禁、IL2CPP、远端 Commit、不可变 Tag 与 Tag URL 证据全部完成前，不得登记为 Officially Supported Release。
 
 ## 人工验收
 

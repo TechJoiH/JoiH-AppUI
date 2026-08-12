@@ -172,7 +172,7 @@ AppUI 只等待 `IUIOperation<UITransitionResult>`，不关心 `projectTransitio
 
 ## 当前验证与限制
 
-- 已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；最新数字见[验证与发布门禁](Documentation~/validation.md)。
+- 框架开发阶段已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；这些历史结果属于 `Historical Development Evidence`，不能跨候选 Commit 充当发布证据，当前状态见[验证与发布门禁](Documentation~/validation.md)。
 - 当前尚无 Officially Supported Release；本机 IL2CPP 因缺少 Windows C++ toolchain 仍为环境 `Blocked`，远端 Commit、不可变 Tag 和 Tag URL 冒烟完成前不会提升状态。
 - `0.x` 期间允许破坏性整理，升级前请阅读 [CHANGELOG](CHANGELOG.md)。
 - 最终视觉、字体、动画手感、Prefab 点击区域仍需要在接入项目中人工验收。
