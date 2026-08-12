@@ -30,4 +30,14 @@
 - 从干净消费项目安装包并完成 Domain Reload；
 - 至少在一个目标平台做 IL2CPP Development Build。
 
+官方仓库通过仓库外 `Validation~/Unity6000.0Consumer/` 执行上述流程。发布工具入口为：
+
+- `Tools~/Release/New-AppUICandidateSnapshot.ps1`；
+- `Tools~/Release/New-AppUIConsumerWorkspace.ps1`；
+- `Tools~/Release/Invoke-AppUIPreTagValidation.ps1`；
+- `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`；
+- `Tools~/Release/New-AppUIReleaseReport.ps1`。
+
+不要直接打开仓库内 Consumer 模板，也不要把它生成的 `Library`、Fixture、Build 或报告提交回包仓库。完整的候选身份、执行顺序、超时和 Artifact 规则见[验证与发布门禁](validation.md)。
+
 当前证据和版本数字见[验证与发布门禁](validation.md)。

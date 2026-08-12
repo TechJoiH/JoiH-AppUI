@@ -618,6 +618,51 @@ guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             Assert-True ($gitSmokeText.Contains('tag-git-install-smoke.json')) 'Tag smoke output is missing.'
         }
     }
+
+    if (Test-GroupRequested 'Docs') {
+        Invoke-Test 'Public docs match release tools and planned package version' {
+            $repositoryRoot = [System.IO.Path]::GetFullPath(
+                (Join-Path $PSScriptRoot '..\..\..'))
+            $package = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-Equal '0.2.0-pre.2' $package.version 'Planned package version drifted.'
+            Assert-Equal '6000.0' $package.unity 'Official Unity target drifted.'
+            Assert-Equal 1 @($package.dependencies.PSObject.Properties).Count 'Package gained an undeclared dependency.'
+            Assert-Equal '2.0.0' $package.dependencies.'com.unity.ugui' 'UGUI dependency drifted.'
+
+            foreach ($relativePath in @(
+                'Tools~\Release\New-AppUICandidateSnapshot.ps1',
+                'Tools~\Release\New-AppUIConsumerWorkspace.ps1',
+                'Tools~\Release\Invoke-AppUIPreTagValidation.ps1',
+                'Tools~\Release\Invoke-AppUIGitInstallSmoke.ps1',
+                'Tools~\Release\New-AppUIReleaseReport.ps1',
+                'Validation~\Unity6000.0Consumer\README.md'
+            )) {
+                Assert-True (Test-Path -LiteralPath (Join-Path $repositoryRoot $relativePath) -PathType Leaf) "Documented release file is missing: $relativePath"
+            }
+
+            $editorSources = @(Get-ChildItem -LiteralPath (Join-Path $repositoryRoot 'Validation~\Unity6000.0Consumer\Assets\AppUIConsumer\Editor') -Filter '*.cs' -File | ForEach-Object {
+                Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
+            }) -join "`n"
+            foreach ($method in @(
+                'AppUIConsumerFixtureCommand',
+                'ImportBasicIntegration',
+                'CreateFixturesAndGenerateBindings',
+                'AppUIConsumerBindingCommand',
+                'BindAndValidate',
+                'AppUIConsumerBuildCommand',
+                'BuildMono',
+                'BuildIl2Cpp',
+                'AppUIConsumerSmokeCommand'
+            )) {
+                Assert-True ($editorSources.Contains($method)) "Documented executeMethod target is missing: $method"
+            }
+
+            $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw -Encoding UTF8
+            Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2')) 'README does not show the planned immutable tag URL.'
+            Assert-True ($readme.Contains('Planned tag; install only after it appears on the GitHub Release page.')) 'README does not warn that the planned tag is unavailable before release.'
+            Assert-True ($readme -notmatch 'git#main|\.git#main') 'README recommends main as a production install.'
+        }
+    }
 }
 finally {
     if ((Test-Path -LiteralPath $testRoot) -and

@@ -1,18 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0-pre.2] - Unreleased
 
 ### Added
 
 - Documented Unity 6.0 / `6000.0` as the single Official Target without tying the decision to Unity's upstream support calendar.
 - Added five mutually exclusive compatibility states and an external-evidence-only Community Verified index.
 - Added a standalone Community Unity Porting Guide for project-owned manifests, compatibility boundaries, validation and unofficial tags.
+- Added a deterministic candidate snapshot with Commit, Tree and normalized package content identity.
+- Added the clean `Validation~/Unity6000.0Consumer/` template with project-owned Operation, Execution Context and Asset Provider adapters.
+- Added generated Basic Page, Popup, Binding and Focus fixtures plus external EditMode, PlayMode, Binding, Smoke, Mono and IL2CPP gates.
+- Added bounded release orchestration, NUnit parsing, report identity checks, remote Tag verification, log redaction and secret auditing.
+- `ReleaseScope` now invalidates matching in-flight and queued Open requests before an instance exists; late successful loads cannot reopen the page and release their Lease once.
 
-### Planned validation work
+### Remaining release gates
 
-- Formalize `Validation~/Unity6000.0Consumer/` as the only official external Consumer template.
-- Add deterministic candidate snapshots, content manifests and external release reports.
-- Complete IL2CPP, pushed Commit Git URL and immutable Tag Git URL gates before declaring an Officially Supported Release.
+- Install or expose a supported Windows C++ toolchain and complete the IL2CPP gate.
+- Push the exact tested candidate, run Commit SHA Git URL smoke, create the immutable Tag only after explicit authorization, then run Tag URL smoke.
+- Publish the external report and sanitized evidence before declaring an Officially Supported Release.
 
 ## [0.2.0-pre.1]
 

@@ -20,6 +20,14 @@
 4. Runtime/asmdef/package 依赖边界检查；
 5. 涉及 Player 行为时完成对应目标平台构建。
 
+发布级验证不直接打开仓库中的模板，而是从精确 Commit 导出候选包，再将 `Validation~/Unity6000.0Consumer/` 物化到仓库外。完整入口和证据边界见 [验证与发布门禁](Documentation~/validation.md)。贡献者可先运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Tests/Invoke-AppUIReleaseToolsTests.ps1 -TestGroup All
+```
+
+本机缺少 C++ toolchain 时，IL2CPP 必须记录为 `Blocked`，不能用 Mono、旧日志或另一个 Commit 的结果替代。
+
 ## Pull Request
 
 PR 应说明职责边界、行为变化、测试结果、兼容性影响和人工验证步骤。不要在同一 PR 顺带重构无关模块。

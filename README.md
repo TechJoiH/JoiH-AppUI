@@ -2,7 +2,7 @@
 
 Joi.H AppUI 是面向 Unity 6 UGUI 的页面与交互框架。它统一页面定义、分层、作用域、生命周期、Binding、焦点导航和输入阻挡，但不替项目选择异步库、资源系统或业务架构。
 
-> 当前版本：`0.2.0-pre.1`。这是 Unity 6 Official Target 下的预发布候选，尚未完成 IL2CPP、不可变 Tag 和 Tag URL 安装门禁，不能视为 Officially Supported Release。1.0 前 API 与序列化字段仍可能调整。
+> 当前候选版本：`0.2.0-pre.2`。这是 Unity 6 Official Target 下的预发布候选，尚未完成 IL2CPP、远端 Commit、不可变 Tag 和 Tag URL 安装门禁，不能视为 Officially Supported Release。1.0 前 API 与序列化字段仍可能调整。
 
 ## 为什么做
 
@@ -58,20 +58,22 @@ Unity 2022.3 与 2021.3 当前属于 `Community Port`：允许用户自行移植
 真实项目应安装经过验证的普通 SemVer Tag，不要长期跟随 `main`。打开 `Window > Package Manager`，点击 `+ > Add package from git URL...`，输入：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#vX.Y.Z
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2
 ```
+
+> Planned tag; install only after it appears on the GitHub Release page.
 
 也可以直接加入 `Packages/manifest.json`：
 
 ```json
 {
   "dependencies": {
-    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#vX.Y.Z"
+    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.2"
   }
 }
 ```
 
-当前还没有通过全部门禁的官方 Tag，因此 `vX.Y.Z` 是格式说明而不是可直接复制的现有版本。评估当前候选时必须固定精确 Commit，并自行承担预发布风险；不要把无版本的仓库 URL 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
+`v0.2.0-pre.2` 是计划中的下一候选 Tag，只有 GitHub Release 页面实际出现该 Tag 后才可按上面的 URL 安装；Tag 创建前这条地址不可用。评估尚未发布的候选时必须固定精确 Commit，并自行承担预发布风险；不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
 
 ## 最短接入路径
 
@@ -171,7 +173,7 @@ AppUI 只等待 `IUIOperation<UITransitionResult>`，不关心 `projectTransitio
 ## 当前验证与限制
 
 - 已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；最新数字见[验证与发布门禁](Documentation~/validation.md)。
-- 当前尚无 Officially Supported Release；IL2CPP、不可变 Tag 和 Tag URL 冒烟完成前不会提升状态。
+- 当前尚无 Officially Supported Release；本机 IL2CPP 因缺少 Windows C++ toolchain 仍为环境 `Blocked`，远端 Commit、不可变 Tag 和 Tag URL 冒烟完成前不会提升状态。
 - `0.x` 期间允许破坏性整理，升级前请阅读 [CHANGELOG](CHANGELOG.md)。
 - 最终视觉、字体、动画手感、Prefab 点击区域仍需要在接入项目中人工验收。
 - 对外分发许可证尚未确定；在 LICENSE 明确前，不应推定获得复制、修改或再分发授权。

@@ -22,7 +22,7 @@ AppUI 的官方目标由项目自身的验证策略决定，不与 Unity 当前�
 
 目前没有完成全部发布门禁的不可变官方 Tag。
 
-当前 `main` 上的 `0.2.0-pre.1` 是 Unity 6 Official Target 下的预发布候选，已有 EditMode、PlayMode 和 Mono 构建证据，但仍缺少 IL2CPP 完成结果、不可变 Tag 和 Tag URL 安装冒烟，因此不能标记为 `Officially Supported`。
+当前计划发布的 `0.2.0-pre.2` 是 Unity 6 Official Target 下的预发布候选，已有外部 Consumer、Binding、EditMode、PlayMode 和 Mono 构建证据，但本机 IL2CPP 仍因缺少 Windows C++ toolchain 阻塞，也尚未完成远端 Commit、不可变 Tag 和 Tag URL 安装冒烟，因此不能标记为 `Officially Supported`。
 
 官方 Release 记录必须包含：
 

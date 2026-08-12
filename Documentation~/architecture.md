@@ -47,7 +47,7 @@ sequenceDiagram
     UI-->>App: completion + UIOpenResult
 ```
 
-每次操作同时携带运行时代次与页面版本。晚到回调在提交状态前校验；失效结果不会重新显示页面，但其 Lease 仍会归还。
+每次操作同时携带运行时代次与页面版本。晚到回调在提交状态前校验；`ReleaseScope` 也会失效同 Scope 中尚未形成实例的 Open。失效结果不会重新显示页面，但其 Lease 仍会归还且只归还一次。
 
 ## 框架与业务边界
 
