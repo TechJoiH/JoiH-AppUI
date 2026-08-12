@@ -34,6 +34,8 @@ external report + sanitized artifacts
 
 `New-AppUIConsumerWorkspace.ps1` 将 `Validation~/Unity6000.0Consumer/` 复制到仓库外，生成只指向该候选快照的 `Packages/manifest.json`。之后才运行 Sample、Domain Reload、Fixture、Binding、测试与构建。
 
+完整流程结束后会重新计算候选快照的逐文件哈希与总 Manifest Hash，并拒绝任何被修改、缺失或额外出现的文件。这保证 Unity Consumer 运行不能悄悄改变被验证的 UPM 候选内容。
+
 ### 3. 已推送 Commit SHA Git URL Smoke
 
 本地全门禁通过并获得推送授权后，用全新的 Consumer 安装：
@@ -73,6 +75,8 @@ Static Policy
 → Windows IL2CPP Development Build
 → External Report
 ```
+
+Static Policy 会从精确 Commit 快照检查：根 `package.json` 是唯一包清单、版本符合严格 SemVer、唯一官方 Consumer 为 `Validation~/Unity6000.0Consumer/`、Unity 为 `6000.0`、依赖只有 UGUI `2.0.0`，并继续执行禁用依赖、版本宏、Compatibility、Unity Meta、文档链接与 Git 空白检查。
 
 Consumer 使用真实 EventSystem、Canvas、GraphicRaycaster、Layer Root、Definition、Registry、Profile、Button、ScrollRect 和 `B_` Binding 节点。测试覆盖 Basic 页面完整生命周期、Popup Cancel/Background/Input Block、SceneScope 释放、Pending Load 晚到成功、真实焦点选择变化和 Lease 单次释放。
 
@@ -140,9 +144,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIG
 - Commit SHA Smoke 与 Tag Smoke；
 - 每个 Gate 的证据文件和耗时。
 
+Commit 与 Tag Smoke 可以来自各自独立 Run Root；`New-AppUIReleaseReport.ps1` 通过 `-CommitSmokePath` 与 `-TagSmokePath` 显式组合这些证据，并逐项核对 Commit、Tree、Version、Manifest Hash 与安装 URL，不要求人工复制或修改 Smoke JSON。
+
 正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再扫描 `ghp_`、`github_pat_`、Authorization Header 和私钥标记；秘密审计失败时不创建 Release。
 
 `Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成脱敏且通过秘密审计的 `appui-v0.2.0-pre.2-logs.zip`。候选仓库不接收这些运行产物。
+
+Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式报告、Package Manifest、EditMode/PlayMode XML、Binding、Mono/IL2CPP、Commit/Tag Smoke 和日志 ZIP 复制到新的 `artifacts/` 目录。九个文本文件都会执行同样的路径脱敏与秘密审计；目录必须恰好包含十个文件才能进入 GitHub Release。
+
+创建 Tag 前可运行 `Tools~/Release/Test-AppUIReleaseReadiness.ps1`。它只读解析远端 `main` 和 Tag：只有远端 `main` 正好等于候选且 Tag 尚不存在时返回 `ReadyForTag`；未推送为 `NotPushed`，仅本地存在同名 Tag 为 `LocalTagExists`，远端同名 Tag 已指向候选为 `TagExists`，指向其他提交为 `TagConflict`。它不会执行 push、Tag 或 Release 操作。
 
 ## 当前 `0.2.0-pre.2` 候选证据
 

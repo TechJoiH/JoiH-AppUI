@@ -28,7 +28,13 @@ param(
     [string]$ResolvedTag = '',
 
     [AllowEmptyString()]
-    [string]$RepositoryPath = ''
+    [string]$RepositoryPath = '',
+
+    [AllowEmptyString()]
+    [string]$CommitSmokePath = '',
+
+    [AllowEmptyString()]
+    [string]$TagSmokePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,4 +51,6 @@ New-AppUIReleaseReport `
     -PlannedTag $PlannedTag `
     -Mode $Mode `
     -ResolvedTag $ResolvedTag `
-    -RepositoryPath $RepositoryPath | Format-List
+    -RepositoryPath $RepositoryPath `
+    -CommitSmokePath $CommitSmokePath `
+    -TagSmokePath $TagSmokePath | Format-List

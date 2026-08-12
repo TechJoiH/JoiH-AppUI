@@ -71,9 +71,10 @@ if (-not $policy.Success) {
 [System.IO.Directory]::CreateDirectory($resolvedRunRoot) | Out-Null
 $evidenceRoot = Join-Path $resolvedRunRoot 'evidence'
 [System.IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
-$policy | ConvertTo-Json -Depth 8 | Set-Content `
-    -LiteralPath (Join-Path $evidenceRoot 'static-policy.json') `
-    -Encoding UTF8
+Write-AppUIJson `
+    -Path (Join-Path $evidenceRoot 'static-policy.json') `
+    -Value $policy `
+    -Depth 8
 if ($StopAfter -eq 'StaticPolicy') {
     Write-Host "Static policy passed for $($identity.SourceCommit)."
     exit 0
@@ -95,9 +96,10 @@ if ($StopAfter -eq 'Snapshot') {
 $buildEnvironment = Test-AppUIBuildEnvironment `
     -UnityPath $UnityPath `
     -ExpectedUnityVersion '6000.0.25f1'
-$buildEnvironment | ConvertTo-Json -Depth 6 | Set-Content `
-    -LiteralPath (Join-Path $evidenceRoot 'build-environment.json') `
-    -Encoding UTF8
+Write-AppUIJson `
+    -Path (Join-Path $evidenceRoot 'build-environment.json') `
+    -Value $buildEnvironment `
+    -Depth 6
 if ($buildEnvironment.Status -ne 'Passed') {
     throw "Build environment is blocked. Gate=$($buildEnvironment.gate) Reason=$($buildEnvironment.Reason). $($buildEnvironment.Details)"
 }
@@ -177,6 +179,11 @@ if ((Test-Path -LiteralPath (Join-Path $evidenceRoot 'editmode.xml')) -and
         -ExpectedPackageVersion $identity.PackageVersion `
         -PlannedTag $PlannedTag | Out-Null
 }
+
+Test-AppUICandidateSnapshot `
+    -PackageRoot $snapshot.PackageRoot `
+    -IdentityPath $snapshot.IdentityPath `
+    -ManifestPath $snapshot.ManifestPath | Out-Null
 
 if (Test-Path -LiteralPath $logRoot -PathType Container) {
     Test-AppUIArtifactSecrets `

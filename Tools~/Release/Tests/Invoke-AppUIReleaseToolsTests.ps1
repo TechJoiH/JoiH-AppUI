@@ -172,6 +172,7 @@ function New-PolicyTestRepository {
     param(
         [string]$Path,
         [string]$RuntimeSource = "namespace Joi.H.AppUI { public sealed class SafeType { } }`n",
+        [string]$PackageVersion = '1.2.3-test.1',
         [string]$UnityVersion = '6000.0',
         [string]$DependenciesJson = '"com.unity.ugui": "2.0.0"'
     )
@@ -184,7 +185,7 @@ function New-PolicyTestRepository {
     Set-Utf8NoBomContent (Join-Path $Path 'package.json') @"
 {
   "name": "com.joih.appui",
-  "version": "1.2.3-test.1",
+  "version": "$PackageVersion",
   "unity": "$UnityVersion",
   "dependencies": {
     $DependenciesJson
@@ -202,7 +203,17 @@ fileFormatVersion: 2
 guid: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 folderAsset: yes
 '@
-    Invoke-TestGit $Path add -- package.json Runtime.meta Runtime/SafeType.cs Runtime/SafeType.cs.meta | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $Path 'Validation~\Unity6000.0Consumer\Assets')) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $Path 'Validation~\Unity6000.0Consumer\Packages')) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $Path 'Validation~\Unity6000.0Consumer\ProjectSettings')) | Out-Null
+    Set-Utf8NoBomContent (Join-Path $Path 'Validation~\Unity6000.0Consumer\Assets\Marker.txt') "consumer marker`n"
+    Set-Utf8NoBomContent (Join-Path $Path 'Validation~\Unity6000.0Consumer\Assets\Marker.txt.meta') @'
+fileFormatVersion: 2
+guid: cccccccccccccccccccccccccccccccc
+'@
+    Set-Utf8NoBomContent (Join-Path $Path 'Validation~\Unity6000.0Consumer\Packages\manifest.template.json') '{}'
+    Set-Utf8NoBomContent (Join-Path $Path 'Validation~\Unity6000.0Consumer\ProjectSettings\ProjectVersion.txt') "m_EditorVersion: 6000.0.25f1`n"
+    Invoke-TestGit $Path add -- package.json Runtime.meta Runtime/SafeType.cs Runtime/SafeType.cs.meta 'Validation~/Unity6000.0Consumer' | Out-Null
     Invoke-TestGit $Path commit -m 'Policy fixture' | Out-Null
     return Invoke-TestGit $Path rev-parse HEAD
 }
@@ -223,6 +234,10 @@ function New-ReleaseEvidenceFixture {
         packageVersion = $Version
         packageManifestSha256 = ('a' * 64)
     } | ConvertTo-Json)
+    Set-Utf8NoBomContent (Join-Path $Path 'package-manifest.json') (@{
+        packageManifestSha256 = ('a' * 64)
+        files = @()
+    } | ConvertTo-Json)
     foreach ($name in @('editmode.xml', 'playmode.xml')) {
         Set-Utf8NoBomContent (Join-Path $Path $name) @'
 <?xml version="1.0" encoding="utf-8"?>
@@ -237,7 +252,17 @@ function New-ReleaseEvidenceFixture {
     Set-Utf8NoBomContent (Join-Path $Path 'binding-validation.json') '{"success":true,"errorCount":0,"durationMs":25,"unityVersion":"6000.0.25f1"}'
     Set-Utf8NoBomContent (Join-Path $Path 'build-windowsmono.json') '{"result":"Succeeded","totalTimeMs":100}'
     Set-Utf8NoBomContent (Join-Path $Path 'build-windowsil2cpp.json') '{"result":"Succeeded","totalTimeMs":200}'
-    Set-Utf8NoBomContent (Join-Path $Path 'commit-git-install-smoke.json') '{"initialized":true,"openPassed":true,"closePassed":true}'
+    Set-Utf8NoBomContent (Join-Path $Path 'commit-git-install-smoke.json') (@{
+        repository = 'TechJoiH/JoiH-AppUI'
+        sourceCommit = $SourceCommit
+        sourceTree = $SourceTree
+        packageVersion = $Version
+        packageManifestSha256 = ('a' * 64)
+        packageReference = 'https://github.com/TechJoiH/JoiH-AppUI.git#' + $SourceCommit
+        initialized = $true
+        openPassed = $true
+        closePassed = $true
+    } | ConvertTo-Json)
 }
 
 function Test-GroupRequested {
@@ -315,6 +340,38 @@ try {
             Assert-Throws {
                 Export-AppUICandidateSnapshot -RepositoryPath $repository -SourceRef $commit -DestinationPath $existing
             } 'already exists' 'Snapshot overwrote an existing destination.'
+        }
+
+        Invoke-Test 'Snapshot identity audit detects mutation and extra files' {
+            $repository = Join-Path $testRoot 'snapshot-audit-source'
+            $commit = New-SnapshotTestRepository $repository
+            $output = Join-Path $testRoot 'snapshot-audit-output'
+            $snapshot = Export-AppUICandidateSnapshot -RepositoryPath $repository -SourceRef $commit -DestinationPath $output
+
+            $audit = Test-AppUICandidateSnapshot `
+                -PackageRoot $snapshot.PackageRoot `
+                -IdentityPath $snapshot.IdentityPath `
+                -ManifestPath $snapshot.ManifestPath
+            Assert-True $audit.Success 'Fresh candidate snapshot failed identity audit.'
+            Assert-Equal $snapshot.PackageManifestSha256 $audit.PackageManifestSha256 'Snapshot audit hash drifted.'
+
+            Set-Utf8NoBomContent (Join-Path $snapshot.PackageRoot 'Runtime\A.cs') 'mutated'
+            Assert-Throws {
+                Test-AppUICandidateSnapshot `
+                    -PackageRoot $snapshot.PackageRoot `
+                    -IdentityPath $snapshot.IdentityPath `
+                    -ManifestPath $snapshot.ManifestPath
+            } 'hash mismatch|identity audit' 'Mutated candidate snapshot was accepted.'
+
+            $outputTwo = Join-Path $testRoot 'snapshot-audit-extra-output'
+            $snapshotTwo = Export-AppUICandidateSnapshot -RepositoryPath $repository -SourceRef $commit -DestinationPath $outputTwo
+            Set-Utf8NoBomContent (Join-Path $snapshotTwo.PackageRoot 'extra.txt') 'untracked export mutation'
+            Assert-Throws {
+                Test-AppUICandidateSnapshot `
+                    -PackageRoot $snapshotTwo.PackageRoot `
+                    -IdentityPath $snapshotTwo.IdentityPath `
+                    -ManifestPath $snapshotTwo.ManifestPath
+            } 'unexpected file|identity audit' 'Snapshot with an extra file was accepted.'
         }
     }
 
@@ -396,6 +453,17 @@ try {
             New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference $gitReference | Out-Null
             $manifest = Get-Content -LiteralPath (Join-Path $destination 'Packages\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             Assert-Equal $gitReference $manifest.dependencies.'com.joih.appui' 'Git package reference changed during materialization.'
+
+            foreach ($invalidReference in @(
+                'https://github.com/TechJoiH/JoiH-AppUI.git#vabc',
+                'https://github.com/TechJoiH/JoiH-AppUI.git#v1',
+                'https://github.com/TechJoiH/JoiH-AppUI.git#v1.2',
+                'https://github.com/TechJoiH/JoiH-AppUI.git#main'
+            )) {
+                Assert-Throws {
+                    Resolve-AppUIPackageReference -PackageReference $invalidReference
+                } 'does not exist|reference|invalid|path' "Non-SemVer Git reference was accepted: $invalidReference"
+            }
         }
 
         Invoke-Test 'Consumer workspace rejects unsafe templates and existing destinations' {
@@ -446,6 +514,23 @@ try {
             Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'ForbiddenProductionTokens' }).Count -eq 1) 'Forbidden token error was not reported.'
         }
 
+        Invoke-Test 'Package policy requires strict SemVer and one official package/Consumer line' {
+            $repository = Join-Path $testRoot 'policy-single-line'
+            $commit = New-PolicyTestRepository -Path $repository -PackageVersion '01.2.3'
+            Set-Utf8NoBomContent (Join-Path $repository 'Samples~\Nested\package.json') '{}'
+            [System.IO.Directory]::CreateDirectory((Join-Path $repository 'Validation~\Unity2022.3Consumer')) | Out-Null
+            Set-Utf8NoBomContent (Join-Path $repository 'Validation~\Unity2022.3Consumer\.gitkeep') ''
+            Invoke-TestGit $repository add -- 'Samples~/Nested/package.json' 'Validation~/Unity2022.3Consumer/.gitkeep' | Out-Null
+            Invoke-TestGit $repository commit -m 'Break package and Consumer identity' | Out-Null
+            $brokenCommit = Invoke-TestGit $repository rev-parse HEAD
+
+            $result = Test-AppUIPackagePolicy -RepositoryPath $repository -SourceRef $brokenCommit
+            Assert-True (-not $result.Success) 'Invalid SemVer or duplicate package/Consumer line was accepted.'
+            foreach ($checkName in @('PackageManifest', 'SinglePackageManifest', 'SingleOfficialConsumer')) {
+                Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq $checkName }).Count -eq 1) "Missing policy error: $checkName"
+            }
+        }
+
         Invoke-Test 'Package policy rejects missing meta, duplicate GUID and scattered version macros' {
             $repository = Join-Path $testRoot 'policy-meta-macro'
             $commit = New-PolicyTestRepository $repository
@@ -482,6 +567,15 @@ guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     }
 
     if (Test-GroupRequested 'Orchestration') {
+        Invoke-Test 'SemVer tags enforce the immutable release grammar' {
+            foreach ($tag in @('v0.2.0-pre.2', 'v1.0.0', 'v1.2.3-rc.1+build.5')) {
+                Assert-True (Test-AppUISemVerTag -Tag $tag) "Valid SemVer Tag was rejected: $tag"
+            }
+            foreach ($tag in @('v01.2.3', 'v1.02.3', 'v1.2.03', 'v1.2.3-01', 'v1', 'main', 'v1.2.3-')) {
+                Assert-True (-not (Test-AppUISemVerTag -Tag $tag)) "Invalid SemVer Tag was accepted: $tag"
+            }
+        }
+
         Invoke-Test 'NUnit3 parser reports exact counts and rejects bad evidence' {
             $evidence = Join-Path $testRoot 'nunit-evidence'
             New-ReleaseEvidenceFixture $evidence
@@ -584,6 +678,51 @@ param([string]$MarkerPath)
             Assert-Equal 'Passed' $report.editMode.status 'EditMode report status was wrong.'
             Assert-True (Test-Path -LiteralPath $output) 'Release report was not written.'
 
+            $badManifest = Get-Content -LiteralPath (Join-Path $evidence 'package-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $badManifest.packageManifestSha256 = ('b' * 64)
+            Set-Utf8NoBomContent (Join-Path $evidence 'package-manifest.json') ($badManifest | ConvertTo-Json)
+            Assert-Throws {
+                New-AppUIReleaseReport `
+                    -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                    -EvidenceRoot $evidence `
+                    -OutputPath (Join-Path $evidence 'bad-manifest-report.json') `
+                    -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                    -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                    -ExpectedPackageVersion '1.2.3-test.1' `
+                    -PlannedTag 'v1.2.3-test.1'
+            } 'package manifest.*mismatch|packageManifestSha256' 'Mismatched package manifest was accepted.'
+            New-ReleaseEvidenceFixture $evidence
+
+            $externalSmokeRoot = Join-Path $testRoot 'external-smoke-evidence'
+            [System.IO.Directory]::CreateDirectory($externalSmokeRoot) | Out-Null
+            Move-Item -LiteralPath (Join-Path $evidence 'commit-git-install-smoke.json') -Destination (Join-Path $externalSmokeRoot 'commit.json')
+            $externalSmokeReport = New-AppUIReleaseReport `
+                -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                -EvidenceRoot $evidence `
+                -OutputPath (Join-Path $evidence 'external-smoke-report.json') `
+                -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                -ExpectedPackageVersion '1.2.3-test.1' `
+                -PlannedTag 'v1.2.3-test.1' `
+                -CommitSmokePath (Join-Path $externalSmokeRoot 'commit.json')
+            Assert-Equal 'Passed' $externalSmokeReport.commitGitInstallSmoke.status 'External Commit smoke was not merged.'
+            Assert-Equal 'commit.json' $externalSmokeReport.commitGitInstallSmoke.evidenceFile 'External Commit smoke filename was not preserved.'
+            Move-Item -LiteralPath (Join-Path $externalSmokeRoot 'commit.json') -Destination (Join-Path $evidence 'commit-git-install-smoke.json')
+
+            $failedSmoke = Get-Content -LiteralPath (Join-Path $evidence 'commit-git-install-smoke.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $failedSmoke.openPassed = $false
+            Set-Utf8NoBomContent (Join-Path $evidence 'commit-git-install-smoke.json') ($failedSmoke | ConvertTo-Json)
+            $failedSmokeReport = New-AppUIReleaseReport `
+                -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                -EvidenceRoot $evidence `
+                -OutputPath (Join-Path $evidence 'failed-smoke-report.json') `
+                -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                -ExpectedPackageVersion '1.2.3-test.1' `
+                -PlannedTag 'v1.2.3-test.1'
+            Assert-Equal 'Failed' $failedSmokeReport.status 'Present failed Commit smoke was not included in PreTag status.'
+            New-ReleaseEvidenceFixture $evidence
+
             Assert-Throws {
                 New-AppUIReleaseReport `
                     -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
@@ -617,6 +756,22 @@ param([string]$MarkerPath)
             Assert-Equal 'Failed' $failedReport.status 'A failed build was mislabeled as Blocked.'
 
             Set-Utf8NoBomContent (Join-Path $evidence 'build-windowsil2cpp.json') '{"result":"Succeeded","totalTimeMs":200}'
+            $mismatchedSmoke = Get-Content -LiteralPath (Join-Path $evidence 'commit-git-install-smoke.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $mismatchedSmoke.sourceCommit = ('f' * 40)
+            Set-Utf8NoBomContent (Join-Path $evidence 'commit-git-install-smoke.json') ($mismatchedSmoke | ConvertTo-Json)
+            Assert-Throws {
+                New-AppUIReleaseReport `
+                    -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                    -EvidenceRoot $evidence `
+                    -OutputPath (Join-Path $evidence 'mismatched-smoke-report.json') `
+                    -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                    -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                    -ExpectedPackageVersion '1.2.3-test.1' `
+                    -PlannedTag 'v1.2.3-test.1'
+            } 'commitGitInstallSmoke.*sourceCommit|sourceCommit.*commitGitInstallSmoke' 'Mismatched Commit smoke identity was accepted.'
+
+            New-ReleaseEvidenceFixture $evidence
+
             $formalRepository = Join-Path $testRoot 'formal-report-repository'
             $formalCommit = New-SnapshotTestRepository $formalRepository
             $formalTree = Invoke-TestGit $formalRepository rev-parse "$formalCommit^{tree}"
@@ -631,19 +786,23 @@ param([string]$MarkerPath)
                 -SourceCommit $formalCommit `
                 -SourceTree $formalTree `
                 -Version '9.8.7-test.1'
+            $tagSmoke = Get-Content -LiteralPath (Join-Path $formalEvidence 'commit-git-install-smoke.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $tagSmoke.packageReference = 'https://github.com/TechJoiH/JoiH-AppUI.git#v9.8.7-test.1'
+            Set-Utf8NoBomContent (Join-Path $formalEvidence 'tag-git-install-smoke.json') ($tagSmoke | ConvertTo-Json)
             Remove-Item -LiteralPath (Join-Path $formalEvidence 'commit-git-install-smoke.json') -Force
-            $formalWithoutSmoke = New-AppUIReleaseReport `
-                -IdentityPath (Join-Path $formalEvidence 'candidate-identity.json') `
-                -EvidenceRoot $formalEvidence `
-                -OutputPath (Join-Path $formalEvidence 'formal-without-smoke.json') `
-                -ExpectedSourceCommit $formalCommit `
-                -ExpectedSourceTree $formalTree `
-                -ExpectedPackageVersion '9.8.7-test.1' `
-                -PlannedTag 'v9.8.7-test.1' `
-                -ResolvedTag 'v9.8.7-test.1' `
-                -RepositoryPath $formalRepository `
-                -Mode Formal
-            Assert-Equal 'Blocked' $formalWithoutSmoke.status 'Formal report passed without Commit/Tag smoke.'
+            Assert-Throws {
+                New-AppUIReleaseReport `
+                    -IdentityPath (Join-Path $formalEvidence 'candidate-identity.json') `
+                    -EvidenceRoot $formalEvidence `
+                    -OutputPath (Join-Path $formalEvidence 'formal-without-smoke.json') `
+                    -ExpectedSourceCommit $formalCommit `
+                    -ExpectedSourceTree $formalTree `
+                    -ExpectedPackageVersion '9.8.7-test.1' `
+                    -PlannedTag 'v9.8.7-test.1' `
+                    -ResolvedTag 'v9.8.7-test.1' `
+                    -RepositoryPath $formalRepository `
+                    -Mode Formal
+            } 'commitGitInstallSmoke evidence is missing' 'Formal report accepted missing Commit smoke.'
         }
 
         Invoke-Test 'Artifact sanitization redacts paths and rejects secrets' {
@@ -665,9 +824,14 @@ param([string]$MarkerPath)
             Assert-True (Test-AppUIArtifactSecrets -Path $safe) 'Sanitized log failed the secret audit.'
 
             Set-Utf8NoBomContent (Join-Path $artifactRoot 'secret.log') 'Authorization: Bearer github_pat_example'
-            Assert-Throws {
+            try {
                 Test-AppUIArtifactSecrets -Path $artifactRoot -ThrowOnSecret
-            } 'secret|Authorization|github_pat' 'Secret-bearing artifact was accepted.'
+                throw 'Secret-bearing artifact was accepted.'
+            }
+            catch {
+                Assert-True ($_.Exception.Message -match 'secret audit failed') 'Secret audit failure was not reported.'
+                Assert-True ($_.Exception.Message -notmatch 'github_pat_example') 'Secret audit leaked the matched credential.'
+            }
 
             Remove-Item -LiteralPath (Join-Path $artifactRoot 'secret.log') -Force
             $archive = Join-Path $testRoot 'sanitized-logs.zip'
@@ -679,13 +843,95 @@ param([string]$MarkerPath)
                 -UserProfilePath 'C:\Users\Tester'
             Assert-True (Test-Path -LiteralPath $archive -PathType Leaf) 'Sanitized log archive was not created.'
             Assert-True ($archiveResult.Sha256 -match '^[0-9a-f]{64}$') 'Sanitized log archive hash was invalid.'
+
+            $secretZipSource = Join-Path $testRoot 'secret-zip-source'
+            [System.IO.Directory]::CreateDirectory($secretZipSource) | Out-Null
+            Set-Utf8NoBomContent (Join-Path $secretZipSource 'secret.log') 'ghp_secret_inside_archive'
+            $secretZip = Join-Path $testRoot 'secret-logs.zip'
+            Compress-Archive -Path (Join-Path $secretZipSource '*') -DestinationPath $secretZip
+            Assert-Throws {
+                Test-AppUIArtifactSecrets -Path $secretZip -ThrowOnSecret
+            } 'secret audit failed' 'Secret inside a ZIP artifact was accepted.'
+
+            $pathZipSource = Join-Path $testRoot 'path-zip-source'
+            [System.IO.Directory]::CreateDirectory($pathZipSource) | Out-Null
+            Set-Utf8NoBomContent (Join-Path $pathZipSource 'machine.log') 'tool=D:\PrivateTools\sdk.exe'
+            $pathZip = Join-Path $testRoot 'machine-path-logs.zip'
+            Compress-Archive -Path (Join-Path $pathZipSource '*') -DestinationPath $pathZip
+            Assert-Throws {
+                Test-AppUIArtifactLocalPaths -Path $pathZip -ThrowOnPath
+            } 'local path audit failed' 'Local path inside a ZIP artifact was accepted.'
+        }
+
+        Invoke-Test 'Release artifact staging emits the exact sanitized ten-file set' {
+            $source = Join-Path $testRoot 'release-artifact-source'
+            $output = Join-Path $testRoot 'release-artifact-output'
+            [System.IO.Directory]::CreateDirectory($source) | Out-Null
+            $repoPath = 'C:\work\repo'
+            $consumerPath = 'C:\work\consumer'
+            $profilePath = 'C:\Users\Tester'
+            $sourceNames = @(
+                'release-report.json',
+                'package-manifest.json',
+                'editmode.xml',
+                'playmode.xml',
+                'binding-validation.json',
+                'build-windowsmono.json',
+                'build-windowsil2cpp.json',
+                'commit-git-install-smoke.json',
+                'tag-git-install-smoke.json'
+            )
+            foreach ($name in $sourceNames) {
+                $value = if ($name.EndsWith('.json')) {
+                    '{"path":"C:\\work\\repo","consumer":"C:/work/consumer","profile":"C:\\Users\\Tester"}'
+                } else {
+                    '<test-run path="C:\work\repo" />'
+                }
+                Set-Utf8NoBomContent (Join-Path $source $name) $value
+            }
+            $logsSource = Join-Path $testRoot 'release-artifact-logs-source'
+            [System.IO.Directory]::CreateDirectory($logsSource) | Out-Null
+            Set-Utf8NoBomContent (Join-Path $logsSource 'safe.log') 'https://github.com/TechJoiH/JoiH-AppUI'
+            Compress-Archive -Path (Join-Path $logsSource '*') -DestinationPath (Join-Path $source 'logs.zip')
+
+            $bundle = New-AppUIReleaseArtifacts `
+                -SourceDirectory $source `
+                -OutputDirectory $output `
+                -Version '0.2.0-pre.2' `
+                -RepositoryPath $repoPath `
+                -ConsumerPath $consumerPath `
+                -UserProfilePath $profilePath
+            Assert-Equal 10 $bundle.ArtifactCount 'Release artifact count was wrong.'
+            Assert-Equal 10 @(Get-ChildItem -LiteralPath $output -File).Count 'Release artifact directory contained the wrong count.'
+            foreach ($file in Get-ChildItem -LiteralPath $output -File | Where-Object Extension -ne '.zip') {
+                $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+                Assert-True ($content -notmatch '(?i)(?<![a-z])[a-z]:[\\/]') "Release artifact retained a local path: $($file.Name)"
+            }
+
+            $bindingArtifact = Get-Content -LiteralPath (Join-Path $output 'appui-v0.2.0-pre.2-binding-validation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-Equal '<REPOSITORY>' $bindingArtifact.path 'Escaped JSON repository path was not redacted safely.'
+
+            $unsafeSource = Join-Path $testRoot 'release-artifact-unsafe-source'
+            Copy-Item -LiteralPath $source -Destination $unsafeSource -Recurse
+            Set-Utf8NoBomContent (Join-Path $unsafeSource 'release-report.json') '{"unlistedMachinePath":"D:\\PrivateTools\\sdk.exe"}'
+            Assert-Throws {
+                New-AppUIReleaseArtifacts `
+                    -SourceDirectory $unsafeSource `
+                    -OutputDirectory (Join-Path $testRoot 'release-artifact-unsafe-output') `
+                    -Version '0.2.0-pre.2' `
+                    -RepositoryPath $repoPath `
+                    -ConsumerPath $consumerPath `
+                    -UserProfilePath $profilePath
+            } 'local path audit failed|absolute path' 'Unlisted local path was accepted in release artifacts.'
         }
 
         Invoke-Test 'Release entry points expose the documented orchestration contract' {
             foreach ($relativePath in @(
                 '..\Invoke-AppUIPreTagValidation.ps1',
                 '..\Invoke-AppUIGitInstallSmoke.ps1',
-                '..\New-AppUIReleaseReport.ps1'
+                '..\New-AppUIReleaseReport.ps1',
+                '..\New-AppUIReleaseArtifacts.ps1',
+                '..\Test-AppUIReleaseReadiness.ps1'
             )) {
                 Assert-True (Test-Path -LiteralPath (Join-Path $PSScriptRoot $relativePath) -PathType Leaf) "Release entry point is missing: $relativePath"
             }
@@ -712,6 +958,68 @@ param([string]$MarkerPath)
             Assert-True ($gitSmokeText.Contains('ExpectedPackageVersion')) 'Git smoke public ExpectedPackageVersion parameter is missing.'
             Assert-True ($gitSmokeText.Contains('commit-git-install-smoke.json')) 'Commit smoke output is missing.'
             Assert-True ($gitSmokeText.Contains('tag-git-install-smoke.json')) 'Tag smoke output is missing.'
+            Assert-True ($gitSmokeText.Contains('Resolve-AppUIRemoteTagIdentity')) 'Tag smoke is not bound to the remote Tag identity.'
+        }
+
+        Invoke-Test 'Release readiness distinguishes pushed candidate and occupied tag' {
+            $repository = Join-Path $testRoot 'readiness-repository'
+            $commit = New-SnapshotTestRepository $repository
+            $tree = Invoke-TestGit $repository rev-parse "$commit^{tree}"
+            $remote = Join-Path $testRoot 'readiness-remote.git'
+            Invoke-TestGit $testRoot init --bare $remote | Out-Null
+            Invoke-TestGit $repository remote add origin $remote | Out-Null
+
+            $notPushed = Test-AppUIReleaseReadiness `
+                -RepositoryPath $repository `
+                -CandidateCommit $commit `
+                -PlannedTag 'v9.8.7-test.1'
+            Assert-Equal 'NotPushed' $notPushed.Status 'Unpushed candidate readiness status was wrong.'
+            Assert-Equal $tree $notPushed.CandidateTree 'Candidate tree was wrong.'
+
+            Invoke-TestGit $repository push --quiet origin "$commit`:refs/heads/main" | Out-Null
+            $ready = Test-AppUIReleaseReadiness `
+                -RepositoryPath $repository `
+                -CandidateCommit $commit `
+                -PlannedTag 'v9.8.7-test.1'
+            Assert-Equal 'ReadyForTag' $ready.Status 'Pushed candidate was not ready for Tag.'
+            Assert-True (-not $ready.TagExists) 'Unused Tag was reported as occupied.'
+
+            Invoke-TestGit $repository tag v9.8.7-test.1 $commit | Out-Null
+            $localTag = Test-AppUIReleaseReadiness `
+                -RepositoryPath $repository `
+                -CandidateCommit $commit `
+                -PlannedTag 'v9.8.7-test.1'
+            Assert-Equal 'LocalTagExists' $localTag.Status 'Local-only Tag readiness status was wrong.'
+
+            Invoke-TestGit $repository push --quiet origin refs/tags/v9.8.7-test.1 | Out-Null
+            $occupied = Test-AppUIReleaseReadiness `
+                -RepositoryPath $repository `
+                -CandidateCommit $commit `
+                -PlannedTag 'v9.8.7-test.1'
+            Assert-Equal 'TagExists' $occupied.Status 'Occupied Tag readiness status was wrong.'
+            Assert-Equal $commit $occupied.TagCommit 'Occupied Tag commit was wrong.'
+
+            Set-Utf8NoBomContent (Join-Path $repository 'different.txt') 'different commit'
+            Invoke-TestGit $repository add -- different.txt | Out-Null
+            Invoke-TestGit $repository commit -m 'Different tag target' | Out-Null
+            $differentCommit = Invoke-TestGit $repository rev-parse HEAD
+            Invoke-TestGit $repository tag -f v9.8.7-test.1 $differentCommit | Out-Null
+            Invoke-TestGit $repository push --quiet --force origin refs/tags/v9.8.7-test.1 | Out-Null
+            $conflict = Test-AppUIReleaseReadiness `
+                -RepositoryPath $repository `
+                -CandidateCommit $commit `
+                -PlannedTag 'v9.8.7-test.1'
+            Assert-Equal 'TagConflict' $conflict.Status 'Conflicting remote Tag was not detected.'
+            Assert-Equal $differentCommit $conflict.TagCommit 'Conflicting Tag commit was wrong.'
+
+            Invoke-TestGit $repository tag v9.8.7-test.2 $differentCommit | Out-Null
+            Invoke-TestGit $repository push --quiet origin refs/tags/v9.8.7-test.2 | Out-Null
+            Assert-Throws {
+                Test-AppUIReleaseReadiness `
+                    -RepositoryPath $repository `
+                    -CandidateCommit $commit `
+                    -PlannedTag 'v9.8.7-test.2'
+            } 'planned tag mismatch' 'Readiness accepted a Tag whose version did not match package.json.'
         }
     }
 
@@ -731,6 +1039,7 @@ param([string]$MarkerPath)
                 'Tools~\Release\Invoke-AppUIPreTagValidation.ps1',
                 'Tools~\Release\Invoke-AppUIGitInstallSmoke.ps1',
                 'Tools~\Release\New-AppUIReleaseReport.ps1',
+                'Tools~\Release\New-AppUIReleaseArtifacts.ps1',
                 'Validation~\Unity6000.0Consumer\README.md'
             )) {
                 Assert-True (Test-Path -LiteralPath (Join-Path $repositoryRoot $relativePath) -PathType Leaf) "Documented release file is missing: $relativePath"

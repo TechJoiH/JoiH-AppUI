@@ -12,6 +12,7 @@
 - Added generated Basic Page, Popup, Binding and Focus fixtures plus external EditMode, PlayMode, Binding, Smoke, Mono and IL2CPP gates.
 - Added bounded release orchestration, NUnit parsing, report identity checks, remote Tag verification, log redaction and secret auditing.
 - Added an explicit Unity/Visual Studio 2022 C++/Windows SDK preflight with machine-readable `Blocked` evidence before full IL2CPP validation.
+- Added strict SemVer, single package manifest, single official Consumer, remote Tag identity and exact ten-artifact release gates.
 - `ReleaseScope` now invalidates matching in-flight and queued Open requests before an instance exists; late successful loads cannot reopen the page and release their Lease once.
 
 ### Remaining release gates

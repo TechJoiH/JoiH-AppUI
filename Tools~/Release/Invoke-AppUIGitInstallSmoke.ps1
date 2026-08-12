@@ -23,11 +23,28 @@ Set-StrictMode -Version 2.0
 $modulePath = Join-Path $PSScriptRoot 'AppUI.ReleaseTools.psm1'
 Import-Module $modulePath -Force
 
-if ($PackageReference -notmatch '^https://github\.com/TechJoiH/JoiH-AppUI\.git#(?:[0-9a-f]{40}|v[0-9A-Za-z][0-9A-Za-z.+-]*)$') {
+$referenceMatch = [regex]::Match(
+    $PackageReference,
+    '^https://github\.com/TechJoiH/JoiH-AppUI\.git#(?<fragment>.+)$')
+$referenceFragment = if ($referenceMatch.Success) {
+    $referenceMatch.Groups['fragment'].Value
+} else {
+    ''
+}
+$validSemVerTag = -not [string]::IsNullOrWhiteSpace($referenceFragment) -and
+    (Test-AppUISemVerTag -Tag $referenceFragment)
+if (-not $referenceMatch.Success -or
+    ($referenceFragment -notmatch '^[0-9a-f]{40}$' -and
+     -not $validSemVerTag)) {
     throw "Git install smoke only accepts an immutable AppUI commit SHA or SemVer tag URL."
 }
-$sourceRef = $PackageReference.Substring(
-    $PackageReference.LastIndexOf('#') + 1)
+$sourceRef = $referenceFragment
+if ($validSemVerTag) {
+    $remoteTagIdentity = Resolve-AppUIRemoteTagIdentity `
+        -RepositoryPath $RepositoryPath `
+        -Tag $referenceFragment
+    $sourceRef = $remoteTagIdentity.SourceCommit
+}
 
 $resolvedRunRoot = [System.IO.Path]::GetFullPath($RunRoot)
 if (Test-Path -LiteralPath $resolvedRunRoot) {
@@ -41,6 +58,9 @@ $snapshot = Export-AppUICandidateSnapshot `
     -DestinationPath (Join-Path $resolvedRunRoot 'snapshot')
 if ($snapshot.PackageVersion -ne $ExpectedPackageVersion) {
     throw "Git smoke package version mismatch. Expected=$ExpectedPackageVersion Actual=$($snapshot.PackageVersion)"
+}
+if ($validSemVerTag -and $snapshot.SourceTree -ne $remoteTagIdentity.SourceTree) {
+    throw "Git smoke remote Tag tree mismatch. Tag=$referenceFragment"
 }
 $evidenceRoot = Join-Path $resolvedRunRoot 'evidence'
 $consumerRoot = Join-Path $resolvedRunRoot 'consumer'
@@ -89,4 +109,12 @@ $targetName = if ($PackageReference -match '#v') {
 }
 $targetSmoke = Join-Path $evidenceRoot $targetName
 Move-Item -LiteralPath $sourceSmoke -Destination $targetSmoke
+$smoke = Get-Content -LiteralPath $targetSmoke -Raw -Encoding UTF8 | ConvertFrom-Json
+$identity = Get-Content -LiteralPath $snapshot.IdentityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$smoke | Add-Member -NotePropertyName repository -NotePropertyValue $identity.repository -Force
+$smoke | Add-Member -NotePropertyName sourceCommit -NotePropertyValue $identity.sourceCommit -Force
+$smoke | Add-Member -NotePropertyName sourceTree -NotePropertyValue $identity.sourceTree -Force
+$smoke | Add-Member -NotePropertyName packageManifestSha256 -NotePropertyValue $identity.packageManifestSha256 -Force
+$smoke | Add-Member -NotePropertyName packageReference -NotePropertyValue $PackageReference -Force
+Write-AppUIJson -Path $targetSmoke -Value $smoke -Depth 8
 Write-Host "Git install smoke passed: $targetSmoke"

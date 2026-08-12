@@ -49,6 +49,30 @@ function Write-AppUIUtf8NoBom {
         (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Write-AppUIJson {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Value,
+
+        [ValidateRange(1, 100)]
+        [int]$Depth = 10
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $parent = Split-Path -Parent $resolvedPath
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        [System.IO.Directory]::CreateDirectory($parent) | Out-Null
+    }
+
+    Write-AppUIUtf8NoBom `
+        -Path $resolvedPath `
+        -Value (($Value | ConvertTo-Json -Depth $Depth) + "`n")
+}
+
 function Get-AppUISha256 {
     [CmdletBinding()]
     param(
@@ -143,6 +167,22 @@ function Resolve-AppUIGitIdentity {
     }
 }
 
+function Test-AppUISemVerTag {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Tag
+    )
+
+    $numericIdentifier = '(?:0|[1-9][0-9]*)'
+    $preReleaseIdentifier = "(?:$numericIdentifier|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    $buildIdentifier = '[0-9A-Za-z-]+'
+    $pattern = "^v$numericIdentifier\.$numericIdentifier\.$numericIdentifier" +
+        "(?:-$preReleaseIdentifier(?:\.$preReleaseIdentifier)*)?" +
+        "(?:\+$buildIdentifier(?:\.$buildIdentifier)*)?$"
+    return $Tag -match $pattern
+}
+
 function Resolve-AppUIRemoteTagIdentity {
     [CmdletBinding()]
     param(
@@ -153,7 +193,7 @@ function Resolve-AppUIRemoteTagIdentity {
         [string]$Tag
     )
 
-    if ($Tag -notmatch '^v[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+    if (-not (Test-AppUISemVerTag -Tag $Tag)) {
         throw "Remote tag is not a valid AppUI SemVer tag: $Tag"
     }
 
@@ -195,6 +235,93 @@ function Resolve-AppUIRemoteTagIdentity {
         Tag = $Tag
         SourceCommit = $commit
         SourceTree = $treeResult.Text
+    }
+}
+
+function Test-AppUIReleaseReadiness {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CandidateCommit,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PlannedTag
+    )
+
+    $identity = Resolve-AppUIGitIdentity `
+        -RepositoryPath $RepositoryPath `
+        -SourceRef $CandidateCommit
+    if ($identity.SourceCommit -ne $CandidateCommit) {
+        throw "Release readiness requires an exact 40-character CandidateCommit."
+    }
+
+    if ($PlannedTag -ne ('v' + $identity.PackageVersion)) {
+        throw "Release readiness planned tag mismatch. Expected=v$($identity.PackageVersion) Actual=$PlannedTag"
+    }
+
+    $mainResult = Invoke-AppUIGitText `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @('ls-remote', 'origin', 'refs/heads/main') `
+        -AllowFailure
+    $remoteMainCommit = ''
+    if ($mainResult.ExitCode -eq 0 -and
+        $mainResult.Text -match '^(?<commit>[0-9a-f]{40})\s+refs/heads/main$') {
+        $remoteMainCommit = $Matches['commit']
+    }
+
+    $tagResult = Invoke-AppUIGitText `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @(
+            'ls-remote',
+            'origin',
+            "refs/tags/$PlannedTag",
+            "refs/tags/$PlannedTag^{}") `
+        -AllowFailure
+    $tagExists = $tagResult.ExitCode -eq 0 -and
+        -not [string]::IsNullOrWhiteSpace($tagResult.Text)
+    $localTagResult = Invoke-AppUIGitText `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @('tag', '--list', $PlannedTag) `
+        -AllowFailure
+    $localTagExists = $localTagResult.ExitCode -eq 0 -and
+        -not [string]::IsNullOrWhiteSpace($localTagResult.Text)
+    $tagCommit = ''
+    $tagTree = ''
+    if ($tagExists) {
+        $tagIdentity = Resolve-AppUIRemoteTagIdentity `
+            -RepositoryPath $RepositoryPath `
+            -Tag $PlannedTag
+        $tagCommit = $tagIdentity.SourceCommit
+        $tagTree = $tagIdentity.SourceTree
+    }
+
+    $status = if ($tagExists -and $tagCommit -ne $identity.SourceCommit) {
+        'TagConflict'
+    } elseif ($tagExists) {
+        'TagExists'
+    } elseif ($localTagExists) {
+        'LocalTagExists'
+    } elseif ($remoteMainCommit -eq $identity.SourceCommit) {
+        'ReadyForTag'
+    } else {
+        'NotPushed'
+    }
+    return [PSCustomObject][ordered]@{
+        Status = $status
+        Repository = $identity.Repository
+        CandidateCommit = $identity.SourceCommit
+        CandidateTree = $identity.SourceTree
+        PackageVersion = $identity.PackageVersion
+        PlannedTag = $PlannedTag
+        RemoteMainCommit = $remoteMainCommit
+        CandidateIsRemoteMain = $remoteMainCommit -eq $identity.SourceCommit
+        TagExists = $tagExists
+        LocalTagExists = $localTagExists
+        TagCommit = $tagCommit
+        TagTree = $tagTree
     }
 }
 
@@ -426,6 +553,99 @@ function Export-AppUICandidateSnapshot {
     }
 }
 
+function Test-AppUICandidateSnapshot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$IdentityPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ManifestPath
+    )
+
+    $resolvedPackageRoot = [System.IO.Path]::GetFullPath($PackageRoot)
+    $resolvedIdentityPath = [System.IO.Path]::GetFullPath($IdentityPath)
+    $resolvedManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
+    foreach ($requiredPath in @($resolvedPackageRoot, $resolvedIdentityPath, $resolvedManifestPath)) {
+        if (-not (Test-Path -LiteralPath $requiredPath)) {
+            throw "Candidate snapshot identity audit input does not exist: $requiredPath"
+        }
+    }
+
+    $identity = Get-Content -LiteralPath $resolvedIdentityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath $resolvedManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$identity.packageManifestSha256 -ne [string]$manifest.packageManifestSha256) {
+        throw "Candidate snapshot identity audit manifest hash mismatch."
+    }
+
+    $expected = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::Ordinal)
+    foreach ($entry in @($manifest.files)) {
+        $expected.Add([string]$entry.path, $entry)
+    }
+
+    $actualFiles = @(Get-ChildItem -LiteralPath $resolvedPackageRoot -Recurse -Force -File)
+    $actualPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+    foreach ($file in $actualFiles) {
+        $relativePath = $file.FullName.Substring($resolvedPackageRoot.Length).TrimStart('\', '/').Replace('\', '/')
+        [void]$actualPaths.Add($relativePath)
+        if (-not $expected.ContainsKey($relativePath)) {
+            throw "Candidate snapshot identity audit found unexpected file: $relativePath"
+        }
+
+        $actualHash = Get-AppUISha256 -Path $file.FullName
+        if ($actualHash -ne [string]$expected[$relativePath].sha256) {
+            throw "Candidate snapshot identity audit file hash mismatch: $relativePath"
+        }
+    }
+
+    foreach ($path in $expected.Keys) {
+        if (-not $actualPaths.Contains($path)) {
+            throw "Candidate snapshot identity audit found missing file: $path"
+        }
+    }
+
+    $orderedPaths = [string[]]@($expected.Keys)
+    [System.Array]::Sort($orderedPaths, [System.StringComparer]::Ordinal)
+    $canonicalBuilder = New-Object System.Text.StringBuilder
+    $utf8 = New-Object System.Text.UTF8Encoding($false)
+    foreach ($path in $orderedPaths) {
+        $entry = $expected[$path]
+        [void]$canonicalBuilder.Append($utf8.GetByteCount($path))
+        [void]$canonicalBuilder.Append(':')
+        [void]$canonicalBuilder.Append($path)
+        [void]$canonicalBuilder.Append("`t")
+        [void]$canonicalBuilder.Append([string]$entry.gitMode)
+        [void]$canonicalBuilder.Append("`t")
+        [void]$canonicalBuilder.Append([string]$entry.sha256)
+        [void]$canonicalBuilder.Append("`n")
+    }
+
+    $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+        'joih-appui-candidate-audit-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    try {
+        Write-AppUIUtf8NoBom -Path $temporaryPath -Value $canonicalBuilder.ToString()
+        $manifestHash = Get-AppUISha256 -Path $temporaryPath
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+    }
+
+    if ($manifestHash -ne [string]$identity.packageManifestSha256) {
+        throw "Candidate snapshot identity audit package hash mismatch."
+    }
+
+    return [PSCustomObject][ordered]@{
+        Success = $true
+        FileCount = $actualFiles.Count
+        PackageManifestSha256 = $manifestHash
+    }
+}
+
 function Test-AppUIConsumerTemplate {
     [CmdletBinding()]
     param(
@@ -519,8 +739,17 @@ function Resolve-AppUIPackageReference {
         throw "Package reference is empty."
     }
 
-    if ($PackageReference -match '^https://github\.com/TechJoiH/JoiH-AppUI\.git#(?:[0-9a-f]{40}|v[0-9A-Za-z][0-9A-Za-z.+-]*)$') {
-        return $PackageReference
+    $gitReferenceMatch = [regex]::Match(
+        $PackageReference,
+        '^https://github\.com/TechJoiH/JoiH-AppUI\.git#(?<fragment>.+)$')
+    if ($gitReferenceMatch.Success) {
+        $fragment = $gitReferenceMatch.Groups['fragment'].Value
+        $validSemVerTag = Test-AppUISemVerTag -Tag $fragment
+        if ($fragment -match '^[0-9a-f]{40}$' -or $validSemVerTag) {
+            return $PackageReference
+        }
+
+        throw "Git package reference must use an exact 40-character commit or SemVer tag: $PackageReference"
     }
 
     $pathValue = $PackageReference
@@ -772,15 +1001,50 @@ function Test-AppUIPackagePolicy {
         $package = Get-Content -LiteralPath $packagePath -Raw -Encoding UTF8 | ConvertFrom-Json
 
         $dependencyProperties = @($package.dependencies.PSObject.Properties)
+        $packageVersion = [string]$package.version
         $manifestSuccess = [string]$package.name -eq 'com.joih.appui' -and
-            -not [string]::IsNullOrWhiteSpace([string]$package.version) -and
+            (Test-AppUISemVerTag -Tag ('v' + $packageVersion)) -and
             [string]$package.unity -eq '6000.0' -and
             $dependencyProperties.Count -eq 1 -and
             $dependencyProperties[0].Name -eq 'com.unity.ugui' -and
             [string]$dependencyProperties[0].Value -eq '2.0.0'
         $checks.Add((New-AppUIPolicyCheck -Name 'PackageManifest' -Success $manifestSuccess -Details $(
-            if ($manifestSuccess) { 'Package ID, version, Unity and UGUI dependency match the official line.' }
-            else { 'Expected com.joih.appui, Unity 6000.0 and only com.unity.ugui 2.0.0.' }
+            if ($manifestSuccess) { 'Package ID, strict SemVer version, Unity and UGUI dependency match the official line.' }
+            else { 'Expected com.joih.appui, a strict SemVer version, Unity 6000.0 and only com.unity.ugui 2.0.0.' }
+        )))
+
+        $packageManifests = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -Force -File -Filter 'package.json' | ForEach-Object {
+            $_.FullName.Substring($packageRoot.Length + 1).Replace('\', '/')
+        })
+        $singlePackageManifest = $packageManifests.Count -eq 1 -and $packageManifests[0] -ceq 'package.json'
+        $checks.Add((New-AppUIPolicyCheck -Name 'SinglePackageManifest' -Success $singlePackageManifest -Details $(
+            if ($singlePackageManifest) { 'The release tree contains only the root package.json.' }
+            else { 'Package manifests: ' + ($packageManifests -join ', ') }
+        )))
+
+        $validationRoot = Join-Path $packageRoot 'Validation~'
+        $consumerDirectories = @(if (Test-Path -LiteralPath $validationRoot -PathType Container) {
+            Get-ChildItem -LiteralPath $validationRoot -Force -Directory | ForEach-Object { $_.Name }
+        })
+        $officialConsumerRoot = Join-Path $validationRoot 'Unity6000.0Consumer'
+        $consumerContractFiles = @(
+            'Assets',
+            'Packages/manifest.template.json',
+            'ProjectSettings/ProjectVersion.txt'
+        )
+        $consumerContractSuccess = $consumerDirectories.Count -eq 1 -and
+            $consumerDirectories[0] -ceq 'Unity6000.0Consumer'
+        if ($consumerContractSuccess) {
+            foreach ($relativePath in $consumerContractFiles) {
+                if (-not (Test-Path -LiteralPath (Join-Path $officialConsumerRoot $relativePath))) {
+                    $consumerContractSuccess = $false
+                    break
+                }
+            }
+        }
+        $checks.Add((New-AppUIPolicyCheck -Name 'SingleOfficialConsumer' -Success $consumerContractSuccess -Details $(
+            if ($consumerContractSuccess) { 'Validation~ contains only the complete Unity6000.0Consumer project.' }
+            else { 'Consumer directories: ' + ($consumerDirectories -join ', ') }
         )))
 
         $productionMatches = New-Object System.Collections.Generic.List[string]
@@ -1268,6 +1532,62 @@ function Get-AppUIJsonEvidenceGate {
     }
 }
 
+function Test-AppUISmokeIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$GateName,
+
+        [Parameter(Mandatory = $true)]
+        [object]$Identity,
+
+        [switch]$Required
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        if ($Required) {
+            throw "$GateName evidence is missing: $resolvedPath"
+        }
+
+        return
+    }
+
+    $smoke = Get-Content -LiteralPath $resolvedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($comparison in @(
+        @('repository', [string]$smoke.repository, [string]$Identity.repository),
+        @('sourceCommit', [string]$smoke.sourceCommit, [string]$Identity.sourceCommit),
+        @('sourceTree', [string]$smoke.sourceTree, [string]$Identity.sourceTree),
+        @('packageVersion', [string]$smoke.packageVersion, [string]$Identity.packageVersion),
+        @('packageManifestSha256', [string]$smoke.packageManifestSha256, [string]$Identity.packageManifestSha256)
+    )) {
+        if ($comparison[1] -ne $comparison[2]) {
+            throw "$GateName $($comparison[0]) mismatch. Expected=$($comparison[2]) Actual=$($comparison[1])"
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$smoke.packageReference) -or
+        [string]$smoke.packageReference -notmatch '^https://github\.com/TechJoiH/JoiH-AppUI\.git#') {
+        throw "$GateName packageReference is missing or invalid."
+    }
+
+    $expectedFragment = if ($GateName -eq 'commitGitInstallSmoke') {
+        [string]$Identity.sourceCommit
+    } elseif ($GateName -eq 'tagGitInstallSmoke') {
+        'v' + [string]$Identity.packageVersion
+    } else {
+        ''
+    }
+    if (-not [string]::IsNullOrWhiteSpace($expectedFragment) -and
+        [string]$smoke.packageReference -ne (
+            'https://github.com/TechJoiH/JoiH-AppUI.git#' + $expectedFragment)) {
+        throw "$GateName packageReference mismatch. Expected fragment=$expectedFragment Actual=$($smoke.packageReference)"
+    }
+}
+
 function New-AppUIReleaseReport {
     [CmdletBinding()]
     param(
@@ -1299,7 +1619,13 @@ function New-AppUIReleaseReport {
         [string]$ResolvedTag = '',
 
         [AllowEmptyString()]
-        [string]$RepositoryPath = ''
+        [string]$RepositoryPath = '',
+
+        [AllowEmptyString()]
+        [string]$CommitSmokePath = '',
+
+        [AllowEmptyString()]
+        [string]$TagSmokePath = ''
     )
 
     $resolvedIdentityPath = [System.IO.Path]::GetFullPath($IdentityPath)
@@ -1309,6 +1635,16 @@ function New-AppUIReleaseReport {
     }
 
     $identity = Get-Content -LiteralPath $resolvedIdentityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $packageManifestPath = Join-Path $resolvedEvidenceRoot 'package-manifest.json'
+    if (-not (Test-Path -LiteralPath $packageManifestPath -PathType Leaf)) {
+        throw "Release report package manifest is missing: $packageManifestPath"
+    }
+
+    $packageManifest = Get-Content -LiteralPath $packageManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$packageManifest.packageManifestSha256 -ne
+        [string]$identity.packageManifestSha256) {
+        throw "Release report package manifest packageManifestSha256 mismatch."
+    }
     foreach ($comparison in @(
         @('sourceCommit', [string]$identity.sourceCommit, $ExpectedSourceCommit),
         @('sourceTree', [string]$identity.sourceTree, $ExpectedSourceTree),
@@ -1361,8 +1697,28 @@ function New-AppUIReleaseReport {
     $binding = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'binding-validation.json') -Kind Binding
     $mono = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'build-windowsmono.json') -Kind Build
     $il2cpp = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'build-windowsil2cpp.json') -Kind Build
-    $commitSmoke = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'commit-git-install-smoke.json') -Kind Smoke
-    $tagSmoke = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'tag-git-install-smoke.json') -Kind Smoke
+    $resolvedCommitSmokePath = if ([string]::IsNullOrWhiteSpace($CommitSmokePath)) {
+        Join-Path $resolvedEvidenceRoot 'commit-git-install-smoke.json'
+    } else {
+        [System.IO.Path]::GetFullPath($CommitSmokePath)
+    }
+    $resolvedTagSmokePath = if ([string]::IsNullOrWhiteSpace($TagSmokePath)) {
+        Join-Path $resolvedEvidenceRoot 'tag-git-install-smoke.json'
+    } else {
+        [System.IO.Path]::GetFullPath($TagSmokePath)
+    }
+    $commitSmoke = Get-AppUIJsonEvidenceGate -Path $resolvedCommitSmokePath -Kind Smoke
+    $tagSmoke = Get-AppUIJsonEvidenceGate -Path $resolvedTagSmokePath -Kind Smoke
+    Test-AppUISmokeIdentity `
+        -Path $resolvedCommitSmokePath `
+        -GateName 'commitGitInstallSmoke' `
+        -Identity $identity `
+        -Required:($Mode -eq 'Formal')
+    Test-AppUISmokeIdentity `
+        -Path $resolvedTagSmokePath `
+        -GateName 'tagGitInstallSmoke' `
+        -Identity $identity `
+        -Required:($Mode -eq 'Formal')
     $unityVersion = ''
     $bindingDocument = Get-Content -LiteralPath (Join-Path $resolvedEvidenceRoot 'binding-validation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($bindingDocument.PSObject.Properties['unityVersion']) {
@@ -1381,6 +1737,14 @@ function New-AppUIReleaseReport {
             $commitSmoke.status,
             $tagSmoke.status
         )
+    } else {
+        if ($commitSmoke.status -ne 'NotRun') {
+            $requiredStatuses += $commitSmoke.status
+        }
+
+        if ($tagSmoke.status -ne 'NotRun') {
+            $requiredStatuses += $tagSmoke.status
+        }
     }
     $overallStatus = if ($requiredStatuses -contains 'Failed') {
         'Failed'
@@ -1462,7 +1826,11 @@ function Protect-AppUILog {
         foreach ($variant in @(
             $replacement[0],
             $replacement[0].Replace('\', '/'),
-            $replacement[0].Replace('/', '\')
+            $replacement[0].Replace('/', '\'),
+            $replacement[0].Replace('\', '\\'),
+            $replacement[0].Replace('/', '\/'),
+            $replacement[0].Replace('\', '/').Replace('/', '\/'),
+            $replacement[0].Replace('/', '\').Replace('\', '\\')
         ) | Select-Object -Unique) {
             $text = [regex]::Replace(
                 $text,
@@ -1503,7 +1871,33 @@ function Test-AppUIArtifactSecrets {
         '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'
     )
     $findings = New-Object System.Collections.Generic.List[string]
-    foreach ($file in $files) {
+    $temporaryArchives = New-Object System.Collections.Generic.List[string]
+    $expandedFiles = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($file in $files) {
+            if ($file.Extension -ieq '.zip') {
+                $archiveRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+                    'joih-appui-artifact-audit-' + [Guid]::NewGuid().ToString('N'))
+                [System.IO.Directory]::CreateDirectory($archiveRoot) | Out-Null
+                $temporaryArchives.Add($archiveRoot)
+                try {
+                    Expand-Archive -LiteralPath $file.FullName -DestinationPath $archiveRoot
+                }
+                catch {
+                    $findings.Add($file.FullName)
+                    continue
+                }
+
+                foreach ($expanded in Get-ChildItem -LiteralPath $archiveRoot -Recurse -Force -File) {
+                    $expandedFiles.Add($expanded)
+                }
+                continue
+            }
+
+            $expandedFiles.Add($file)
+        }
+
+        foreach ($file in $expandedFiles) {
         if ($file.Length -gt 20MB) {
             continue
         }
@@ -1511,13 +1905,99 @@ function Test-AppUIArtifactSecrets {
         $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
         foreach ($pattern in $patterns) {
             if ($content -match $pattern) {
-                $findings.Add($file.FullName + ': ' + $Matches[0])
+                $findings.Add($file.FullName)
+            }
+        }
+        }
+    }
+    finally {
+        foreach ($archiveRoot in $temporaryArchives) {
+            if ((Test-Path -LiteralPath $archiveRoot) -and
+                $archiveRoot.StartsWith([System.IO.Path]::GetTempPath(), [System.StringComparison]::OrdinalIgnoreCase) -and
+                (Split-Path -Leaf $archiveRoot).StartsWith('joih-appui-artifact-audit-', [System.StringComparison]::Ordinal)) {
+                Remove-Item -LiteralPath $archiveRoot -Recurse -Force
             }
         }
     }
 
     if ($findings.Count -gt 0 -and $ThrowOnSecret) {
-        throw "Artifact secret audit failed: $($findings -join ' | ')"
+        $uniqueFiles = @($findings | Select-Object -Unique)
+        throw "Artifact secret audit failed. Files=$($uniqueFiles -join ' | ')"
+    }
+
+    return $findings.Count -eq 0
+}
+
+function Test-AppUIArtifactLocalPaths {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [switch]$ThrowOnPath
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $resolvedPath)) {
+        throw "Artifact path does not exist: $resolvedPath"
+    }
+
+    $files = if (Test-Path -LiteralPath $resolvedPath -PathType Container) {
+        @(Get-ChildItem -LiteralPath $resolvedPath -Recurse -Force -File)
+    } else {
+        @(Get-Item -LiteralPath $resolvedPath)
+    }
+    $temporaryArchives = New-Object System.Collections.Generic.List[string]
+    $expandedFiles = New-Object System.Collections.Generic.List[object]
+    $findings = New-Object System.Collections.Generic.List[string]
+    try {
+        foreach ($file in $files) {
+            if ($file.Extension -ieq '.zip') {
+                $archiveRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+                    'joih-appui-path-audit-' + [Guid]::NewGuid().ToString('N'))
+                [System.IO.Directory]::CreateDirectory($archiveRoot) | Out-Null
+                $temporaryArchives.Add($archiveRoot)
+                try {
+                    Expand-Archive -LiteralPath $file.FullName -DestinationPath $archiveRoot
+                }
+                catch {
+                    $findings.Add($file.FullName)
+                    continue
+                }
+
+                foreach ($expanded in Get-ChildItem -LiteralPath $archiveRoot -Recurse -Force -File) {
+                    $expandedFiles.Add($expanded)
+                }
+                continue
+            }
+
+            $expandedFiles.Add($file)
+        }
+
+        foreach ($file in $expandedFiles) {
+            if ($file.Length -gt 20MB) {
+                continue
+            }
+
+            $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+            if ($content -match '(?i)(?:(?<![a-z])[a-z]:[\\/]|file:[\\/]{1,2})') {
+                $findings.Add($file.FullName)
+            }
+        }
+    }
+    finally {
+        foreach ($archiveRoot in $temporaryArchives) {
+            if ((Test-Path -LiteralPath $archiveRoot) -and
+                $archiveRoot.StartsWith([System.IO.Path]::GetTempPath(), [System.StringComparison]::OrdinalIgnoreCase) -and
+                (Split-Path -Leaf $archiveRoot).StartsWith('joih-appui-path-audit-', [System.StringComparison]::Ordinal)) {
+                Remove-Item -LiteralPath $archiveRoot -Recurse -Force
+            }
+        }
+    }
+
+    if ($findings.Count -gt 0 -and $ThrowOnPath) {
+        $uniqueFiles = @($findings | Select-Object -Unique)
+        throw "Artifact local path audit failed. Files=$($uniqueFiles -join ' | ')"
     }
 
     return $findings.Count -eq 0
@@ -1591,9 +2071,114 @@ function New-AppUISanitizedLogArchive {
     }
 }
 
+function New-AppUIReleaseArtifacts {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+
+        [string]$RepositoryPath = '',
+        [string]$ConsumerPath = '',
+        [string]$UserProfilePath = ''
+    )
+
+    if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+        throw "Release artifact version is invalid: $Version"
+    }
+
+    $resolvedSource = [System.IO.Path]::GetFullPath($SourceDirectory)
+    $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
+    if (-not (Test-Path -LiteralPath $resolvedSource -PathType Container)) {
+        throw "Release artifact source does not exist: $resolvedSource"
+    }
+
+    if (Test-Path -LiteralPath $resolvedOutput) {
+        throw "Release artifact output already exists: $resolvedOutput"
+    }
+
+    $mapping = [ordered]@{
+        'release-report.json' = "appui-v$Version-release-report.json"
+        'package-manifest.json' = "appui-v$Version-package-manifest.json"
+        'editmode.xml' = "appui-v$Version-editmode.xml"
+        'playmode.xml' = "appui-v$Version-playmode.xml"
+        'binding-validation.json' = "appui-v$Version-binding-validation.json"
+        'build-windowsmono.json' = "appui-v$Version-mono-build.json"
+        'build-windowsil2cpp.json' = "appui-v$Version-il2cpp-build.json"
+        'commit-git-install-smoke.json' = "appui-v$Version-commit-smoke.json"
+        'tag-git-install-smoke.json' = "appui-v$Version-tag-smoke.json"
+        'logs.zip' = "appui-v$Version-logs.zip"
+    }
+
+    foreach ($sourceName in $mapping.Keys) {
+        $sourcePath = Join-Path $resolvedSource $sourceName
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            throw "Required release artifact source is missing: $sourceName"
+        }
+    }
+
+    [System.IO.Directory]::CreateDirectory($resolvedOutput) | Out-Null
+    try {
+        foreach ($sourceName in $mapping.Keys) {
+            $sourcePath = Join-Path $resolvedSource $sourceName
+            $destinationPath = Join-Path $resolvedOutput $mapping[$sourceName]
+            if ($sourceName.EndsWith('.zip', [System.StringComparison]::OrdinalIgnoreCase)) {
+                Copy-Item -LiteralPath $sourcePath -Destination $destinationPath
+                continue
+            }
+
+            Protect-AppUILog `
+                -InputPath $sourcePath `
+                -OutputPath $destinationPath `
+                -RepositoryPath $RepositoryPath `
+                -ConsumerPath $ConsumerPath `
+                -UserProfilePath $UserProfilePath
+        }
+
+        Test-AppUIArtifactSecrets `
+            -Path $resolvedOutput `
+            -ThrowOnSecret | Out-Null
+        Test-AppUIArtifactLocalPaths `
+            -Path $resolvedOutput `
+            -ThrowOnPath | Out-Null
+
+        $files = @(Get-ChildItem -LiteralPath $resolvedOutput -Force -File)
+        if ($files.Count -ne $mapping.Count) {
+            throw "Release artifact count mismatch. Expected=$($mapping.Count) Actual=$($files.Count)"
+        }
+
+        $hashes = [ordered]@{}
+        foreach ($file in $files | Sort-Object Name) {
+            $hashes[$file.Name] = Get-AppUISha256 -Path $file.FullName
+        }
+
+        return [PSCustomObject][ordered]@{
+            OutputDirectory = $resolvedOutput
+            ArtifactCount = $files.Count
+            Hashes = [PSCustomObject]$hashes
+        }
+    }
+    catch {
+        if ((Test-Path -LiteralPath $resolvedOutput) -and
+            $resolvedOutput -ne [System.IO.Path]::GetPathRoot($resolvedOutput)) {
+            Remove-Item -LiteralPath $resolvedOutput -Recurse -Force
+        }
+        throw
+    }
+}
+
 Export-ModuleMember -Function @(
     'Resolve-AppUIGitIdentity',
+    'Test-AppUISemVerTag',
+    'Test-AppUIReleaseReadiness',
+    'Write-AppUIJson',
     'Export-AppUICandidateSnapshot',
+    'Test-AppUICandidateSnapshot',
     'New-AppUIConsumerWorkspace',
     'Test-AppUIPackagePolicy',
     'Read-AppUINUnit3Result',
@@ -1603,5 +2188,7 @@ Export-ModuleMember -Function @(
     'New-AppUIReleaseReport',
     'Protect-AppUILog',
     'Test-AppUIArtifactSecrets',
-    'New-AppUISanitizedLogArchive'
+    'Test-AppUIArtifactLocalPaths',
+    'New-AppUISanitizedLogArchive',
+    'New-AppUIReleaseArtifacts'
 )
