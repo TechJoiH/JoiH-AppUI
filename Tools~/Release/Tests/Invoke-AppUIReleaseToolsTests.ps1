@@ -71,6 +71,12 @@ function Invoke-Test {
         $script:Failed++
         Write-Host "FAIL $Name"
         Write-Host $_.Exception.ToString()
+        if ($null -ne $_.InvocationInfo) {
+            Write-Host $_.InvocationInfo.PositionMessage
+        }
+        if (-not [string]::IsNullOrWhiteSpace($_.ScriptStackTrace)) {
+            Write-Host $_.ScriptStackTrace
+        }
     }
 }
 
@@ -133,6 +139,70 @@ function New-SnapshotTestRepository {
     Set-Utf8NoBomContent (Join-Path $Path $unicodePath) "# committed unicode path`n"
     Invoke-TestGit $Path add -- package.json Runtime/A.cs Z.txt a.txt $unicodePath | Out-Null
     Invoke-TestGit $Path commit -m 'Initial candidate' | Out-Null
+    return Invoke-TestGit $Path rev-parse HEAD
+}
+
+function New-ConsumerTestTemplate {
+    param([string]$Path)
+
+    [System.IO.Directory]::CreateDirectory((Join-Path $Path 'Assets')) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $Path 'Packages')) | Out-Null
+    [System.IO.Directory]::CreateDirectory((Join-Path $Path 'ProjectSettings')) | Out-Null
+    Set-Utf8NoBomContent (Join-Path $Path 'Assets\Marker.txt') "template marker`n"
+    Set-Utf8NoBomContent (Join-Path $Path 'Assets\Marker.txt.meta') @'
+fileFormatVersion: 2
+guid: 11111111111111111111111111111111
+'@
+    Set-Utf8NoBomContent (Join-Path $Path 'Packages\manifest.template.json') @'
+{
+  "dependencies": {
+    "com.joih.appui": "__APPUI_PACKAGE_REFERENCE__",
+    "com.unity.test-framework": "1.4.5",
+    "com.unity.ugui": "2.0.0"
+  },
+  "testables": [
+    "com.joih.appui"
+  ]
+}
+'@
+    Set-Utf8NoBomContent (Join-Path $Path 'ProjectSettings\ProjectVersion.txt') "m_EditorVersion: 6000.0.25f1`n"
+}
+
+function New-PolicyTestRepository {
+    param(
+        [string]$Path,
+        [string]$RuntimeSource = "namespace Joi.H.AppUI { public sealed class SafeType { } }`n",
+        [string]$UnityVersion = '6000.0',
+        [string]$DependenciesJson = '"com.unity.ugui": "2.0.0"'
+    )
+
+    [System.IO.Directory]::CreateDirectory($Path) | Out-Null
+    Invoke-TestGit $Path init | Out-Null
+    Invoke-TestGit $Path config user.name 'AppUI Release Test' | Out-Null
+    Invoke-TestGit $Path config user.email 'appui-release-test@example.invalid' | Out-Null
+    Invoke-TestGit $Path config core.autocrlf false | Out-Null
+    Set-Utf8NoBomContent (Join-Path $Path 'package.json') @"
+{
+  "name": "com.joih.appui",
+  "version": "1.2.3-test.1",
+  "unity": "$UnityVersion",
+  "dependencies": {
+    $DependenciesJson
+  }
+}
+"@
+    Set-Utf8NoBomContent (Join-Path $Path 'Runtime\SafeType.cs') $RuntimeSource
+    Set-Utf8NoBomContent (Join-Path $Path 'Runtime\SafeType.cs.meta') @'
+fileFormatVersion: 2
+guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+'@
+    Set-Utf8NoBomContent (Join-Path $Path 'Runtime.meta') @'
+fileFormatVersion: 2
+guid: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+folderAsset: yes
+'@
+    Invoke-TestGit $Path add -- package.json Runtime.meta Runtime/SafeType.cs Runtime/SafeType.cs.meta | Out-Null
+    Invoke-TestGit $Path commit -m 'Policy fixture' | Out-Null
     return Invoke-TestGit $Path rev-parse HEAD
 }
 
@@ -211,6 +281,123 @@ try {
             Assert-Throws {
                 Export-AppUICandidateSnapshot -RepositoryPath $repository -SourceRef $commit -DestinationPath $existing
             } 'already exists' 'Snapshot overwrote an existing destination.'
+        }
+    }
+
+    if (Test-GroupRequested 'Consumer') {
+        Invoke-Test 'Consumer workspace materializes a file package without mutating the template' {
+            $template = Join-Path $testRoot 'consumer-template'
+            New-ConsumerTestTemplate $template
+            $templateBefore = Get-Content -LiteralPath (Join-Path $template 'Packages\manifest.template.json') -Raw -Encoding UTF8
+            $destination = Join-Path $testRoot 'consumer-materialized'
+            $packagePath = Join-Path $testRoot 'candidate package'
+            [System.IO.Directory]::CreateDirectory($packagePath) | Out-Null
+
+            $result = New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference $packagePath
+
+            $manifestPath = Join-Path $destination 'Packages\manifest.json'
+            Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) 'Materialized manifest is missing.'
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $expectedReference = 'file:' + ([System.IO.Path]::GetFullPath($packagePath).Replace('\', '/'))
+            Assert-Equal $expectedReference $manifest.dependencies.'com.joih.appui' 'File package reference was not normalized.'
+            Assert-Equal '1.4.5' $manifest.dependencies.'com.unity.test-framework' 'Test Framework version drifted.'
+            Assert-Equal '2.0.0' $manifest.dependencies.'com.unity.ugui' 'UGUI version drifted.'
+            Assert-Equal $templateBefore (Get-Content -LiteralPath (Join-Path $template 'Packages\manifest.template.json') -Raw -Encoding UTF8) 'Source template was mutated.'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $template 'Packages\manifest.json'))) 'Source template received a materialized manifest.'
+            Assert-Equal $manifestPath $result.ManifestPath 'Workspace result returned the wrong manifest path.'
+        }
+
+        Invoke-Test 'Consumer workspace preserves an approved Git package URL' {
+            $template = Join-Path $testRoot 'consumer-git-template'
+            New-ConsumerTestTemplate $template
+            $destination = Join-Path $testRoot 'consumer-git-materialized'
+            $gitReference = 'https://github.com/TechJoiH/JoiH-AppUI.git#0123456789abcdef0123456789abcdef01234567'
+
+            New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference $gitReference | Out-Null
+            $manifest = Get-Content -LiteralPath (Join-Path $destination 'Packages\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-Equal $gitReference $manifest.dependencies.'com.joih.appui' 'Git package reference changed during materialization.'
+        }
+
+        Invoke-Test 'Consumer workspace rejects unsafe templates and existing destinations' {
+            $template = Join-Path $testRoot 'unsafe-template'
+            New-ConsumerTestTemplate $template
+            [System.IO.Directory]::CreateDirectory((Join-Path $template 'Library')) | Out-Null
+            $destination = Join-Path $testRoot 'unsafe-materialized'
+
+            Assert-Throws {
+                New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#v1.0.0'
+            } 'Library|forbidden' 'Unsafe template was accepted.'
+
+            Remove-Item -LiteralPath (Join-Path $template 'Library') -Recurse -Force
+            [System.IO.Directory]::CreateDirectory($destination) | Out-Null
+            Assert-Throws {
+                New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#v1.0.0'
+            } 'already exists' 'Existing consumer destination was overwritten.'
+        }
+    }
+
+    if (Test-GroupRequested 'Policy') {
+        Invoke-Test 'Package policy accepts a clean exact commit' {
+            $repository = Join-Path $testRoot 'policy-clean'
+            $commit = New-PolicyTestRepository $repository
+            $result = Test-AppUIPackagePolicy -RepositoryPath $repository -SourceRef $commit
+
+            Assert-True $result.Success 'Clean policy fixture was rejected.'
+            Assert-Equal 0 $result.ErrorCount 'Clean policy fixture reported errors.'
+        }
+
+        Invoke-Test 'Package policy audits the requested commit instead of dirty worktree content' {
+            $repository = Join-Path $testRoot 'policy-dirty'
+            $commit = New-PolicyTestRepository $repository
+            Set-Utf8NoBomContent (Join-Path $repository 'Runtime\SafeType.cs') "using Cysharp.Threading.Tasks; namespace Annals { public sealed class Dirty { } }`n"
+
+            $result = Test-AppUIPackagePolicy -RepositoryPath $repository -SourceRef $commit
+            Assert-True $result.Success 'Dirty worktree content affected commit policy.'
+        }
+
+        Invoke-Test 'Package policy rejects wrong manifest and forbidden production tokens' {
+            $repository = Join-Path $testRoot 'policy-forbidden'
+            $source = "using Cysharp.Threading.Tasks; namespace Annals { public sealed class GameFrameworkAdapter { } }`n"
+            $commit = New-PolicyTestRepository -Path $repository -RuntimeSource $source -UnityVersion '2022.3' -DependenciesJson '"com.unity.ugui": "1.0.0", "com.example.extra": "1.0.0"'
+            $result = Test-AppUIPackagePolicy -RepositoryPath $repository -SourceRef $commit
+
+            Assert-True (-not $result.Success) 'Forbidden policy fixture was accepted.'
+            Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'PackageManifest' }).Count -eq 1) 'Manifest error was not reported.'
+            Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'ForbiddenProductionTokens' }).Count -eq 1) 'Forbidden token error was not reported.'
+        }
+
+        Invoke-Test 'Package policy rejects missing meta, duplicate GUID and scattered version macros' {
+            $repository = Join-Path $testRoot 'policy-meta-macro'
+            $commit = New-PolicyTestRepository $repository
+            Set-Utf8NoBomContent (Join-Path $repository 'Runtime\MissingMeta.cs') "public sealed class MissingMeta { }`n"
+            Set-Utf8NoBomContent (Join-Path $repository 'Runtime\Duplicate.cs') "#if UNITY_2022`npublic sealed class Duplicate { }`n#endif`n"
+            Set-Utf8NoBomContent (Join-Path $repository 'Runtime\Duplicate.cs.meta') @'
+fileFormatVersion: 2
+guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+'@
+            Invoke-TestGit $repository add -- Runtime/MissingMeta.cs Runtime/Duplicate.cs Runtime/Duplicate.cs.meta | Out-Null
+            Invoke-TestGit $repository commit -m 'Break meta and macro policy' | Out-Null
+            $brokenCommit = Invoke-TestGit $repository rev-parse HEAD
+            $result = Test-AppUIPackagePolicy -RepositoryPath $repository -SourceRef $brokenCommit
+
+            Assert-True (-not $result.Success) 'Meta/macro policy fixture was accepted.'
+            Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'UnityMetaIntegrity' }).Count -eq 1) 'Meta integrity error was not reported.'
+            Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'VersionMacroBoundary' }).Count -eq 1) 'Version macro error was not reported.'
+        }
+
+        Invoke-Test 'Package policy rejects official multi-version profiles and empty compatibility shells' {
+            $repository = Join-Path $testRoot 'policy-multi-version'
+            $commit = New-PolicyTestRepository $repository
+            Set-Utf8NoBomContent (Join-Path $repository 'Tools~\Release\unity2022.3-profile.json') "{}`n"
+            Set-Utf8NoBomContent (Join-Path $repository 'Runtime\Compatibility\.gitkeep') ""
+            Invoke-TestGit $repository add -- 'Tools~/Release/unity2022.3-profile.json' 'Runtime/Compatibility/.gitkeep' | Out-Null
+            Invoke-TestGit $repository commit -m 'Add forbidden official compatibility shells' | Out-Null
+            $brokenCommit = Invoke-TestGit $repository rev-parse HEAD
+
+            $result = Test-AppUIPackagePolicy -RepositoryPath $repository -SourceRef $brokenCommit
+            Assert-True (-not $result.Success) 'Multi-version profile/empty compatibility fixture was accepted.'
+            Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'SingleOfficialUnityLine' }).Count -eq 1) 'Single official line error was not reported.'
+            Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'CompatibilityYagni' }).Count -eq 1) 'Empty compatibility shell error was not reported.'
         }
     }
 }
