@@ -20,9 +20,11 @@ AppUI 的官方目标由项目自身的验证策略决定，不与 Unity 当前�
 
 ## Officially Supported Releases
 
-目前没有完成全部发布门禁的不可变官方 Tag。
+| AppUI | Unity | 状态 | Commit | 证据 |
+|---|---|---|---|---|
+| `v0.2.0-pre.4` | `6000.0.25f1` | `Officially Supported`（Pre-release API） | `547a82a4cb870e3fa1982832ea7f11034f2daba5` | [GitHub Pre-release 与十项证据](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4) |
 
-当前计划发布的 `0.2.0-pre.4` 是 Unity 6 Official Target 下的新预发布候选。发布证据不能跨 Commit 或版本复用；它仍需从新的 Run Root 完成全部 Consumer、Commit SHA、不可变 Tag、Tag URL 与正式 Artifact 门禁，因此目前不能标记为 `Officially Supported`。
+该状态只覆盖上表的精确 AppUI Tag 与 Unity Editor。它不自动扩大到其他 `6000.x`、Unity 6.1/6.2/6.3、Unity 2022.3 或 Unity 2021.3。
 
 ### Failed Release Attempts
 

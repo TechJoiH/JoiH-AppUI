@@ -1162,7 +1162,9 @@ set "PATH=$toolRoot;%PATH%"
 
             $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw -Encoding UTF8
             Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4')) 'README does not show the planned immutable tag URL.'
-            Assert-True ($readme.Contains('Planned tag; install only after it appears on the GitHub Release page.')) 'README does not warn that the planned tag is unavailable before release.'
+            Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4')) 'README does not link the verified GitHub Pre-release.'
+            Assert-True ($readme.Contains('Officially Supported Pre-release')) 'README does not identify the verified release status.'
+            Assert-True (-not $readme.Contains('Planned tag; install only after it appears on the GitHub Release page.')) 'README still labels the published Tag as unavailable.'
             Assert-True ($readme.Contains('v0.2.0-pre.2') -and $readme.Contains('Failed Release Attempt')) 'README does not preserve the failed pre.2 release attempt.'
             Assert-True ($readme.Contains('v0.2.0-pre.3') -and $readme.Contains('Failed Release Attempt')) 'README does not preserve the failed pre.3 release attempt.'
             Assert-True ($readme -notmatch 'git#main|\.git#main') 'README recommends main as a production install.'
@@ -1171,13 +1173,19 @@ set "PATH=$toolRoot;%PATH%"
             $validation = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\validation.md') -Raw -Encoding UTF8
             foreach ($evidenceBoundary in @(
                 'Historical Development Evidence',
-                'Current Candidate Evidence',
+                'Current Release Evidence',
                 'Blocked/MissingToolchain'
             )) {
                 Assert-True ($validation.Contains($evidenceBoundary)) "Validation docs blur current and historical evidence: $evidenceBoundary"
             }
-            Assert-True ($validation -match '(?s)Current Candidate Evidence.*Package resolve.*IL2CPP.*NotRun') 'Validation docs do not mark current candidate Consumer gates NotRun.'
+            Assert-True ($validation -match '(?s)Current Release Evidence.*Package resolve.*IL2CPP.*Passed') 'Validation docs do not record the completed release gates.'
             Assert-True ($validation.Contains('v0.2.0-pre.2') -and $validation.Contains('Tag Smoke')) 'Validation docs omit the immutable pre.2 Tag smoke failure.'
+
+            $supported = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\supported-unity-versions.md') -Raw -Encoding UTF8
+            Assert-True ($supported.Contains('v0.2.0-pre.4') -and $supported.Contains('Officially Supported')) 'Supported Unity versions omit the verified pre.4 release.'
+
+            $changelog = Get-Content -LiteralPath (Join-Path $repositoryRoot 'CHANGELOG.md') -Raw -Encoding UTF8
+            Assert-True ($changelog.Contains('## [0.2.0-pre.4] - 2026-08-13')) 'Changelog does not record the pre.4 release date.'
 
             $implementationPlan = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\superpowers\plans\2026-08-12-single-official-unity-line-implementation.md') -Raw -Encoding UTF8
             foreach ($obsoleteName in @('Read-AppUINUnitResult', 'Protect-AppUIReleaseArtifact')) {

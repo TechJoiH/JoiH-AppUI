@@ -2,7 +2,7 @@
 
 Joi.H AppUI 是面向 Unity 6 UGUI 的页面与交互框架。它统一页面定义、分层、作用域、生命周期、Binding、焦点导航和输入阻挡，但不替项目选择异步库、资源系统或业务架构。
 
-> 当前候选版本：`0.2.0-pre.4`。这是 Unity 6 Official Target 下的新预发布候选，所有发布证据必须从新的精确 Commit 重新生成，当前不能视为 Officially Supported Release。1.0 前 API 与序列化字段仍可能调整。
+> 当前版本：`0.2.0-pre.4`，是面向 Unity `6000.0.25f1` 的 **Officially Supported Pre-release**。完整门禁与十项证据已发布到 [GitHub Pre-release](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4)。1.0 前公共 API 与序列化字段仍可能调整。
 
 > **Failed Release Attempt：**不可变 Tag `v0.2.0-pre.2` 已固定到 Commit `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc`，但 Tag URL 冒烟因发布工具未导出远端 Tag 解析命令而在进入 Unity 前失败，因此没有创建 GitHub Release，也不属于 Officially Supported Release。该 Tag 不会移动、删除或复用。
 
@@ -65,7 +65,7 @@ Unity 2022.3 与 2021.3 当前属于 `Community Port`：允许用户自行移植
 https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4
 ```
 
-> Planned tag; install only after it appears on the GitHub Release page.
+> 已验证的不可变 Pre-release Tag；不要改为 `main` 或无版本仓库 URL。
 
 也可以直接加入 `Packages/manifest.json`：
 
@@ -77,7 +77,7 @@ https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4
 }
 ```
 
-`v0.2.0-pre.4` 是计划中的下一候选 Tag，只有 GitHub Release 页面实际出现该 Tag 后才可按上面的 URL 作为官方预发布版本安装；Tag 创建前这条地址不可用。已有的 `v0.2.0-pre.2` 与 `v0.2.0-pre.3` 都是失败发布尝试，不在 Officially Supported Releases 中。评估尚未发布的候选时必须固定精确 Commit，并自行承担预发布风险；不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
+`v0.2.0-pre.4` 已完成完整 Consumer、Mono/IL2CPP、Commit SHA、Tag URL 与 Artifact 门禁，可以按上面的 URL 安装。已有的 `v0.2.0-pre.2` 与 `v0.2.0-pre.3` 都是失败发布尝试，不在 Officially Supported Releases 中。不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
 
 ## 最短接入路径
 
@@ -177,7 +177,7 @@ AppUI 只等待 `IUIOperation<UITransitionResult>`，不关心 `projectTransitio
 ## 当前验证与限制
 
 - 框架开发阶段已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；这些历史结果属于 `Historical Development Evidence`，不能跨候选 Commit 充当发布证据，当前状态见[验证与发布门禁](Documentation~/validation.md)。
-- 当前尚无 Officially Supported Release；`pre.2` 停止于 Tag smoke，`pre.3` 停止于正式 Artifact 路径审计，二者都没有 GitHub Release。`0.2.0-pre.4` 必须重新完成全部门禁后才能提升状态。
+- `v0.2.0-pre.4` 已在 Unity `6000.0.25f1` 完成 EditMode 134/134、PlayMode 17/17、Binding 0 Error/0 Warning、Mono/IL2CPP、Commit SHA 与 Tag URL smoke，并发布十项经过秘密和路径审计的证据。它是预发布 API，不代表 Unity 6.1/6.2/6.3 或旧 Unity 自动获得官方支持。
 - `0.x` 期间允许破坏性整理，升级前请阅读 [CHANGELOG](CHANGELOG.md)。
 - 最终视觉、字体、动画手感、Prefab 点击区域仍需要在接入项目中人工验收。
 - 对外分发许可证尚未确定；在 LICENSE 明确前，不应推定获得复制、修改或再分发授权。

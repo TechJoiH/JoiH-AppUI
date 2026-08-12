@@ -172,7 +172,7 @@ Task 10：Tag URL 冒烟、Release Artifact、主分支证据索引
 
 任何箭头前的必需门禁失败都停止后续发布动作；失败不会降级成警告。
 
-当前实施状态：`pre.2` 因 Tag smoke 命令未导出停止；`pre.3` 修复后通过 Pre-tag、Commit 与 Tag smoke，但正式 Artifact 路径审计拒绝了验证 Run Root 绝对路径。两个不可变 Tag 均保留且没有 GitHub Release。恢复流程已转入 `0.2.0-pre.4`：用显式 `ValidationRootPath` 脱敏已知验证根，同时保持未知机器路径严格拒绝；再从新的 Commit、Tree 与 Run Root 重跑 Tasks 8-10。用户已授权连续执行剩余完整计划，不再逐项等待 Push、Tag 与 Release 授权，但任一门禁失败仍立即停止对应版本。
+当前实施状态：`v0.2.0-pre.4` 已完成完整 Pre-tag、Commit SHA smoke、不可变 Tag、Tag URL smoke、Formal Report、十项 Artifact 及秘密/路径审计，并创建 GitHub Pre-release。Tag 固定到 Commit `547a82a4cb870e3fa1982832ea7f11034f2daba5`、Tree `a567f45949413ae9781c94e79b6351a9b3454603`。当前只剩发布后 docs-only 索引提交、推送与最终不可变审计。
 
 远端 `ls-remote` 使用 30 秒有界进程；连接或远端失败必须报告 `Blocked/RemoteUnavailable`，超时报告 `Blocked/Timeout`。未拿到成功的远端响应时，不得推断为 `NotPushed` 或 Tag 未占用。
 

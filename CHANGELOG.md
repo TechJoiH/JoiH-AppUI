@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.2.0-pre.4] - Unreleased
+## [0.2.0-pre.4] - 2026-08-13
 
 ### Fixed
 
@@ -9,7 +9,7 @@
 
 ### Release policy
 
-- All validation and release evidence must be regenerated for the new `0.2.0-pre.4` Commit and Tree.
+- All validation and release evidence was regenerated for Commit `547a82a4cb870e3fa1982832ea7f11034f2daba5` and published with the GitHub Pre-release.
 - `v0.2.0-pre.2` and `v0.2.0-pre.3` remain immutable and are never moved, deleted or reused.
 
 ## [0.2.0-pre.3] - 2026-08-12 (Tag only; no GitHub Release)
