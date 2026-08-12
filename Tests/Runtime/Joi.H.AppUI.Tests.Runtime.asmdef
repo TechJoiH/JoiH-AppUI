@@ -4,8 +4,7 @@
   "references": [
     "Joi.H.AppUI.Core",
     "Joi.H.AppUI.Runtime",
-    "Joi.H.AppUI.Tests.Shared",
-    "UniTask"
+    "Joi.H.AppUI.Tests.Shared"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"

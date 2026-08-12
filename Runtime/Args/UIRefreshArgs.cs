@@ -4,7 +4,7 @@ namespace Joi.H.AppUI
 {
     /// <summary>
     /// 刷新页面参数。
-    /// 用于统一承载刷新数据、取消 token 和 SceneScopeId，旧 RefreshAsync(pageId, object) 会转成该结构。
+    /// 用于统一承载刷新数据、取消 token 和 SceneScopeId。
     /// </summary>
     public readonly struct UIRefreshArgs
     {

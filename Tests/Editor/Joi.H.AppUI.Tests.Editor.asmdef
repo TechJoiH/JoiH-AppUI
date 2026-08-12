@@ -6,7 +6,6 @@
     "Joi.H.AppUI.Runtime",
     "Joi.H.AppUI.Editor",
     "Joi.H.AppUI.Tests.Shared",
-    "UniTask",
     "Unity.TextMeshPro"
   ],
   "optionalUnityReferences": [

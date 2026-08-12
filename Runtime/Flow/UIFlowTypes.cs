@@ -1,5 +1,3 @@
-﻿using Cysharp.Threading.Tasks;
-
 namespace Joi.H.AppUI
 {
     public enum UIFlowActionKind
@@ -41,7 +39,7 @@ namespace Joi.H.AppUI
 
     public interface IUILocalizationService
     {
-        UniTask EnsureReadyAsync();
+        IUIOperation<UIUnit> EnsureReady();
         string Localize(string key);
         bool TryLocalize(string key, out string value);
         string Format(string key, object arg0);
@@ -54,7 +52,7 @@ namespace Joi.H.AppUI
 
     public interface IUIFlowCoordinator
     {
-        UniTask<UIFlowApplyResult> ApplyAsync(
+        IUIOperation<UIFlowApplyResult> Apply(
             string currentPageId,
             UIFlowContextBase context,
             IUIFlowCommandResult result);

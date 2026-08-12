@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using Joi.H.AppUI;
-using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -374,6 +373,8 @@ namespace Joi.H.AppUI.Tests
 
             UIFocusService focusService = new UIFocusService();
             focusService.ConfigureInstanceRegistry(registry);
+            focusService.ConfigureExecutionContext(
+                new ImmediateAppUIExecutionContext());
             IAppUIFocusScopeHandle scopeHandle = focusService.AttachScope(
                 page,
                 definition);
@@ -510,18 +511,20 @@ namespace Joi.H.AppUI.Tests
         {
             public readonly List<RequestSlot> Requests = new List<RequestSlot>(4);
 
-            public UniTask<AppUIFocusRealizationResult> EnsureRealizedAsync(
+            public IUIOperation<AppUIFocusRealizationResult> EnsureRealized(
                 AppUIFocusRealizationRequest request,
                 CancellationToken cancellationToken)
             {
-                RequestSlot slot = new RequestSlot(request, cancellationToken);
+                RequestSlot slot = new RequestSlot(
+                    request,
+                    cancellationToken);
                 Requests.Add(slot);
-                return slot.Source.Task;
+                return slot.Source.Operation;
             }
 
             public void Complete(int index, AppUIFocusRealizationResult result)
             {
-                Requests[index].Source.TrySetResult(result);
+                Requests[index].Source.TrySetSucceeded(result);
             }
         }
 
@@ -533,14 +536,22 @@ namespace Joi.H.AppUI.Tests
             {
                 Request = request;
                 CancellationToken = cancellationToken;
-                Source = new UniTaskCompletionSource<AppUIFocusRealizationResult>();
+                Source = new ManualUIOperationFactory()
+                    .Create<AppUIFocusRealizationResult>(
+                        AppUIOperationDescriptor.Create(
+                            "FocusRealization",
+                            cancellationToken));
+                Source.TrySetRunning();
             }
 
             public AppUIFocusRealizationRequest Request { get; }
 
             public CancellationToken CancellationToken { get; }
 
-            public UniTaskCompletionSource<AppUIFocusRealizationResult> Source { get; }
+            public IUIOperationSource<AppUIFocusRealizationResult> Source
+            {
+                get;
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using Cysharp.Threading.Tasks;
+using System.Threading;
 using UnityEngine;
 using UnityObject = UnityEngine.Object;
 
@@ -63,7 +63,9 @@ namespace Joi.H.AppUI.Samples.Basic
             }
 
             DirectReferenceUIAssetProvider assetProvider =
-                new DirectReferenceUIAssetProvider(assets);
+                new DirectReferenceUIAssetProvider(
+                    assets,
+                    operationFactory);
             AppUIInitializationResult result = runtimeHost.Initialize(
                 new AppUIRuntimeDependencies(
                     operationFactory,
@@ -83,10 +85,14 @@ namespace Joi.H.AppUI.Samples.Basic
     {
         private readonly Dictionary<string, UnityObject> assetById =
             new Dictionary<string, UnityObject>(StringComparer.Ordinal);
+        private readonly IUIOperationFactory operationFactory;
 
         public DirectReferenceUIAssetProvider(
-            IReadOnlyList<SampleUIAssetEntry> entries)
+            IReadOnlyList<SampleUIAssetEntry> entries,
+            IUIOperationFactory operationFactory)
         {
+            this.operationFactory = operationFactory ??
+                throw new ArgumentNullException(nameof(operationFactory));
             if (entries == null)
             {
                 return;
@@ -132,11 +138,20 @@ namespace Joi.H.AppUI.Samples.Basic
             return true;
         }
 
-        public UniTask<UIAssetLoadResult<T>> LoadAsync<T>(string assetId)
+        public IUIOperation<UIAssetLoadResult<T>> Load<T>(
+            string assetId,
+            CancellationToken cancellationToken)
             where T : UnityObject
         {
+            IUIOperationSource<UIAssetLoadResult<T>> source =
+                operationFactory.Create<UIAssetLoadResult<T>>(
+                    AppUIOperationDescriptor.Create(
+                        "SampleLoad:" + (assetId ?? string.Empty),
+                        cancellationToken));
+            source.TrySetRunning();
             TryLoad(assetId, out UIAssetLoadResult<T> result);
-            return UniTask.FromResult(result);
+            source.TrySetSucceeded(result);
+            return source.Operation;
         }
     }
 }

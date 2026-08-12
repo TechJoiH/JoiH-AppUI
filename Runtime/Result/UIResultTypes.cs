@@ -254,6 +254,44 @@ namespace Joi.H.AppUI
         }
     }
 
+    public sealed class UISceneBindResult
+    {
+        public bool Success { get; private set; }
+        public string SceneId { get; private set; }
+        public string SceneScopeId { get; private set; }
+        public IReadOnlyList<UIOpenResult> OpenResults { get; private set; }
+        public int SuccessCount { get; private set; }
+        public int FailureCount { get; private set; }
+
+        public static UISceneBindResult FromResults(
+            string sceneId,
+            string sceneScopeId,
+            List<UIOpenResult> openResults)
+        {
+            List<UIOpenResult> results = openResults != null
+                ? new List<UIOpenResult>(openResults)
+                : new List<UIOpenResult>(0);
+            int successCount = 0;
+            for (int i = 0; i < results.Count; i++)
+            {
+                if (results[i] != null && results[i].Success)
+                {
+                    successCount++;
+                }
+            }
+
+            return new UISceneBindResult
+            {
+                Success = successCount == results.Count,
+                SceneId = sceneId ?? string.Empty,
+                SceneScopeId = sceneScopeId ?? string.Empty,
+                OpenResults = results,
+                SuccessCount = successCount,
+                FailureCount = results.Count - successCount,
+            };
+        }
+    }
+
     /// <summary>
     /// 场景退出 UI 清理聚合结果。
     /// 收集显式 CloseOnSceneExit 和默认 Scope 释放产生的所有关闭结果。

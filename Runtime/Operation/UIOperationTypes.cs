@@ -1,5 +1,4 @@
 ﻿using System.Threading;
-using Cysharp.Threading.Tasks;
 
 namespace Joi.H.AppUI
 {
@@ -70,9 +69,9 @@ namespace Joi.H.AppUI
         public UIOpenArgs OpenArgs;
         public UIRefreshArgs RefreshArgs;
         public UICloseRequest CloseRequest;
-        public UniTaskCompletionSource<UIOpenResult> OpenCompletion;
-        public UniTaskCompletionSource<UICloseResult> CloseCompletion;
-        public UniTaskCompletionSource<UIRefreshResult> RefreshCompletion;
+        internal IUIOperationSource<UIOpenResult> OpenSource;
+        internal IUIOperationSource<UICloseResult> CloseSource;
+        internal IUIOperationSource<UIRefreshResult> RefreshSource;
     }
 
     /// <summary>
@@ -190,6 +189,7 @@ namespace Joi.H.AppUI
     public sealed class UIOpenOperation : UIPageOperationBase
     {
         public UIOpenArgs Args { get; set; }
+        internal IUIOperationSource<UIOpenResult> Source { get; set; }
     }
 
     /// <summary>
@@ -199,6 +199,7 @@ namespace Joi.H.AppUI
     public sealed class UICloseOperation : UIPageOperationBase
     {
         public UICloseRequest Request { get; set; }
+        internal IUIOperationSource<UICloseResult> Source { get; set; }
     }
 
     /// <summary>
@@ -209,5 +210,6 @@ namespace Joi.H.AppUI
     {
         public UIRefreshArgs Args { get; set; }
         public object Data { get; set; }
+        internal IUIOperationSource<UIRefreshResult> Source { get; set; }
     }
 }

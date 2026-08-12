@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using Cysharp.Threading.Tasks;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -79,7 +78,7 @@ namespace Joi.H.AppUI
             OnLateUpdateEx(deltaTime, unscaledDeltaTime);
         }
 
-        internal async UniTask ShowAsync()
+        internal UITransition BeginShow()
         {
             // Show 生命周期先激活 GameObject，再执行业务前置钩子、动画和完成钩子，确保动画期间对象可见。
             if (this != null && gameObject != null && !gameObject.activeSelf)
@@ -88,15 +87,23 @@ namespace Joi.H.AppUI
             }
 
             OnBeforeShowEx();
-            await PlayShowAnimationAsync();
+            return BeginShowTransition();
+        }
+
+        internal void CompleteShow()
+        {
             OnShowEx();
         }
 
-        internal async UniTask HideAsync()
+        internal UITransition BeginHide()
         {
             // Hide 生命周期先让业务和动画完成，再关闭 GameObject，避免动画对象被提前隐藏。
             OnBeforeHideEx();
-            await PlayHideAnimationAsync();
+            return BeginHideTransition();
+        }
+
+        internal void CompleteHide()
+        {
             OnHideEx();
             if (this != null && gameObject != null && gameObject.activeSelf)
             {
@@ -193,16 +200,16 @@ namespace Joi.H.AppUI
         {
         }
 
-        /// <summary>显示动画异步扩展点；默认无动画并立即完成。</summary>
-        protected virtual UniTask PlayShowAnimationAsync()
+        /// <summary>显示过渡扩展点；无过渡时返回 Immediate。</summary>
+        protected virtual UITransition BeginShowTransition()
         {
-            return UniTask.CompletedTask;
+            return UITransition.Immediate;
         }
 
-        /// <summary>隐藏动画异步扩展点；默认无动画并立即完成。</summary>
-        protected virtual UniTask PlayHideAnimationAsync()
+        /// <summary>隐藏过渡扩展点；无过渡时返回 Immediate。</summary>
+        protected virtual UITransition BeginHideTransition()
         {
-            return UniTask.CompletedTask;
+            return UITransition.Immediate;
         }
 
         /// <summary>注册释放时要执行的清理动作，常用于事件解绑和外部订阅撤销。</summary>

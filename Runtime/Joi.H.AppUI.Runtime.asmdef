@@ -3,7 +3,6 @@
   "rootNamespace": "Joi.H.AppUI",
   "references": [
     "Joi.H.AppUI.Core",
-    "UniTask",
     "Unity.TextMeshPro",
     "UnityEngine.UI"
   ],

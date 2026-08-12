@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
-using Cysharp.Threading.Tasks;
+using System.Linq;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -15,6 +16,26 @@ namespace Joi.H.AppUI.Tests
         {
             fixture?.Dispose();
             fixture = null;
+        }
+
+        [Test]
+        public void Manager_OnlyExposesDependencySetInitialization()
+        {
+            MethodInfo[] initializers = typeof(AppUIManager)
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                .Where(method => method.Name == "Initialize")
+                .ToArray();
+
+            Assert.That(initializers, Has.Length.EqualTo(1));
+            ParameterInfo[] parameters = initializers[0].GetParameters();
+            Assert.That(
+                parameters.Any(parameter =>
+                    parameter.ParameterType == typeof(AppUIRuntimeDependencies)),
+                Is.True);
+            Assert.That(
+                parameters.Any(parameter =>
+                    parameter.ParameterType == typeof(IUIAssetProvider)),
+                Is.False);
         }
 
         [Test]
@@ -315,14 +336,23 @@ namespace Joi.H.AppUI.Tests
                 return false;
             }
 
-            public UniTask<UIAssetLoadResult<T>> LoadAsync<T>(
-                string assetId)
+            public IUIOperation<UIAssetLoadResult<T>> Load<T>(
+                string assetId,
+                CancellationToken cancellationToken)
                 where T : UnityEngine.Object
             {
-                return UniTask.FromResult(
+                IUIOperationSource<UIAssetLoadResult<T>> source =
+                    new ManualUIOperationFactory()
+                        .Create<UIAssetLoadResult<T>>(
+                            AppUIOperationDescriptor.Create(
+                                "HostTestLoad",
+                                cancellationToken));
+                source.TrySetRunning();
+                source.TrySetSucceeded(
                     UIAssetLoadResult<T>.Failure(
                         UIAssetLoadStatus.NotFound,
                         assetId));
+                return source.Operation;
             }
         }
     }

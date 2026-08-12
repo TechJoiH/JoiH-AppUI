@@ -35,7 +35,7 @@ namespace Joi.H.AppUI
         /// <summary>打开顺序，值越小越先执行。</summary>
         public int Order;
 
-        /// <summary>打开参数；BindSceneAsync 会额外注入解析后的 SceneScopeId。</summary>
+        /// <summary>打开参数；BindScene 会额外注入解析后的 SceneScopeId。</summary>
         public UIOpenArgs OpenArgs;
     }
 

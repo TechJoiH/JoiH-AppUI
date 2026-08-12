@@ -1,4 +1,4 @@
-using Cysharp.Threading.Tasks;
+using System.Threading;
 
 namespace Joi.H.AppUI
 {
@@ -9,8 +9,10 @@ namespace Joi.H.AppUI
     {
         string StrategyId { get; }
 
-        UniTask<UILoadResult> LoadAsync(
+        IUIOperation<UILoadResult> Load(
             UIPageDefinition definition,
-            IUIAssetProvider assetProvider);
+            IUIAssetProvider assetProvider,
+            IUIOperationFactory operationFactory,
+            CancellationToken cancellationToken);
     }
 }

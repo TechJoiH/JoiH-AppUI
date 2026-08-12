@@ -4,7 +4,7 @@ namespace Joi.H.AppUI
 {
     /// <summary>
     /// 关闭页面请求。
-    /// CloseAsync 通过该结构决定关闭后隐藏还是释放，并携带取消 token 与 SceneScopeId。
+    /// Close 通过该结构决定关闭后隐藏还是释放，并携带取消 token 与 SceneScopeId。
     /// </summary>
     public struct UICloseRequest
     {

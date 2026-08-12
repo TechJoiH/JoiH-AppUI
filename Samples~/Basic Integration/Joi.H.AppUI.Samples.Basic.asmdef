@@ -3,8 +3,7 @@
   "rootNamespace": "Joi.H.AppUI.Samples.Basic",
   "references": [
     "Joi.H.AppUI.Core",
-    "Joi.H.AppUI.Runtime",
-    "UniTask"
+    "Joi.H.AppUI.Runtime"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

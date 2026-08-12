@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Threading;
-using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -289,6 +288,10 @@ namespace Joi.H.AppUI
         private int nextNodeSequence;
         private int pendingRealizationSerial;
         private CancellationTokenSource pendingRealizationCancellation;
+        private IUIOperation<AppUIFocusRealizationResult>
+            pendingRealizationOperation;
+        private IDisposable pendingRealizationSubscription;
+        private readonly IAppUIExecutionContext executionContext;
         private AppUIFocusNodeAddress pendingRealizationAddress;
         private string activeLeafRegionId = RootRegionId;
 
@@ -298,7 +301,8 @@ namespace Joi.H.AppUI
             string scopeId,
             AppUIFocusNodeRegistry registry,
             IUIFocusCommitter committer,
-            IAppUIFocusSelectionObservationSink selectionObserver)
+            IAppUIFocusSelectionObservationSink selectionObserver,
+            IAppUIExecutionContext appUIExecutionContext)
         {
             if (instance == null)
             {
@@ -323,6 +327,7 @@ namespace Joi.H.AppUI
 
             nodeRegistry = registry ?? throw new ArgumentNullException(nameof(registry));
             focusCommitter = committer ?? throw new ArgumentNullException(nameof(committer));
+            executionContext = appUIExecutionContext;
             ScopeId = scopeId;
             pageId = instance.PageId ?? string.Empty;
             pageInstanceId = instance.RuntimeInstanceId;
@@ -1390,7 +1395,31 @@ namespace Joi.H.AppUI
                     "Pending realization started. Reason=" + reason);
             }
 
-            CompletePendingRealizationAsync(
+            IUIOperation<AppUIFocusRealizationResult> operation =
+                group.VirtualizationAdapter.EnsureRealized(
+                    realizationRequest,
+                    cancellationToken);
+            if (operation == null)
+            {
+                CancelPendingRealization();
+                throw new InvalidOperationException(
+                    "Focus virtualization adapter returned null. Scope=" +
+                    ScopeId);
+            }
+
+            if (executionContext == null)
+            {
+                CancelPendingRealization();
+                throw new InvalidOperationException(
+                    "Focus virtualization requires the injected " +
+                    "IAppUIExecutionContext.");
+            }
+
+            pendingRealizationOperation = operation;
+            pendingRealizationSubscription = UIOperationObserver.Observe(
+                operation,
+                executionContext,
+                completion => CompletePendingRealization(
                     requestSerial,
                     pageHandle,
                     currentStackRevision,
@@ -1400,12 +1429,12 @@ namespace Joi.H.AppUI
                     reason,
                     group,
                     realizationRequest,
-                    cancellationToken)
-                .Forget();
+                    cancellationToken,
+                    completion));
             return AppUIFocusRequestResult.PendingRealization;
         }
 
-        private async UniTaskVoid CompletePendingRealizationAsync(
+        private void CompletePendingRealization(
             int requestSerial,
             UIPageInteractionHandle capturedPageHandle,
             int capturedStackRevision,
@@ -1415,14 +1444,25 @@ namespace Joi.H.AppUI
             AppUIFocusChangeReason reason,
             FocusGroupState group,
             AppUIFocusRealizationRequest realizationRequest,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            AppUIOperationCompletion<AppUIFocusRealizationResult> completion)
         {
             try
             {
-                AppUIFocusRealizationResult result =
-                    await group.VirtualizationAdapter.EnsureRealizedAsync(
-                        realizationRequest,
-                        cancellationToken);
+                if (completion.Status == AppUIOperationStatus.Cancelled ||
+                    completion.Status == AppUIOperationStatus.Expired)
+                {
+                    return;
+                }
+
+                if (completion.Status == AppUIOperationStatus.Failed)
+                {
+                    throw completion.Exception ??
+                        new InvalidOperationException(
+                            "Failed focus realization has no exception.");
+                }
+
+                AppUIFocusRealizationResult result = completion.Result;
                 if (cancellationToken.IsCancellationRequested ||
                     requestSerial != pendingRealizationSerial ||
                     result.Status != AppUIFocusRealizationStatus.Realized ||
@@ -1487,18 +1527,6 @@ namespace Joi.H.AppUI
                         "Realization registered and submitted. Order=" + result.Order);
                 }
             }
-            catch (OperationCanceledException)
-            {
-                if (AppUIFocusTrace.CanTrace(pageInstanceId))
-                {
-                    AppUIFocusTrace.Record(
-                        pageInstanceId,
-                        AppUIFocusTraceStage.Realization,
-                        currentFocusedAddress,
-                        realizationRequest.NodeAddress,
-                        "Realization canceled.");
-                }
-            }
             catch (Exception exception)
             {
                 if (AppUIFocusTrace.CanTrace(pageInstanceId))
@@ -1541,12 +1569,16 @@ namespace Joi.H.AppUI
 
             pendingRealizationCancellation?.Dispose();
             pendingRealizationCancellation = null;
+            pendingRealizationSubscription?.Dispose();
+            pendingRealizationSubscription = null;
+            pendingRealizationOperation = null;
             pendingRealizationAddress = default;
         }
 
         private void CancelPendingRealization()
         {
-            if (pendingRealizationCancellation == null)
+            if (pendingRealizationCancellation == null &&
+                pendingRealizationOperation == null)
             {
                 return;
             }
@@ -1561,8 +1593,12 @@ namespace Joi.H.AppUI
                     "Pending realization canceled by state change.");
             }
 
-            pendingRealizationCancellation.Cancel();
-            pendingRealizationCancellation.Dispose();
+            pendingRealizationOperation?.RequestCancellation();
+            pendingRealizationSubscription?.Dispose();
+            pendingRealizationSubscription = null;
+            pendingRealizationOperation = null;
+            pendingRealizationCancellation?.Cancel();
+            pendingRealizationCancellation?.Dispose();
             pendingRealizationCancellation = null;
             pendingRealizationAddress = default;
             if (pendingRealizationSerial == int.MaxValue)

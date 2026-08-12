@@ -188,7 +188,7 @@ namespace Joi.H.AppUI
 
         /// <summary>
         /// 查询全局最顶层可见页面。
-        /// CloseTop 使用该结果作为唯一候选，再交给 CloseAsync 统一执行 CanClose 和 operation 流程。
+        /// CloseTop 使用该结果作为唯一候选，再交给 Close 统一执行 CanClose 和 operation 流程。
         /// </summary>
         public bool TryGetTopVisiblePage(out UIPageInstance instance)
         {

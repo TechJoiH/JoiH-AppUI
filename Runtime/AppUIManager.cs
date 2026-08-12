@@ -1,6 +1,5 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using Cysharp.Threading.Tasks;
 using UnityEngine;
 
 namespace Joi.H.AppUI
@@ -9,7 +8,7 @@ namespace Joi.H.AppUI
     /// App UI 运行时门面。
     /// 公开 Open/Close/Refresh/SceneScope API 保持集中在这里，具体 Operation、Presentation、Layer 配置和释放协议交给内部 coordinator。
     /// </summary>
-    public sealed class AppUIManager : MonoBehaviour, IUIControllerService, INoticeServiceProvider, IUISceneCommandExecutor, IUIPageInstanceQuery
+    public sealed partial class AppUIManager : MonoBehaviour, IUIControllerService, INoticeServiceProvider, IUISceneCommandExecutor, IUIPageInstanceQuery
     {
         [SerializeField]
         private UIPageDefinitionRegistry pageRegistry;
@@ -35,7 +34,6 @@ namespace Joi.H.AppUI
             new Dictionary<string, IUIDestroyStrategy>(4);
 
         private IUIAssetProvider assetProvider;
-        private AppUIRuntimeDependencies runtimeDependencies;
         private IUIOperationFactory operationFactory;
         private IAppUIExecutionContext executionContext;
         private int runtimeEpoch;
@@ -128,56 +126,12 @@ namespace Joi.H.AppUI
                     nameof(dependencies));
             }
 
-            runtimeDependencies = dependencies;
             operationFactory = dependencies.OperationFactory;
             executionContext = dependencies.ExecutionContext;
+            focusService.ConfigureExecutionContext(executionContext);
             runtimeEpoch++;
-            Initialize(
-                registry,
-                dependencies.AssetProvider,
-                roots,
-                settings,
-                appNoticeSettings);
-        }
-
-        /// <summary>
-        /// 使用默认 Layer/Notice 配置初始化 UI Manager。
-        /// This overload uses the current layer and notice configuration.
-        /// </summary>
-        public void Initialize(
-            UIPageDefinitionRegistry registry,
-            IUIAssetProvider assetProvider,
-            UILayerRoot[] roots)
-        {
-            Initialize(registry, assetProvider, roots, null);
-        }
-
-        /// <summary>
-        /// 使用指定 Layer 配置初始化 UI Manager。
-        /// 未传 Notice 配置时会使用内置默认值，保证旧测试场景不需要额外资产也能运行。
-        /// </summary>
-        public void Initialize(
-            UIPageDefinitionRegistry registry,
-            IUIAssetProvider assetProvider,
-            UILayerRoot[] roots,
-            UILayerSettings settings)
-        {
-            Initialize(registry, assetProvider, roots, settings, null);
-        }
-
-        /// <summary>
-        /// 使用 Runtime Profile 提供的完整配置初始化 UI Manager。
-        /// 该入口会注入页面注册表、资源服务、LayerRoot、LayerSettings 与 NoticeSettings，并重新绑定 NoticeLayer。
-        /// </summary>
-        public void Initialize(
-            UIPageDefinitionRegistry registry,
-            IUIAssetProvider assetProvider,
-            UILayerRoot[] roots,
-            UILayerSettings settings,
-            AppUINoticeSettings appNoticeSettings)
-        {
             pageRegistry = registry;
-            this.assetProvider = assetProvider;
+            assetProvider = dependencies.AssetProvider;
             layerRoots = roots;
             if (settings != null)
             {
@@ -190,27 +144,6 @@ namespace Joi.H.AppUI
             }
 
             InitializeInternal();
-        }
-
-        /// <summary>
-        /// Replaces the asset provider and rebuilds provider-backed Notice pools.
-        /// </summary>
-        public void SetAssetProvider(IUIAssetProvider assetProvider)
-        {
-            if (assetProvider != null)
-            {
-                this.assetProvider = assetProvider;
-                ConfigureNoticeService();
-            }
-        }
-
-        /// <summary>
-        /// Releases provider-backed Notice assets and clears the provider reference.
-        /// </summary>
-        public void ClearAssetProvider()
-        {
-            noticeService?.ReleaseLoadedResources();
-            assetProvider = null;
         }
 
         public void RegisterLoadStrategy(IUILoadStrategy strategy)
@@ -311,7 +244,6 @@ namespace Joi.H.AppUI
 
         private void ClearRuntimeDependencies()
         {
-            runtimeDependencies = null;
             operationFactory = null;
             executionContext = null;
             assetProvider = null;
@@ -343,785 +275,103 @@ namespace Joi.H.AppUI
             initialized = true;
         }
 
-        public async UniTask BindSceneAsync(SceneUIBindingData bindingData)
+        public IUIOperation<UISceneBindResult> BindScene(
+            SceneUIBindingData bindingData)
         {
+            RequireInitialized();
             EnsureRuntimeServices();
-            await sceneScopeCoordinator.BindSceneAsync(bindingData);
+            return sceneScopeCoordinator.BindScene(bindingData);
         }
 
-        /// <summary>
-        /// 解绑场景 UI，并清理随该 SceneScopeId 存活的 Notice。
-        /// 页面释放仍由 SceneScopeCoordinator 负责；Notice 不是页面实例，因此在结果返回前单独按 Scope 回收。
-        /// </summary>
-        public async UniTask<UISceneExitResult> UnbindSceneAsync(SceneUIBindingData bindingData)
+        public IUIOperation<UISceneExitResult> UnbindScene(
+            SceneUIBindingData bindingData)
         {
+            RequireInitialized();
             EnsureRuntimeServices();
-            UISceneExitResult result = await sceneScopeCoordinator.UnbindSceneAsync(bindingData);
-            string sceneScopeId = UISceneScopeCoordinator.ResolveSceneScopeId(bindingData);
-            noticeService.ClearScope(UIPageScope.SceneScope, sceneScopeId);
-            noticeService.ClearScope(UIPageScope.TemporaryScope, sceneScopeId);
-            return result;
+            IUIOperation<UISceneExitResult> operation =
+                sceneScopeCoordinator.UnbindScene(bindingData);
+            string sceneScopeId =
+                UISceneScopeCoordinator.ResolveSceneScopeId(bindingData);
+            UIOperationObserver.Observe(
+                operation,
+                executionContext,
+                _ =>
+                {
+                    noticeService.ClearScope(
+                        UIPageScope.SceneScope,
+                        sceneScopeId);
+                    noticeService.ClearScope(
+                        UIPageScope.TemporaryScope,
+                        sceneScopeId);
+                });
+            return operation;
         }
 
-        /// <summary>
-        /// 释放指定 Scope 的页面和 Notice。
-        /// GlobalScope 不允许批量释放，Scene/Loading/Temporary 会同步清理匹配 SceneScopeId 的轻量提示。
-        /// </summary>
-        public async UniTask<UIScopeReleaseResult> ReleaseScopeAsync(UIPageScope scope, string sceneScopeId)
+        public IUIOperation<UIScopeReleaseResult> ReleaseScope(
+            UIPageScope scope,
+            string sceneScopeId)
         {
+            RequireInitialized();
             EnsureRuntimeServices();
-            UIScopeReleaseResult result = await sceneScopeCoordinator.ReleaseScopeAsync(scope, sceneScopeId);
+            IUIOperation<UIScopeReleaseResult> operation =
+                sceneScopeCoordinator.ReleaseScope(scope, sceneScopeId);
             if (scope != UIPageScope.GlobalScope)
             {
-                noticeService.ClearScope(scope, UISceneScopeCoordinator.NormalizeSceneScopeId(sceneScopeId));
+                string normalized =
+                    UISceneScopeCoordinator.NormalizeSceneScopeId(
+                        sceneScopeId);
+                UIOperationObserver.Observe(
+                    operation,
+                    executionContext,
+                    _ => noticeService.ClearScope(scope, normalized));
             }
 
-            return result;
+            return operation;
         }
 
-        public UniTask<UIOpenResult> OpenAsync(string pageId)
+        public IUIOperation<UICancelResult> Cancel()
         {
-            return OpenAsync(pageId, UIOpenArgs.None);
+            RequireInitialized();
+            return BeginCancel();
         }
 
-        public UniTask<UIOpenResult> OpenAsync(string pageId, object data)
+        public IUIOperation<UICloseResult> CloseTop()
         {
-            return OpenAsync(pageId, data == null ? UIOpenArgs.None : UIOpenArgs.FromExplicit(data));
-        }
-
-        public async UniTask<UIOpenResult> OpenAsync(string pageId, UIOpenArgs args)
-        {
+            RequireInitialized();
             EnsureRuntimeServices();
-            if (!EnsureInitialized())
+            if (presentationCoordinator.TryGetTopVisiblePage(
+                    out UIPageInstance instance) &&
+                instance != null)
             {
-                return UIOpenResult.Fail(UIPageOpenError.InvalidDefinition);
+                return Close(instance.PageId);
             }
 
-            if (string.IsNullOrEmpty(pageId) || pageRegistry == null ||
-                !pageRegistry.TryGet(pageId, out UIPageDefinition definition))
-            {
-                return UIOpenResult.Fail(UIPageOpenError.DefinitionNotFound);
-            }
-
-            if (!ValidateDefinition(definition))
-            {
-                return UIOpenResult.Fail(UIPageOpenError.InvalidDefinition);
-            }
-
-            if (operationCoordinator.IsPageBusy(pageId))
-            {
-                if (definition.OpenPolicy == UIOpenPolicy.QueueIfBusy)
-                {
-                    return await operationCoordinator.EnqueueOpenPendingAsync(pageId, args);
-                }
-
-                return UIOpenResult.Fail(UIPageOpenError.AlreadyOpenRejected);
-            }
-
-            UIOpenOperation operation = operationCoordinator.CreateOpenOperation(pageId, args);
-            if (!operationCoordinator.TryRegisterOperation(operation))
-            {
-                if (definition.OpenPolicy == UIOpenPolicy.QueueIfBusy)
-                {
-                    return await operationCoordinator.EnqueueOpenPendingAsync(pageId, args);
-                }
-
-                return UIOpenResult.Fail(UIPageOpenError.AlreadyOpenRejected);
-            }
-
-            try
-            {
-                operation.MarkRunning();
-
-                UIOpenResult result = instanceRegistry.TryGet(pageId, out UIPageInstance existing)
-                    ? await OpenExistingAsync(existing, definition, operation)
-                    : await OpenNewAsync(definition, operation);
-
-                InvokeOpenedCallback(args, result);
-                return result;
-            }
-            finally
-            {
-                operationCoordinator.UnregisterOperation(operation);
-                TriggerPendingIntentDrain(operation.PageId);
-            }
+            return CreateCompletedOperation(
+                "CloseTop",
+                UICloseResult.Fail(
+                    string.Empty,
+                    UIPageState.None,
+                    UICloseError.NotOpen));
         }
 
-        private async UniTask<UIOpenResult> OpenNewAsync(
-            UIPageDefinition definition,
-            UIOpenOperation operation)
+        public IUIOperation<UICloseResult> CloseTop(UILayerId layerId)
         {
-            UIOperationCheckResult checkResult = CheckOperation(operation, null, false);
-            if (checkResult != UIOperationCheckResult.Valid)
-            {
-                return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-            }
-
-            UIPageInstance instance = null;
-            UILoadResult loadResult = default(UILoadResult);
-            try
-            {
-                if (!layerController.TryGetRoot(definition.LayerId, out UILayerRoot layerRoot) ||
-                    layerRoot.ContentRoot == null)
-                {
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIPageOpenError.LayerNotFound);
-                }
-
-                IUILoadStrategy loadStrategy = ResolveLoadStrategy(definition.LoadStrategyId);
-                loadResult = await loadStrategy.LoadAsync(definition, assetProvider);
-                checkResult = CheckOperation(operation, null, false);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    ReleaseAssetLeaseSafe(loadResult.AssetLease);
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-                }
-
-                if (!loadResult.Success || loadResult.Prefab == null)
-                {
-                    ReleaseAssetLeaseSafe(loadResult.AssetLease);
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIPageOpenError.ResourceLoadFailed);
-                }
-
-                GameObject pageObject = Instantiate(loadResult.Prefab, layerRoot.ContentRoot, false);
-                pageObject.name = loadResult.Prefab.name;
-                pageObject.SetActive(false);
-
-                PanelBaseController[] controllers = pageObject.GetComponents<PanelBaseController>();
-                if (controllers == null || controllers.Length == 0)
-                {
-                    pageInstanceReleaser.DestroyLoadedObject(pageObject, loadResult.AssetLease);
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIPageOpenError.ControllerMissing);
-                }
-
-                if (controllers.Length > 1)
-                {
-                    pageInstanceReleaser.DestroyLoadedObject(pageObject, loadResult.AssetLease);
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIPageOpenError.ControllerInvalid);
-                }
-
-                PanelBaseController controller = controllers[0];
-                instance = new UIPageInstance
-                {
-                    PageId = operation.PageId,
-                    Definition = definition,
-                    LayerId = definition.LayerId,
-                    SceneScopeId = sceneScopeCoordinator.ResolveInstanceSceneScopeId(definition, operation.SceneScopeId),
-                    OperationVersion = operation.Version.Value,
-                    GameObject = pageObject,
-                    RectTransform = pageObject.transform as RectTransform,
-                    Controller = controller,
-                    AssetLease = loadResult.AssetLease,
-                    State = UIPageState.Initializing,
-                };
-
-                instanceRegistry.Register(instance);
-                UIPanelContext context = new UIPanelContext(this, noticeService, operation.PageId, definition);
-                controller.SetContext(context);
-                controller.OnCreate(context);
-                controller.OnInit();
-                IAppUIFocusDefinitionProvider focusDefinitionProvider =
-                    controller as IAppUIFocusDefinitionProvider;
-                if (focusDefinitionProvider == null)
-                {
-                    focusDefinitionProvider =
-                        pageObject.GetComponent<AppUIFocusAuthoring>();
-                }
-
-                if (focusDefinitionProvider != null)
-                {
-                    AppUIFocusDefinition focusDefinition =
-                        focusDefinitionProvider.BuildFocusDefinition();
-                    if (focusDefinition == null)
-                    {
-                        throw new InvalidOperationException(
-                            "IAppUIFocusDefinitionProvider returned null. Page=" +
-                            operation.PageId);
-                    }
-
-                    context.SetFocusScope(
-                        focusService.AttachScope(instance, focusDefinition));
-                }
-
-                ApplyDataAndRefresh(controller, operation.Args.HasData, operation.Args.Data);
-
-                checkResult = CheckOperation(operation, instance, true);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    CleanupFailedInstance(instance);
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-                }
-
-                await controller.ShowAsync();
-
-                checkResult = CheckOperation(operation, instance, true);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    CleanupFailedInstance(instance);
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-                }
-
-                instance.State = UIPageState.Open;
-                presentationCoordinator.PushOpened(instance);
-
-                operation.MarkCompleted();
-                UIOpenResult result = UIOpenResult.Ok(instance.ToHandle());
-                return result;
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError(exception);
-                if (instance != null)
-                {
-                    CleanupFailedInstance(instance);
-                }
-                else if (loadResult.AssetLease != null &&
-                         loadResult.AssetLease.IsValid)
-                {
-                    ReleaseAssetLeaseSafe(loadResult.AssetLease);
-                }
-
-                operation.MarkFailed();
-                return UIOpenResult.Fail(UIPageOpenError.LifecycleFailed, exception);
-            }
-        }
-
-        public UniTask<UICloseResult> CloseAsync(string pageId)
-        {
-            return CloseAsync(pageId, UICloseRequest.Default);
-        }
-
-        public async UniTask<UICloseResult> CloseAsync(string pageId, UICloseRequest request)
-        {
+            RequireInitialized();
             EnsureRuntimeServices();
-            if (operationCoordinator.IsPageBusy(pageId))
+            if (presentationCoordinator.TryGetTopVisiblePage(
+                    layerId,
+                    out UIPageInstance instance) &&
+                instance != null)
             {
-                return await operationCoordinator.EnqueueClosePendingAsync(pageId, request);
+                return Close(instance.PageId);
             }
 
-            if (!instanceRegistry.TryGet(pageId, out UIPageInstance instance) || instance == null)
-            {
-                return UICloseResult.Fail(pageId, UIPageState.None, UICloseError.NotOpen);
-            }
-
-            UICloseOperation operation = operationCoordinator.CreateCloseOperation(pageId, request);
-            if (!operationCoordinator.TryRegisterOperation(operation))
-            {
-                return await operationCoordinator.EnqueueClosePendingAsync(pageId, request);
-            }
-
-            UIPageState startState = instance.State;
-            try
-            {
-                operation.MarkRunning();
-
-                UIOperationCheckResult checkResult = CheckOperation(operation, instance, false);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailCloseOperation(operation, pageId, instance.State, UIOperationCoordinator.ToCloseError(checkResult));
-                }
-
-                try
-                {
-                    if (instance.Controller != null && !instance.Controller.CanClose(ref request))
-                    {
-                        operation.MarkFailed();
-                        return UICloseResult.Fail(pageId, instance.State, UICloseError.Rejected);
-                    }
-                }
-                catch (Exception exception)
-                {
-                    Debug.LogError(exception);
-                    operation.MarkFailed();
-                    return UICloseResult.Fail(pageId, startState, UICloseError.LifecycleFailed, exception);
-                }
-
-                // 只有关闭获批后才切换实例版本，避免 Rejected 使已发布 Snapshot Handle 失效。
-                instance.OperationVersion = operation.Version.Value;
-                checkResult = CheckOperation(operation, instance, true);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailCloseOperation(operation, pageId, instance.State, UIOperationCoordinator.ToCloseError(checkResult));
-                }
-
-                // Hide 动画开始前先从交互快照撤销页面资格，避免动画期间继续持有焦点。
-                presentationCoordinator.RemoveFromStack(instance);
-                presentationCoordinator.ClearFocusIfOwned(instance);
-                presentationCoordinator.Commit();
-
-                bool hideFailed = false;
-                if (instance.State == UIPageState.Open && instance.Controller != null)
-                {
-                    try
-                    {
-                        await instance.Controller.HideAsync();
-                    }
-                    catch (Exception exception)
-                    {
-                        hideFailed = true;
-                        Debug.LogError(exception);
-                    }
-                }
-
-                if (!request.ReleaseOnClose)
-                {
-                    if (hideFailed)
-                    {
-                        presentationCoordinator.SetInstanceActive(instance, false);
-                    }
-
-                    instance.State = UIPageState.Hidden;
-                    instance.StackVisible = false;
-                    presentationCoordinator.Commit();
-
-                    checkResult = CheckOperation(operation, instance, true);
-                    if (checkResult != UIOperationCheckResult.Valid)
-                    {
-                        return UIOperationCoordinator.FailCloseOperation(operation, pageId, instance.State, UIOperationCoordinator.ToCloseError(checkResult));
-                    }
-
-                    operation.MarkCompleted();
-                    return UICloseResult.Ok(pageId, instance.State);
-                }
-
-                ReleaseInstance(instance, UIReleaseReason.CloseRelease);
-
-                UIOperationCheckResult releaseCheckResult = CheckOperation(operation, instance, true);
-                if (releaseCheckResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailCloseOperation(operation, pageId, UIPageState.Released, UIOperationCoordinator.ToCloseError(releaseCheckResult));
-                }
-
-                operation.MarkCompleted();
-                return UICloseResult.Ok(pageId, UIPageState.Released);
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError(exception);
-                operation.MarkFailed();
-                return UICloseResult.Fail(pageId, instance.State, UICloseError.Exception, exception);
-            }
-            finally
-            {
-                operationCoordinator.UnregisterOperation(operation);
-                TriggerPendingIntentDrain(operation.PageId);
-            }
-        }
-
-        public UniTask<UIRefreshResult> RefreshAsync(string pageId, object data)
-        {
-            return RefreshAsync(pageId, new UIRefreshArgs(data));
-        }
-
-        public async UniTask<UIRefreshResult> RefreshAsync(string pageId, UIRefreshArgs args)
-        {
-            EnsureRuntimeServices();
-            if (operationCoordinator.IsPageBusy(pageId))
-            {
-                return await operationCoordinator.EnqueueRefreshPendingAsync(pageId, args);
-            }
-
-            if (!instanceRegistry.TryGet(pageId, out UIPageInstance instance) || instance == null)
-            {
-                return UIRefreshResult.Fail(pageId, UIPageState.None, UIRefreshError.NotOpen);
-            }
-
-            UIRefreshOperation operation = operationCoordinator.CreateRefreshOperation(pageId, args);
-            if (!operationCoordinator.TryRegisterOperation(operation))
-            {
-                return await operationCoordinator.EnqueueRefreshPendingAsync(pageId, args);
-            }
-
-            try
-            {
-                operation.MarkRunning();
-
-                UIOperationCheckResult checkResult = CheckOperation(operation, instance, false);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailRefreshOperation(operation, pageId, instance.State, UIOperationCoordinator.ToRefreshError(checkResult));
-                }
-
-                instance.OperationVersion = operation.Version.Value;
-
-                if (instance.State == UIPageState.Hidden ||
-                    instance.State == UIPageState.Loading ||
-                    instance.State == UIPageState.Initializing)
-                {
-                    checkResult = CheckOperation(operation, instance, true);
-                    if (checkResult != UIOperationCheckResult.Valid)
-                    {
-                        return UIOperationCoordinator.FailRefreshOperation(operation, pageId, instance.State, UIOperationCoordinator.ToRefreshError(checkResult));
-                    }
-
-                    instance.PendingRefreshData = args.Data;
-                    instance.HasPendingRefreshData = true;
-                    operation.MarkCompleted();
-                    return UIRefreshResult.Ok(pageId, instance.State);
-                }
-
-                if (instance.State != UIPageState.Open || instance.Controller == null)
-                {
-                    operation.MarkFailed();
-                    return UIRefreshResult.Fail(pageId, instance.State, UIRefreshError.NotOpen);
-                }
-
-                checkResult = CheckOperation(operation, instance, true);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailRefreshOperation(operation, pageId, instance.State, UIOperationCoordinator.ToRefreshError(checkResult));
-                }
-
-                ApplyDataAndRefresh(instance.Controller, true, args.Data);
-                await UniTask.CompletedTask;
-
-                checkResult = CheckOperation(operation, instance, true);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailRefreshOperation(operation, pageId, instance.State, UIOperationCoordinator.ToRefreshError(checkResult));
-                }
-
-                operation.MarkCompleted();
-                return UIRefreshResult.Ok(pageId, instance.State);
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError(exception);
-                operation.MarkFailed();
-                return UIRefreshResult.Fail(pageId, instance.State, UIRefreshError.LifecycleFailed, exception);
-            }
-            finally
-            {
-                operationCoordinator.UnregisterOperation(operation);
-                TriggerPendingIntentDrain(operation.PageId);
-            }
-        }
-
-        public UniTask<UICloseResult> CloseTopAsync()
-        {
-            EnsureRuntimeServices();
-            if (presentationCoordinator.TryGetTopVisiblePage(out UIPageInstance instance) && instance != null)
-            {
-                return CloseAsync(instance.PageId, UICloseRequest.Default);
-            }
-
-            return UniTask.FromResult(UICloseResult.Fail(string.Empty, UIPageState.None, UICloseError.NotOpen));
-        }
-
-        public UniTask<UICloseResult> CloseTopAsync(UILayerId layerId)
-        {
-            EnsureRuntimeServices();
-            if (presentationCoordinator.TryGetTopVisiblePage(layerId, out UIPageInstance instance) && instance != null)
-            {
-                return CloseAsync(instance.PageId, UICloseRequest.Default);
-            }
-
-            return UniTask.FromResult(UICloseResult.Fail(string.Empty, UIPageState.None, UICloseError.NotOpen));
-        }
-
-        public async UniTask<UICancelResult> CancelAsync()
-        {
-            EnsureRuntimeServices();
-            UIPageInstance instance = presentationCoordinator.ResolveCancelTarget();
-            if (instance == null)
-            {
-                return UICancelResult.NoTarget();
-            }
-
-            string pageId = instance.PageId;
-            AppUIFocusCancelDispatchResult focusCancelResult =
-                focusService.TryHandleCancel(
-                    instance,
-                    out Exception focusCancelException);
-            if (focusCancelResult == AppUIFocusCancelDispatchResult.Failed)
-            {
-                Debug.LogError(focusCancelException);
-                return UICancelResult.HandlerFailed(pageId, focusCancelException);
-            }
-
-            if (focusCancelResult == AppUIFocusCancelDispatchResult.Consumed)
-            {
-                return UICancelResult.Handled(pageId);
-            }
-
-            if (instance.Controller is IUICancelHandler cancelHandler)
-            {
-                bool handled;
-                try
-                {
-                    handled = cancelHandler.HandleCancel();
-                }
-                catch (Exception exception)
-                {
-                    Debug.LogError(exception);
-                    return UICancelResult.HandlerFailed(pageId, exception);
-                }
-
-                if (handled)
-                {
-                    return UICancelResult.Handled(pageId);
-                }
-            }
-
-            if (instance.Controller is IAppUIFocusCancelPolicyProvider policyProvider)
-            {
-                bool handled;
-                try
-                {
-                    AppUIFocusCancelPolicy cancelPolicy =
-                        policyProvider.GetFocusCancelPolicy();
-                    handled = cancelPolicy != null && cancelPolicy.HandleCancel();
-                }
-                catch (Exception exception)
-                {
-                    Debug.LogError(exception);
-                    return UICancelResult.HandlerFailed(pageId, exception);
-                }
-
-                if (handled)
-                {
-                    return UICancelResult.Handled(pageId);
-                }
-            }
-
-            if (instance.Definition == null || !instance.Definition.CloseOnCancel)
-            {
-                return UICancelResult.CloseDisabled(pageId);
-            }
-
-            UICloseResult closeResult = await CloseAsync(pageId, UICloseRequest.Default);
-            if (closeResult.Success)
-            {
-                return UICancelResult.Closed(pageId, closeResult);
-            }
-
-            if (closeResult.Error == UICloseError.Rejected)
-            {
-                return UICancelResult.CloseRejected(pageId, closeResult);
-            }
-
-            return UICancelResult.CloseFailed(pageId, closeResult);
-        }
-
-        public bool IsOpen(string pageId)
-        {
-            return instanceRegistry.TryGet(pageId, out UIPageInstance instance) &&
-                   instance != null &&
-                   instance.State == UIPageState.Open;
-        }
-
-        public bool IsOpening(string pageId)
-        {
-            EnsureRuntimeServices();
-            return operationCoordinator.IsOpenOperationActive(pageId);
-        }
-
-        public bool TryGetPageState(string pageId, out UIPageState state)
-        {
-            if (instanceRegistry.TryGet(pageId, out UIPageInstance instance) && instance != null)
-            {
-                state = instance.State;
-                return true;
-            }
-
-            state = UIPageState.None;
-            return false;
-        }
-
-        private void TriggerPendingIntentDrain(string pageId)
-        {
-            if (string.IsNullOrEmpty(pageId) ||
-                operationCoordinator.IsPageBusy(pageId) ||
-                !operationCoordinator.HasPendingIntent(pageId))
-            {
-                return;
-            }
-
-            DrainPendingIntentAsync(pageId).Forget();
-        }
-
-        private async UniTaskVoid DrainPendingIntentAsync(string pageId)
-        {
-            if (string.IsNullOrEmpty(pageId) || operationCoordinator.IsPageBusy(pageId))
-            {
-                return;
-            }
-
-            if (!operationCoordinator.TryTakePendingIntent(pageId, out UIPendingIntent intent))
-            {
-                return;
-            }
-
-            // Drain 只负责把 pending 交回公开 API 执行，OperationCoordinator 不反向调用 Manager。
-            try
-            {
-                switch (intent.Intent)
-                {
-                    case UIPageIntent.Open:
-                    {
-                        UIOpenResult result = await OpenAsync(intent.PageId, intent.OpenArgs);
-                        intent.OpenCompletion?.TrySetResult(result);
-                        break;
-                    }
-                    case UIPageIntent.Release:
-                    case UIPageIntent.Close:
-                    {
-                        UICloseResult result = await CloseAsync(intent.PageId, intent.CloseRequest);
-                        intent.CloseCompletion?.TrySetResult(result);
-                        break;
-                    }
-                    case UIPageIntent.Refresh:
-                    {
-                        UIRefreshResult result = await RefreshAsync(intent.PageId, intent.RefreshArgs);
-                        intent.RefreshCompletion?.TrySetResult(result);
-                        break;
-                    }
-                }
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError(exception);
-                operationCoordinator.CompletePendingIntentAsException(intent, exception);
-            }
-
-            TriggerPendingIntentDrain(pageId);
-        }
-
-        private UIPageState GetKnownPageState(string pageId)
-        {
-            return instanceRegistry.TryGet(pageId, out UIPageInstance instance) && instance != null
-                ? instance.State
-                : UIPageState.None;
-        }
-
-        private UIOperationCheckResult CheckOperation(
-            IUIPageOperation operation,
-            UIPageInstance instance,
-            bool requireVersion)
-        {
-            UIOperationCheckResult result = operationCoordinator.CheckOperation(operation, instance, requireVersion);
-            if (result != UIOperationCheckResult.Valid)
-            {
-                return result;
-            }
-
-            if (instance != null && !sceneScopeCoordinator.IsSceneScopeCompatible(operation.SceneScopeId, instance))
-            {
-                return UIOperationCheckResult.SceneScopeInvalid;
-            }
-
-            return UIOperationCheckResult.Valid;
-        }
-
-        private async UniTask<UIOpenResult> OpenExistingAsync(
-            UIPageInstance instance,
-            UIPageDefinition definition,
-            UIOpenOperation operation)
-        {
-            if (instance == null)
-            {
-                return UIOperationCoordinator.FailOpenOperation(operation, UIPageOpenError.OperationExpired);
-            }
-
-            UIOperationCheckResult checkResult = CheckOperation(operation, instance, false);
-            if (checkResult != UIOperationCheckResult.Valid)
-            {
-                return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-            }
-
-            if (instance.State == UIPageState.Open)
-            {
-                if (definition.OpenPolicy == UIOpenPolicy.RejectIfOpeningOrOpen)
-                {
-                    operation.MarkFailed();
-                    return UIOpenResult.Fail(UIPageOpenError.AlreadyOpenRejected);
-                }
-
-                instance.OperationVersion = operation.Version.Value;
-                checkResult = CheckOperation(operation, instance, true);
-                if (checkResult != UIOperationCheckResult.Valid)
-                {
-                    return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-                }
-
-                try
-                {
-                    if (definition.OpenPolicy == UIOpenPolicy.RefreshExisting)
-                    {
-                        ApplyDataAndRefresh(instance.Controller, operation.Args.HasData, operation.Args.Data);
-                    }
-
-                    presentationCoordinator.PushOpened(
-                        instance,
-                        AppUIFocusChangeReason.RestoreRequested);
-                    operation.MarkCompleted();
-                    return UIOpenResult.Ok(instance.ToHandle());
-                }
-                catch (Exception exception)
-                {
-                    Debug.LogError(exception);
-                    operation.MarkFailed();
-                    return UIOpenResult.Fail(UIPageOpenError.LifecycleFailed, exception);
-                }
-            }
-
-            if (instance.State == UIPageState.Hidden && instance.Controller != null)
-            {
-                instance.OperationVersion = operation.Version.Value;
-                object data = operation.Args.HasData
-                    ? operation.Args.Data
-                    : instance.HasPendingRefreshData
-                        ? instance.PendingRefreshData
-                        : null;
-                bool hasData = operation.Args.HasData || instance.HasPendingRefreshData;
-                instance.PendingRefreshData = null;
-                instance.HasPendingRefreshData = false;
-
-                try
-                {
-                    checkResult = CheckOperation(operation, instance, true);
-                    if (checkResult != UIOperationCheckResult.Valid)
-                    {
-                        instance.PendingRefreshData = data;
-                        instance.HasPendingRefreshData = hasData;
-                        return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-                    }
-
-                    ApplyDataAndRefresh(instance.Controller, hasData, data);
-                    await instance.Controller.ShowAsync();
-
-                    checkResult = CheckOperation(operation, instance, true);
-                    if (checkResult != UIOperationCheckResult.Valid)
-                    {
-                        presentationCoordinator.ClearFocusIfOwned(instance);
-                        presentationCoordinator.SetInstanceActive(instance, false);
-                        instance.State = UIPageState.Hidden;
-                        instance.StackVisible = false;
-                        presentationCoordinator.Commit();
-                        return UIOperationCoordinator.FailOpenOperation(operation, UIOperationCoordinator.ToOpenError(checkResult));
-                    }
-
-                    instance.State = UIPageState.Open;
-                    presentationCoordinator.PushOpened(
-                        instance,
-                        ResolveReopenFocusReason(instance.Controller));
-                    operation.MarkCompleted();
-                    return UIOpenResult.Ok(instance.ToHandle());
-                }
-                catch (Exception exception)
-                {
-                    Debug.LogError(exception);
-                    presentationCoordinator.ClearFocusIfOwned(instance);
-                    presentationCoordinator.SetInstanceActive(instance, false);
-                    instance.State = UIPageState.Hidden;
-                    instance.StackVisible = false;
-                    presentationCoordinator.Commit();
-                    operation.MarkFailed();
-                    return UIOpenResult.Fail(UIPageOpenError.LifecycleFailed, exception);
-                }
-            }
-
-            operation.MarkFailed();
-            return UIOpenResult.Fail(UIPageOpenError.AlreadyOpenRejected);
+            return CreateCompletedOperation(
+                "CloseTop:" + layerId,
+                UICloseResult.Fail(
+                    string.Empty,
+                    UIPageState.None,
+                    UICloseError.NotOpen));
         }
 
         internal static AppUIFocusChangeReason ResolveReopenFocusReason(
@@ -1149,7 +399,11 @@ namespace Joi.H.AppUI
 
             if (sceneScopeCoordinator == null)
             {
-                sceneScopeCoordinator = new UISceneScopeCoordinator(this, this);
+                sceneScopeCoordinator = new UISceneScopeCoordinator(
+                    this,
+                    this,
+                    operationFactory,
+                    executionContext);
             }
 
             if (presentationCoordinator == null)

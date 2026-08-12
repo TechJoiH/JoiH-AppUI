@@ -33,6 +33,7 @@ namespace Joi.H.AppUI
         private UIInteractionSnapshot currentInteractionSnapshot =
             UIInteractionSnapshot.Empty;
         private AppUIFocusScope activeScope;
+        private IAppUIExecutionContext executionContext;
 
         public UIFocusService()
         {
@@ -77,6 +78,13 @@ namespace Joi.H.AppUI
             }
 
             instanceRegistry = registry;
+        }
+
+        internal void ConfigureExecutionContext(
+            IAppUIExecutionContext context)
+        {
+            executionContext = context ??
+                throw new ArgumentNullException(nameof(context));
         }
 
         internal IAppUIFocusScopeHandle AttachScope(
@@ -137,7 +145,8 @@ namespace Joi.H.AppUI
                 scopeId,
                 nodeRegistry,
                 focusCommitter,
-                selectionObserver);
+                selectionObserver,
+                executionContext);
             scopesByPageInstance.Add(instance.RuntimeInstanceId, scope);
             pageInstanceByScopeId.Add(scopeId, instance.RuntimeInstanceId);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

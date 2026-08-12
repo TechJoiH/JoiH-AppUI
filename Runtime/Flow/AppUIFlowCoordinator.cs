@@ -1,104 +1,325 @@
-﻿using Cysharp.Threading.Tasks;
+using System;
 
 namespace Joi.H.AppUI
 {
+    /// <summary>
+    /// Applies multi-step UI flow commands through neutral operations.
+    /// </summary>
     public sealed class AppUIFlowCoordinator : IUIFlowCoordinator
     {
-        public async UniTask<UIFlowApplyResult> ApplyAsync(
+        private readonly IUIOperationFactory operationFactory;
+        private readonly IAppUIExecutionContext executionContext;
+
+        public AppUIFlowCoordinator(
+            IUIOperationFactory factory,
+            IAppUIExecutionContext context)
+        {
+            operationFactory = factory ??
+                throw new ArgumentNullException(nameof(factory));
+            executionContext = context ??
+                throw new ArgumentNullException(nameof(context));
+        }
+
+        public IUIOperation<UIFlowApplyResult> Apply(
             string currentPageId,
             UIFlowContextBase context,
             IUIFlowCommandResult result)
         {
-            if (result == null)
+            IUIOperationSource<UIFlowApplyResult> source =
+                operationFactory.Create<UIFlowApplyResult>(
+                    AppUIOperationDescriptor.Create("ApplyUIFlow"));
+            if (source == null || source.Operation == null)
             {
-                return UIFlowApplyResult.Failed(
+                throw new InvalidOperationException(
+                    "IUIOperationFactory returned a null source or operation.");
+            }
+
+            source.TrySetRunning();
+            FlowRun run = new FlowRun(
+                currentPageId,
+                context,
+                result,
+                source);
+            BeginApply(run);
+            return source.Operation;
+        }
+
+        private void BeginApply(FlowRun run)
+        {
+            if (run.Result == null)
+            {
+                Complete(run, UIFlowApplyResult.Failed(
                     "MissingFlowResult",
                     "UI flow command result is missing.",
                     UIFlowActionKind.None,
-                    currentPageId,
-                    string.Empty);
+                    run.CurrentPageId,
+                    string.Empty));
+                return;
             }
 
-            UIFlowActionKind action = ResolveAction(result);
-            string targetPageId = result.NextPageId ?? string.Empty;
-            if (!result.Success)
+            run.Action = ResolveAction(run.Result);
+            run.TargetPageId = run.Result.NextPageId ?? string.Empty;
+            if (!run.Result.Success ||
+                run.Action == UIFlowActionKind.None ||
+                run.Action == UIFlowActionKind.Stay)
             {
-                return UIFlowApplyResult.Noop(
-                    action,
-                    currentPageId,
-                    targetPageId,
-                    result.Message);
+                Complete(run, UIFlowApplyResult.Noop(
+                    run.Action,
+                    run.CurrentPageId,
+                    run.TargetPageId,
+                    run.Result.Message));
+                return;
             }
 
-            if (action == UIFlowActionKind.None ||
-                action == UIFlowActionKind.Stay)
+            if (run.Context == null || run.Context.UI == null)
             {
-                return UIFlowApplyResult.Noop(
-                    action,
-                    currentPageId,
-                    targetPageId,
-                    result.Message);
-            }
-
-            if (context == null || context.UI == null)
-            {
-                return UIFlowApplyResult.Failed(
+                Complete(run, UIFlowApplyResult.Failed(
                     "MissingUIFlowContext",
                     "UI flow context or UI service is missing.",
-                    action,
-                    currentPageId,
-                    targetPageId);
+                    run.Action,
+                    run.CurrentPageId,
+                    run.TargetPageId));
+                return;
             }
 
-            switch (action)
+            switch (run.Action)
             {
                 case UIFlowActionKind.OpenPage:
                 case UIFlowActionKind.OpenDialog:
-                    return await OpenTargetAsync(
-                        currentPageId,
-                        context,
-                        result,
-                        action,
-                        false);
-
                 case UIFlowActionKind.ReplacePage:
-                    return await OpenTargetAsync(
-                        currentPageId,
-                        context,
-                        result,
-                        action,
-                        true);
-
+                    BeginOpen(run);
+                    break;
                 case UIFlowActionKind.CloseCurrent:
-                    return await CloseCurrentAsync(
-                        currentPageId,
-                        context,
-                        result,
-                        action);
-
                 case UIFlowActionKind.CloseCurrentAndRefreshTarget:
-                    return await CloseCurrentAndRefreshTargetAsync(
-                        currentPageId,
-                        context,
-                        result,
-                        action);
+                    BeginClose(run);
+                    break;
+                default:
+                    Complete(run, UIFlowApplyResult.Failed(
+                        "UnsupportedFlowAction",
+                        "Unsupported UI flow action: " + run.Action,
+                        run.Action,
+                        run.CurrentPageId,
+                        run.TargetPageId));
+                    break;
             }
-
-            return UIFlowApplyResult.Failed(
-                "UnsupportedFlowAction",
-                "Unsupported UI flow action: " + action,
-                action,
-                currentPageId,
-                targetPageId);
         }
 
-        private static UIFlowActionKind ResolveAction(IUIFlowCommandResult result)
+        private void BeginOpen(FlowRun run)
         {
-            if (result == null)
+            if (string.IsNullOrEmpty(run.TargetPageId))
             {
-                return UIFlowActionKind.None;
+                FailDomain(
+                    run,
+                    "MissingTargetPageId",
+                    "UI flow target page id is missing.");
+                return;
             }
 
+            if (!TryResolveOpenArgs(
+                    run.Context,
+                    run.Result,
+                    run.TargetPageId,
+                    out UIOpenArgs args,
+                    out string code,
+                    out string message))
+            {
+                FailDomain(run, code, message);
+                return;
+            }
+
+            Observe(
+                run.Context.UI.Open(run.TargetPageId, args),
+                run,
+                completion =>
+                {
+                    UIOpenResult result = completion.Result;
+                    if (result == null || !result.Success)
+                    {
+                        FailDomain(
+                            run,
+                            "OpenTargetFailed",
+                            "Open target page failed: " +
+                            (result == null
+                                ? "NullResult"
+                                : result.Error.ToString()));
+                        return;
+                    }
+
+                    if (run.Action != UIFlowActionKind.ReplacePage ||
+                        string.IsNullOrEmpty(run.CurrentPageId) ||
+                        string.Equals(
+                            run.CurrentPageId,
+                            run.TargetPageId,
+                            StringComparison.Ordinal))
+                    {
+                        CompleteApplied(run);
+                        return;
+                    }
+
+                    UICloseRequest request = UICloseRequest.Default;
+                    request.ReleaseOnClose =
+                        run.Context.ReleaseCurrentPageOnReplace;
+                    if (!string.IsNullOrEmpty(run.Context.SceneScopeId))
+                    {
+                        request = request.WithSceneScopeId(
+                            run.Context.SceneScopeId);
+                    }
+
+                    Observe(
+                        run.Context.UI.Close(
+                            run.CurrentPageId,
+                            request),
+                        run,
+                        closeCompletion => CompleteAfterClose(
+                            run,
+                            closeCompletion.Result,
+                            false));
+                });
+        }
+
+        private void BeginClose(FlowRun run)
+        {
+            if (string.IsNullOrEmpty(run.CurrentPageId))
+            {
+                FailDomain(
+                    run,
+                    "MissingCurrentPageId",
+                    "Current page id is missing.");
+                return;
+            }
+
+            Observe(
+                run.Context.UI.Close(run.CurrentPageId),
+                run,
+                completion => CompleteAfterClose(
+                    run,
+                    completion.Result,
+                    run.Action ==
+                    UIFlowActionKind.CloseCurrentAndRefreshTarget));
+        }
+
+        private void CompleteAfterClose(
+            FlowRun run,
+            UICloseResult closeResult,
+            bool refreshTarget)
+        {
+            if (closeResult == null || !closeResult.Success)
+            {
+                FailDomain(
+                    run,
+                    "CloseCurrentFailed",
+                    "Close current page failed: " +
+                    (closeResult == null
+                        ? "NullResult"
+                        : closeResult.Error.ToString()));
+                return;
+            }
+
+            if (!refreshTarget || string.IsNullOrEmpty(run.TargetPageId))
+            {
+                CompleteApplied(run);
+                return;
+            }
+
+            UIRefreshArgs args = new UIRefreshArgs(run.Result.FlowPayload);
+            if (!string.IsNullOrEmpty(run.Context.SceneScopeId))
+            {
+                args = args.WithSceneScopeId(run.Context.SceneScopeId);
+            }
+
+            Observe(
+                run.Context.UI.Refresh(run.TargetPageId, args),
+                run,
+                completion =>
+                {
+                    UIRefreshResult result = completion.Result;
+                    if (result == null || !result.Success)
+                    {
+                        FailDomain(
+                            run,
+                            "RefreshTargetFailed",
+                            "Refresh target page failed: " +
+                            (result == null
+                                ? "NullResult"
+                                : result.Error.ToString()));
+                        return;
+                    }
+
+                    CompleteApplied(run);
+                });
+        }
+
+        private void Observe<TResult>(
+            IUIOperation<TResult> operation,
+            FlowRun run,
+            Action<AppUIOperationCompletion<TResult>> onSucceeded)
+        {
+            if (operation == null)
+            {
+                run.Source.TrySetFailed(new InvalidOperationException(
+                    "UI flow service returned a null operation."));
+                return;
+            }
+
+            UIOperationObserver.Observe(
+                operation,
+                executionContext,
+                completion =>
+                {
+                    switch (completion.Status)
+                    {
+                        case AppUIOperationStatus.Succeeded:
+                            onSucceeded.Invoke(completion);
+                            break;
+                        case AppUIOperationStatus.Cancelled:
+                            run.Source.TrySetCancelled();
+                            break;
+                        case AppUIOperationStatus.Expired:
+                            run.Source.TrySetExpired();
+                            break;
+                        case AppUIOperationStatus.Failed:
+                            run.Source.TrySetFailed(
+                                completion.Exception ??
+                                new InvalidOperationException(
+                                    "Failed UI flow operation has no " +
+                                    "exception."));
+                            break;
+                    }
+                });
+        }
+
+        private static void CompleteApplied(FlowRun run)
+        {
+            Complete(run, UIFlowApplyResult.AppliedOk(
+                run.Action,
+                run.CurrentPageId,
+                run.TargetPageId,
+                run.Result.Message));
+        }
+
+        private static void FailDomain(
+            FlowRun run,
+            string code,
+            string message)
+        {
+            Complete(run, UIFlowApplyResult.Failed(
+                code,
+                message,
+                run.Action,
+                run.CurrentPageId,
+                run.TargetPageId));
+        }
+
+        private static void Complete(
+            FlowRun run,
+            UIFlowApplyResult result)
+        {
+            run.Source.TrySetSucceeded(result);
+        }
+
+        private static UIFlowActionKind ResolveAction(
+            IUIFlowCommandResult result)
+        {
             if (result.FlowAction != UIFlowActionKind.None)
             {
                 return result.FlowAction;
@@ -107,171 +328,6 @@ namespace Joi.H.AppUI
             return string.IsNullOrEmpty(result.NextPageId)
                 ? UIFlowActionKind.Stay
                 : UIFlowActionKind.OpenPage;
-        }
-
-        private static async UniTask<UIFlowApplyResult> OpenTargetAsync(
-            string currentPageId,
-            UIFlowContextBase context,
-            IUIFlowCommandResult result,
-            UIFlowActionKind action,
-            bool closeCurrentAfterOpen)
-        {
-            string targetPageId = result.NextPageId ?? string.Empty;
-            if (string.IsNullOrEmpty(targetPageId))
-            {
-                return UIFlowApplyResult.Failed(
-                    "MissingTargetPageId",
-                    "UI flow target page id is missing.",
-                    action,
-                    currentPageId,
-                    targetPageId);
-            }
-
-            if (!TryResolveOpenArgs(
-                    context,
-                    result,
-                    targetPageId,
-                    out UIOpenArgs openArgs,
-                    out string errorCode,
-                    out string errorMessage))
-            {
-                return UIFlowApplyResult.Failed(
-                    errorCode,
-                    errorMessage,
-                    action,
-                    currentPageId,
-                    targetPageId);
-            }
-
-            UIOpenResult openResult = await context.UI.OpenAsync(targetPageId, openArgs);
-            if (openResult == null || !openResult.Success)
-            {
-                return UIFlowApplyResult.Failed(
-                    "OpenTargetFailed",
-                    "Open target page failed: " +
-                    (openResult == null ? "NullResult" : openResult.Error.ToString()),
-                    action,
-                    currentPageId,
-                    targetPageId);
-            }
-
-            if (closeCurrentAfterOpen && !string.IsNullOrEmpty(currentPageId) &&
-                !string.Equals(currentPageId, targetPageId, System.StringComparison.Ordinal))
-            {
-                UICloseRequest closeRequest = UICloseRequest.Default;
-                closeRequest.ReleaseOnClose =
-                    context.ReleaseCurrentPageOnReplace;
-                if (!string.IsNullOrEmpty(context.SceneScopeId))
-                {
-                    closeRequest = closeRequest.WithSceneScopeId(
-                        context.SceneScopeId);
-                }
-
-                UICloseResult closeResult = await context.UI.CloseAsync(
-                    currentPageId,
-                    closeRequest);
-                if (closeResult == null || !closeResult.Success)
-                {
-                    return UIFlowApplyResult.Failed(
-                        "CloseCurrentFailed",
-                        "Close current page failed: " +
-                        (closeResult == null ? "NullResult" : closeResult.Error.ToString()),
-                        action,
-                        currentPageId,
-                        targetPageId);
-                }
-            }
-
-            return UIFlowApplyResult.AppliedOk(
-                action,
-                currentPageId,
-                targetPageId,
-                result.Message);
-        }
-
-        private static async UniTask<UIFlowApplyResult> CloseCurrentAsync(
-            string currentPageId,
-            UIFlowContextBase context,
-            IUIFlowCommandResult result,
-            UIFlowActionKind action)
-        {
-            if (string.IsNullOrEmpty(currentPageId))
-            {
-                return UIFlowApplyResult.Failed(
-                    "MissingCurrentPageId",
-                    "Current page id is missing.",
-                    action,
-                    currentPageId,
-                    result.NextPageId);
-            }
-
-            UICloseResult closeResult = await context.UI.CloseAsync(currentPageId);
-            if (closeResult == null || !closeResult.Success)
-            {
-                return UIFlowApplyResult.Failed(
-                    "CloseCurrentFailed",
-                    "Close current page failed: " +
-                    (closeResult == null ? "NullResult" : closeResult.Error.ToString()),
-                    action,
-                    currentPageId,
-                    result.NextPageId);
-            }
-
-            return UIFlowApplyResult.AppliedOk(
-                action,
-                currentPageId,
-                result.NextPageId,
-                result.Message);
-        }
-
-        private static async UniTask<UIFlowApplyResult> CloseCurrentAndRefreshTargetAsync(
-            string currentPageId,
-            UIFlowContextBase context,
-            IUIFlowCommandResult result,
-            UIFlowActionKind action)
-        {
-            UIFlowApplyResult closeResult = await CloseCurrentAsync(
-                currentPageId,
-                context,
-                result,
-                action);
-            if (!closeResult.Success)
-            {
-                return closeResult;
-            }
-
-            string targetPageId = result.NextPageId ?? string.Empty;
-            if (string.IsNullOrEmpty(targetPageId))
-            {
-                return closeResult;
-            }
-
-            object data = result.FlowPayload;
-            UIRefreshArgs refreshArgs = new UIRefreshArgs(data);
-            if (!string.IsNullOrEmpty(context.SceneScopeId))
-            {
-                refreshArgs = refreshArgs.WithSceneScopeId(context.SceneScopeId);
-            }
-
-            UIRefreshResult refreshResult = await context.UI.RefreshAsync(
-                targetPageId,
-                refreshArgs);
-            if (refreshResult == null || !refreshResult.Success)
-            {
-                return UIFlowApplyResult.Failed(
-                    "RefreshTargetFailed",
-                    "Refresh target page failed: " +
-                    (refreshResult == null ? "NullResult" : refreshResult.Error.ToString()),
-                    action,
-                    currentPageId,
-                    targetPageId);
-            }
-
-            return UIFlowApplyResult.AppliedOk(
-                action,
-                currentPageId,
-                targetPageId,
-                result.Message);
         }
 
         private static bool TryResolveOpenArgs(
@@ -285,20 +341,24 @@ namespace Joi.H.AppUI
             args = UIOpenArgs.None;
             errorCode = string.Empty;
             errorMessage = string.Empty;
-
-            UIPageFlowContract contract = null;
             if (context.Contracts != null &&
-                context.Contracts.TryGet(targetPageId, out contract) &&
+                context.Contracts.TryGet(
+                    targetPageId,
+                    out UIPageFlowContract contract) &&
                 contract != null)
             {
                 if (!contract.IsImplemented)
                 {
                     errorCode = "TargetPageNotImplemented";
-                    errorMessage = "Target page is not implemented: " + targetPageId;
+                    errorMessage = "Target page is not implemented: " +
+                                   targetPageId;
                     return false;
                 }
 
-                if (contract.TryCreateOpenData(context, result, out object openData))
+                if (contract.TryCreateOpenData(
+                    context,
+                    result,
+                    out object openData))
                 {
                     args = UIOpenArgs.FromExplicit(openData);
                 }
@@ -314,6 +374,28 @@ namespace Joi.H.AppUI
             }
 
             return true;
+        }
+
+        private sealed class FlowRun
+        {
+            public FlowRun(
+                string currentPageId,
+                UIFlowContextBase context,
+                IUIFlowCommandResult result,
+                IUIOperationSource<UIFlowApplyResult> source)
+            {
+                CurrentPageId = currentPageId ?? string.Empty;
+                Context = context;
+                Result = result;
+                Source = source;
+            }
+
+            public readonly string CurrentPageId;
+            public readonly UIFlowContextBase Context;
+            public readonly IUIFlowCommandResult Result;
+            public readonly IUIOperationSource<UIFlowApplyResult> Source;
+            public string TargetPageId;
+            public UIFlowActionKind Action;
         }
     }
 }
