@@ -183,6 +183,128 @@ function Test-AppUISemVerTag {
     return $Tag -match $pattern
 }
 
+function Invoke-AppUIGitRemoteText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryPath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+
+        [ValidateRange(1, 600)]
+        [int]$TimeoutSeconds = 30,
+
+        [string]$GitPath = 'git'
+    )
+
+    $resolvedRepository = [System.IO.Path]::GetFullPath($RepositoryPath)
+    if (-not (Test-Path -LiteralPath $resolvedRepository -PathType Container)) {
+        throw "Repository path does not exist: $resolvedRepository"
+    }
+
+    $resolvedGit = (Get-Command $GitPath -ErrorAction Stop).Source
+    $processArguments = @('-C', $resolvedRepository) + $Arguments
+    $escapedArguments = @(
+        foreach ($argument in $processArguments) {
+            $value = if ($null -eq $argument) { '' } else { [string]$argument }
+            if ($value -notmatch '[\s"]') {
+                $value
+                continue
+            }
+
+            $builder = New-Object System.Text.StringBuilder
+            [void]$builder.Append('"')
+            $backslashCount = 0
+            for ($index = 0; $index -lt $value.Length; $index++) {
+                $character = $value[$index]
+                if ($character -eq '\') {
+                    $backslashCount++
+                    continue
+                }
+
+                if ($character -eq '"') {
+                    [void]$builder.Append(('\' * ($backslashCount * 2 + 1)))
+                    [void]$builder.Append('"')
+                    $backslashCount = 0
+                    continue
+                }
+
+                if ($backslashCount -gt 0) {
+                    [void]$builder.Append(('\' * $backslashCount))
+                    $backslashCount = 0
+                }
+
+                [void]$builder.Append($character)
+            }
+
+            if ($backslashCount -gt 0) {
+                [void]$builder.Append(('\' * ($backslashCount * 2)))
+            }
+
+            [void]$builder.Append('"')
+            $builder.ToString()
+        }
+    )
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $process = $null
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $resolvedGit
+        $startInfo.Arguments = $escapedArguments -join ' '
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.WorkingDirectory = $resolvedRepository
+        $startInfo.EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'
+        $startInfo.EnvironmentVariables['GCM_INTERACTIVE'] = 'Never'
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) {
+            throw "Failed to start Git process: $resolvedGit"
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        if ($timedOut) {
+            try {
+                $process.Kill()
+                $process.WaitForExit()
+            }
+            catch {
+                throw "Timed out Git process could not be terminated. Id=$($process.Id). $($_.Exception.Message)"
+            }
+        }
+        else {
+            $process.WaitForExit()
+        }
+
+        $exitCode = if ($timedOut) { $null } else { $process.ExitCode }
+        $processId = $process.Id
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        $text = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        return [PSCustomObject][ordered]@{
+            Status = if ($timedOut -or $exitCode -ne 0) { 'Blocked' } else { 'Passed' }
+            Reason = if ($timedOut) { 'Timeout' } elseif ($exitCode -ne 0) { 'RemoteUnavailable' } else { '' }
+            ExitCode = $exitCode
+            TimedOut = $timedOut
+            DurationMs = $stopwatch.ElapsedMilliseconds
+            ProcessId = $processId
+            Text = $text.Trim()
+        }
+    }
+    finally {
+        $stopwatch.Stop()
+        if ($null -ne $process) {
+            $process.Dispose()
+        }
+    }
+}
+
 function Resolve-AppUIRemoteTagIdentity {
     [CmdletBinding()]
     param(
@@ -197,13 +319,16 @@ function Resolve-AppUIRemoteTagIdentity {
         throw "Remote tag is not a valid AppUI SemVer tag: $Tag"
     }
 
-    $result = Invoke-AppUIGitText `
+    $result = Invoke-AppUIGitRemoteText `
         -RepositoryPath $RepositoryPath `
         -Arguments @(
             'ls-remote',
             'origin',
             "refs/tags/$Tag",
             "refs/tags/$Tag^{}")
+    if ($result.Status -ne 'Passed') {
+        throw "Remote tag lookup blocked. Reason=$($result.Reason) ExitCode=$($result.ExitCode). $($result.Text)"
+    }
     $lines = @($result.Text -split "`r?`n" | Where-Object {
         -not [string]::IsNullOrWhiteSpace($_)
     })
@@ -262,26 +387,47 @@ function Test-AppUIReleaseReadiness {
         throw "Release readiness planned tag mismatch. Expected=v$($identity.PackageVersion) Actual=$PlannedTag"
     }
 
-    $mainResult = Invoke-AppUIGitText `
-        -RepositoryPath $RepositoryPath `
-        -Arguments @('ls-remote', 'origin', 'refs/heads/main') `
-        -AllowFailure
-    $remoteMainCommit = ''
-    if ($mainResult.ExitCode -eq 0 -and
-        $mainResult.Text -match '^(?<commit>[0-9a-f]{40})\s+refs/heads/main$') {
-        $remoteMainCommit = $Matches['commit']
-    }
-
-    $tagResult = Invoke-AppUIGitText `
+    $remoteResult = Invoke-AppUIGitRemoteText `
         -RepositoryPath $RepositoryPath `
         -Arguments @(
             'ls-remote',
             'origin',
+            'refs/heads/main',
             "refs/tags/$PlannedTag",
-            "refs/tags/$PlannedTag^{}") `
-        -AllowFailure
-    $tagExists = $tagResult.ExitCode -eq 0 -and
-        -not [string]::IsNullOrWhiteSpace($tagResult.Text)
+            "refs/tags/$PlannedTag^{}")
+    if ($remoteResult.Status -ne 'Passed') {
+        return [PSCustomObject][ordered]@{
+            Status = 'Blocked'
+            Reason = $remoteResult.Reason
+            Repository = $identity.Repository
+            CandidateCommit = $identity.SourceCommit
+            CandidateTree = $identity.SourceTree
+            PackageVersion = $identity.PackageVersion
+            PlannedTag = $PlannedTag
+            RemoteMainCommit = ''
+            CandidateIsRemoteMain = $false
+            TagExists = $false
+            LocalTagExists = $false
+            TagCommit = ''
+            TagTree = ''
+            RemoteExitCode = $remoteResult.ExitCode
+            RemoteDurationMs = $remoteResult.DurationMs
+        }
+    }
+
+    $remoteLines = @($remoteResult.Text -split "`r?`n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    $remoteMainCommit = ''
+    $mainLine = $remoteLines | Where-Object { $_ -match '\s+refs/heads/main$' } | Select-Object -First 1
+    if ([string]$mainLine -match '^(?<commit>[0-9a-f]{40})\s+refs/heads/main$') {
+        $remoteMainCommit = $Matches['commit']
+    }
+
+    $tagLines = @($remoteLines | Where-Object {
+        $_ -match "\s+refs/tags/$([regex]::Escape($PlannedTag))(?:\^\{\})?$"
+    })
+    $tagExists = $tagLines.Count -gt 0
     $localTagResult = Invoke-AppUIGitText `
         -RepositoryPath $RepositoryPath `
         -Arguments @('tag', '--list', $PlannedTag) `
@@ -291,11 +437,21 @@ function Test-AppUIReleaseReadiness {
     $tagCommit = ''
     $tagTree = ''
     if ($tagExists) {
-        $tagIdentity = Resolve-AppUIRemoteTagIdentity `
-            -RepositoryPath $RepositoryPath `
-            -Tag $PlannedTag
-        $tagCommit = $tagIdentity.SourceCommit
-        $tagTree = $tagIdentity.SourceTree
+        $peeledLine = $tagLines | Where-Object { $_ -match '\^\{\}$' } | Select-Object -First 1
+        $selectedTagLine = if ($null -ne $peeledLine) { $peeledLine } else { $tagLines | Select-Object -First 1 }
+        $tagCommit = ([string]$selectedTagLine -split '\s+')[0]
+        if ($tagCommit -eq $identity.SourceCommit) {
+            $tagTree = $identity.SourceTree
+        }
+        else {
+            $tagTreeResult = Invoke-AppUIGitText `
+                -RepositoryPath $RepositoryPath `
+                -Arguments @('rev-parse', "$tagCommit^{tree}") `
+                -AllowFailure
+            if ($tagTreeResult.ExitCode -eq 0 -and $tagTreeResult.Text -match '^[0-9a-f]{40}$') {
+                $tagTree = $tagTreeResult.Text
+            }
+        }
     }
 
     $status = if ($tagExists -and $tagCommit -ne $identity.SourceCommit) {
@@ -311,6 +467,7 @@ function Test-AppUIReleaseReadiness {
     }
     return [PSCustomObject][ordered]@{
         Status = $status
+        Reason = ''
         Repository = $identity.Repository
         CandidateCommit = $identity.SourceCommit
         CandidateTree = $identity.SourceTree
@@ -322,6 +479,8 @@ function Test-AppUIReleaseReadiness {
         LocalTagExists = $localTagExists
         TagCommit = $tagCommit
         TagTree = $tagTree
+        RemoteExitCode = $remoteResult.ExitCode
+        RemoteDurationMs = $remoteResult.DurationMs
     }
 }
 
@@ -2175,6 +2334,7 @@ function New-AppUIReleaseArtifacts {
 Export-ModuleMember -Function @(
     'Resolve-AppUIGitIdentity',
     'Test-AppUISemVerTag',
+    'Invoke-AppUIGitRemoteText',
     'Test-AppUIReleaseReadiness',
     'Write-AppUIJson',
     'Export-AppUICandidateSnapshot',

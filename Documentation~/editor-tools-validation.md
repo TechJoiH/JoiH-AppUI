@@ -38,7 +38,7 @@
 - `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`；
 - `Tools~/Release/New-AppUIReleaseReport.ps1`。
 - `Tools~/Release/New-AppUIReleaseArtifacts.ps1`：从正式报告、测试、Binding、Build、Commit/Tag Smoke 与日志归档生成恰好十个脱敏上传文件。
-- `Tools~/Release/Test-AppUIReleaseReadiness.ps1`：只读检查远端 `main`、候选 Commit/Tree 与 Tag 是否占用，不创建或移动任何远端引用。
+- `Tools~/Release/Test-AppUIReleaseReadiness.ps1`：用有界只读查询检查远端 `main`、候选 Commit/Tree 与 Tag 是否占用；远端不可达时返回 `Blocked`，不创建或移动任何远端引用。
 
 不要直接打开仓库内 Consumer 模板，也不要把它生成的 `Library`、Fixture、Build 或报告提交回包仓库。完整的候选身份、执行顺序、超时和 Artifact 规则见[验证与发布门禁](validation.md)。
 

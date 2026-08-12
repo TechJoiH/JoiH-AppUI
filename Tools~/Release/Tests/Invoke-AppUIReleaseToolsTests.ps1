@@ -624,6 +624,53 @@ param([string]$MarkerPath)
             Assert-True (Test-Path -LiteralPath $markerPath -PathType Leaf) 'Process argument with spaces did not reach the child.'
         }
 
+        Invoke-Test 'Bounded remote runner distinguishes timeout and remote failure' {
+            $fakeGit = Join-Path $testRoot 'fake-git.exe'
+            Add-Type -TypeDefinition @'
+using System;
+using System.Threading;
+public static class FakeGitProgram
+{
+    public static int Main(string[] args)
+    {
+        if (Environment.GetEnvironmentVariable("APPUI_REMOTE_FIXTURE_MODE") == "Sleep")
+        {
+            Thread.Sleep(10000);
+            return 0;
+        }
+
+        Console.Error.WriteLine("network unavailable");
+        return 23;
+    }
+}
+'@ -OutputAssembly $fakeGit -OutputType ConsoleApplication
+
+            $previousFixtureMode = $env:APPUI_REMOTE_FIXTURE_MODE
+            try {
+                $env:APPUI_REMOTE_FIXTURE_MODE = 'Sleep'
+                $timeout = Invoke-AppUIGitRemoteText `
+                    -RepositoryPath $testRoot `
+                    -Arguments @('ignored') `
+                    -TimeoutSeconds 1 `
+                    -GitPath $fakeGit
+                Assert-Equal 'Blocked' $timeout.Status 'Timed out remote command was not blocked.'
+                Assert-Equal 'Timeout' $timeout.Reason 'Timed out remote command reason was wrong.'
+
+                $env:APPUI_REMOTE_FIXTURE_MODE = 'Fail'
+                $unavailable = Invoke-AppUIGitRemoteText `
+                    -RepositoryPath $testRoot `
+                    -Arguments @('ignored') `
+                    -TimeoutSeconds 10 `
+                    -GitPath $fakeGit
+            }
+            finally {
+                $env:APPUI_REMOTE_FIXTURE_MODE = $previousFixtureMode
+            }
+            Assert-Equal 'Blocked' $unavailable.Status 'Failed remote command was not blocked.'
+            Assert-Equal 'RemoteUnavailable' $unavailable.Reason 'Failed remote command reason was wrong.'
+            Assert-Equal 23 $unavailable.ExitCode 'Failed remote command exit code was lost.'
+        }
+
         Invoke-Test 'Unity and VS2022 C++ preflight reports supported and blocked environments' {
             $preflightRoot = Join-Path $testRoot 'preflight'
             $unity = Join-Path $preflightRoot 'Unity.exe'
@@ -1020,6 +1067,16 @@ param([string]$MarkerPath)
                     -CandidateCommit $commit `
                     -PlannedTag 'v9.8.7-test.2'
             } 'planned tag mismatch' 'Readiness accepted a Tag whose version did not match package.json.'
+
+            $unavailableRepository = Join-Path $testRoot 'readiness-unavailable'
+            $unavailableCommit = New-SnapshotTestRepository $unavailableRepository
+            Invoke-TestGit $unavailableRepository remote add origin (Join-Path $testRoot 'missing-remote.git') | Out-Null
+            $unavailable = Test-AppUIReleaseReadiness `
+                -RepositoryPath $unavailableRepository `
+                -CandidateCommit $unavailableCommit `
+                -PlannedTag 'v9.8.7-test.1'
+            Assert-Equal 'Blocked' $unavailable.Status 'Unavailable remote was reported as a release state.'
+            Assert-Equal 'RemoteUnavailable' $unavailable.Reason 'Unavailable remote block reason was wrong.'
         }
     }
 
@@ -1084,6 +1141,7 @@ param([string]$MarkerPath)
                 Assert-True (-not $implementationPlan.Contains($obsoleteName)) "Implementation plan retains an obsolete release API: $obsoleteName"
             }
             foreach ($currentName in @(
+                'Invoke-AppUIGitRemoteText',
                 'Read-AppUINUnit3Result',
                 'Protect-AppUILog',
                 'New-AppUIReleaseArtifacts.ps1',
@@ -1092,6 +1150,8 @@ param([string]$MarkerPath)
             )) {
                 Assert-True ($implementationPlan.Contains($currentName)) "Implementation plan is missing current release contract: $currentName"
             }
+            Assert-True ($validation.Contains('Blocked/RemoteUnavailable')) 'Validation docs do not distinguish unavailable remote state.'
+            Assert-True ($validation.Contains('Blocked/Timeout')) 'Validation docs do not distinguish remote timeout state.'
         }
     }
 }

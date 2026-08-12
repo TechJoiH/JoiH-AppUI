@@ -116,6 +116,7 @@ Validation~/Unity6000.0Consumer/
 ```powershell
 Resolve-AppUIGitIdentity -RepositoryPath <path> -SourceRef <ref>
 Test-AppUISemVerTag -Tag <v-semver>
+Invoke-AppUIGitRemoteText -RepositoryPath <path> -Arguments <string[]> -TimeoutSeconds 30
 Test-AppUIReleaseReadiness -RepositoryPath <path> -CandidateCommit <40-sha> -PlannedTag <v-semver>
 Write-AppUIJson -Path <json> -Value <object>
 Export-AppUICandidateSnapshot -RepositoryPath <path> -SourceRef <ref> -DestinationPath <new-dir>
@@ -172,6 +173,8 @@ Task 10：Tag URL 冒烟、Release Artifact、主分支证据索引
 任何箭头前的必需门禁失败都停止后续发布动作；失败不会降级成警告。
 
 当前实施状态：Tasks 1-7 已完成并形成精确本地候选；Task 8 的静态策略、Snapshot 与环境预检已执行，环境预检以 `Blocked/MissingToolchain` 停止在 Consumer 物化之前。安装受支持的 Visual Studio 2022 C++ 工具链需要用户授权；Push、Tag 与 GitHub Release 尚未执行。
+
+远端 `ls-remote` 使用 30 秒有界进程；连接或远端失败必须报告 `Blocked/RemoteUnavailable`，超时报告 `Blocked/Timeout`。未拿到成功的远端响应时，不得推断为 `NotPushed` 或 Tag 未占用。
 
 ---
 
