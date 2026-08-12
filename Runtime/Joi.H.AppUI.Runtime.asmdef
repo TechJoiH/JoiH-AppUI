@@ -2,7 +2,7 @@
   "name": "Joi.H.AppUI.Runtime",
   "rootNamespace": "Joi.H.AppUI",
   "references": [
-    "UniTask",
+    "Joi.H.AppUI.Core",
     "Unity.TextMeshPro",
     "UnityEngine.UI"
   ],
@@ -16,4 +16,3 @@
   "versionDefines": [],
   "noEngineReferences": false
 }
-

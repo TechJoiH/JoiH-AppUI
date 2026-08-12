@@ -2,7 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
-using Cysharp.Threading.Tasks;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -35,247 +35,280 @@ namespace Joi.H.AppUI.Tests
         [UnityTest]
         public IEnumerator PageLifecycle_OpenRefreshHideReopenAndRelease_IsComplete()
         {
-            return UniTask.ToCoroutine(async () =>
+            RuntimeFixture fixture = RuntimeFixture.Create(false, true);
+            IUIOperation<UIOpenResult> openOperation = fixture.Manager.Open(
+                PageId,
+                UIOpenArgs.FromExplicit("initial-data")
+                    .WithSceneScopeId("scene-a"));
+
+            yield return WaitFor(openOperation);
+            AssertSucceeded(openOperation, out UIOpenResult openResult);
+            Assert.That(openResult.Success, Is.True);
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.True);
+            Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.CreateCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.InitCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.RefreshCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.ShowCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.LastData, Is.EqualTo("initial-data"));
+            Assert.That(TestPanelController.LastInstance.gameObject.activeSelf, Is.True);
+
+            IUIOperation<UIRefreshResult> refreshOperation =
+                fixture.Manager.Refresh(PageId, "refreshed-data");
+            yield return WaitFor(refreshOperation);
+            AssertSucceeded(
+                refreshOperation,
+                out UIRefreshResult refreshResult);
+
+            Assert.That(refreshResult.Success, Is.True);
+            Assert.That(refreshResult.State, Is.EqualTo(UIPageState.Open));
+            Assert.That(TestPanelController.RefreshCount, Is.EqualTo(2));
+            Assert.That(TestPanelController.LastData, Is.EqualTo("refreshed-data"));
+
+            UICloseRequest hideRequest = UICloseRequest.Default;
+            hideRequest.ReleaseOnClose = false;
+            IUIOperation<UICloseResult> hideOperation =
+                fixture.Manager.Close(PageId, hideRequest);
+            yield return WaitFor(hideOperation);
+            AssertSucceeded(hideOperation, out UICloseResult hideResult);
+
+            Assert.That(hideResult.Success, Is.True);
+            Assert.That(hideResult.State, Is.EqualTo(UIPageState.Hidden));
+            Assert.That(TestPanelController.HideCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.LastInstance.gameObject.activeSelf, Is.False);
+            Assert.That(fixture.Provider.ReleaseCount, Is.Zero);
+
+            IUIOperation<UIOpenResult> reopenOperation = fixture.Manager.Open(
+                PageId,
+                UIOpenArgs.FromExplicit("reopen-data")
+                    .WithSceneScopeId("scene-a"));
+            yield return WaitFor(reopenOperation);
+            AssertSucceeded(reopenOperation, out UIOpenResult reopenResult);
+
+            Assert.That(reopenResult.Success, Is.True);
+            Assert.That(TestPanelController.CreateCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.InitCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.RefreshCount, Is.EqualTo(3));
+            Assert.That(TestPanelController.ShowCount, Is.EqualTo(2));
+            Assert.That(TestPanelController.LastData, Is.EqualTo("reopen-data"));
+            Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
+
+            IUIOperation<UICloseResult> releaseOperation =
+                fixture.Manager.Close(PageId);
+            yield return WaitFor(releaseOperation);
+            AssertSucceeded(releaseOperation, out UICloseResult releaseResult);
+
+            Assert.That(releaseResult.Success, Is.True);
+            Assert.That(releaseResult.State, Is.EqualTo(UIPageState.Released));
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
+            Assert.That(TestPanelController.HideCount, Is.EqualTo(2));
+            Assert.That(TestPanelController.DisposeCount, Is.EqualTo(1));
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+
+            yield return null;
+            Assert.That(TestPanelController.LastInstance == null, Is.True);
+            yield return fixture.Dispose();
+        }
+
+        private static IEnumerator WaitFor<TResult>(
+            IUIOperation<TResult> operation)
+        {
+            Assert.That(operation, Is.Not.Null);
+            while (!operation.IsTerminal)
             {
-                RuntimeFixture fixture = RuntimeFixture.Create(false, true);
-                try
-                {
-                    UIOpenResult openResult = await fixture.Manager.OpenAsync(
-                        PageId,
-                        UIOpenArgs.FromExplicit("initial-data").WithSceneScopeId("scene-a"));
+                yield return null;
+            }
+        }
 
-                    Assert.That(openResult.Success, Is.True);
-                    Assert.That(fixture.Manager.IsOpen(PageId), Is.True);
-                    Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.CreateCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.InitCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.RefreshCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.ShowCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.LastData, Is.EqualTo("initial-data"));
-                    Assert.That(TestPanelController.LastInstance.gameObject.activeSelf, Is.True);
-
-                    UIRefreshResult refreshResult = await fixture.Manager.RefreshAsync(PageId, "refreshed-data");
-
-                    Assert.That(refreshResult.Success, Is.True);
-                    Assert.That(refreshResult.State, Is.EqualTo(UIPageState.Open));
-                    Assert.That(TestPanelController.RefreshCount, Is.EqualTo(2));
-                    Assert.That(TestPanelController.LastData, Is.EqualTo("refreshed-data"));
-
-                    UICloseRequest hideRequest = UICloseRequest.Default;
-                    hideRequest.ReleaseOnClose = false;
-                    UICloseResult hideResult = await fixture.Manager.CloseAsync(PageId, hideRequest);
-
-                    Assert.That(hideResult.Success, Is.True);
-                    Assert.That(hideResult.State, Is.EqualTo(UIPageState.Hidden));
-                    Assert.That(TestPanelController.HideCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.LastInstance.gameObject.activeSelf, Is.False);
-                    Assert.That(fixture.Provider.ReleaseCount, Is.Zero);
-
-                    UIOpenResult reopenResult = await fixture.Manager.OpenAsync(
-                        PageId,
-                        UIOpenArgs.FromExplicit("reopen-data").WithSceneScopeId("scene-a"));
-
-                    Assert.That(reopenResult.Success, Is.True);
-                    Assert.That(TestPanelController.CreateCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.InitCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.RefreshCount, Is.EqualTo(3));
-                    Assert.That(TestPanelController.ShowCount, Is.EqualTo(2));
-                    Assert.That(TestPanelController.LastData, Is.EqualTo("reopen-data"));
-                    Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
-
-                    UICloseResult releaseResult = await fixture.Manager.CloseAsync(PageId);
-
-                    Assert.That(releaseResult.Success, Is.True);
-                    Assert.That(releaseResult.State, Is.EqualTo(UIPageState.Released));
-                    Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
-                    Assert.That(TestPanelController.HideCount, Is.EqualTo(2));
-                    Assert.That(TestPanelController.DisposeCount, Is.EqualTo(1));
-                    Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
-
-                    await UniTask.Yield(PlayerLoopTiming.Update);
-                    Assert.That(TestPanelController.LastInstance == null, Is.True);
-                }
-                finally
-                {
-                    await fixture.DisposeAsync();
-                }
-            });
+        private static void AssertSucceeded<TResult>(
+            IUIOperation<TResult> operation,
+            out TResult result)
+        {
+            Assert.That(
+                operation.TryGetCompletion(
+                    out AppUIOperationCompletion<TResult> completion),
+                Is.True);
+            Assert.That(completion.Status,
+                Is.EqualTo(AppUIOperationStatus.Succeeded));
+            Assert.That(completion.Exception, Is.Null);
+            result = completion.Result;
         }
 
         [UnityTest]
         public IEnumerator NoticeFallback_CreatesViewAndClearsWithSceneScope()
         {
-            return UniTask.ToCoroutine(async () =>
-            {
-                RuntimeFixture fixture = RuntimeFixture.Create(false, false);
-                try
-                {
-                    ToastNoticeRequest request = ToastNoticeRequest.Create("fallback-toast");
-                    request.Scope = UINoticeScope.Scene("scene-notice");
-                    request.Duration = 10f;
-                    ToastHandle handle = fixture.Manager.Notices.Toast(request);
+            RuntimeFixture fixture = RuntimeFixture.Create(false, false);
+            ToastNoticeRequest request = ToastNoticeRequest.Create(
+                "fallback-toast");
+            request.Scope = UINoticeScope.Scene("scene-notice");
+            request.Duration = 10f;
+            ToastHandle handle = fixture.Manager.Notices.Toast(request);
 
-                    Assert.That(handle.IsValid, Is.True);
-                    Assert.That(CountActiveToastViews(fixture.NoticeRoot), Is.EqualTo(1));
-                    Assert.That(fixture.Provider.SyncLoadCount, Is.Zero);
+            Assert.That(handle.IsValid, Is.True);
+            Assert.That(
+                CountActiveToastViews(fixture.NoticeRoot),
+                Is.EqualTo(1));
+            Assert.That(fixture.Provider.SyncLoadCount, Is.Zero);
 
-                    UIScopeReleaseResult result = await fixture.Manager.ReleaseScopeAsync(
-                        UIPageScope.SceneScope,
-                        "scene-notice");
+            IUIOperation<UIScopeReleaseResult> releaseOperation =
+                fixture.Manager.ReleaseScope(
+                    UIPageScope.SceneScope,
+                    "scene-notice");
+            yield return WaitFor(releaseOperation);
+            AssertSucceeded(
+                releaseOperation,
+                out UIScopeReleaseResult result);
 
-                    Assert.That(result.Success, Is.True);
-                    Assert.That(CountActiveToastViews(fixture.NoticeRoot), Is.Zero);
-                }
-                finally
-                {
-                    await fixture.DisposeAsync();
-                }
-            });
+            Assert.That(result.Success, Is.True);
+            Assert.That(
+                CountActiveToastViews(fixture.NoticeRoot),
+                Is.Zero);
+            yield return fixture.Dispose();
         }
 
         [UnityTest]
         public IEnumerator InterruptedOpen_LateLoadCannotCommitAndReleasesLease()
         {
-            return UniTask.ToCoroutine(async () =>
-            {
-                RuntimeFixture fixture = RuntimeFixture.Create(true, true);
-                UniTask<UIOpenResult> openTask = fixture.Manager.OpenAsync(
-                    PageId,
-                    UIOpenArgs.FromExplicit("late-data").WithSceneScopeId("scene-interrupted"));
+            RuntimeFixture fixture = RuntimeFixture.Create(true, true);
+            IUIOperation<UIOpenResult> openOperation = fixture.Manager.Open(
+                PageId,
+                UIOpenArgs.FromExplicit("late-data")
+                    .WithSceneScopeId("scene-interrupted"));
 
-                Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
-                Object.Destroy(fixture.Root);
-                await UniTask.Yield(PlayerLoopTiming.Update);
+            Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
+            Object.Destroy(fixture.Root);
+            yield return null;
+            Assert.That(
+                openOperation.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
 
-                fixture.Provider.CompletePendingLoad();
-                UIOpenResult result = await openTask;
+            fixture.Provider.CompletePendingLoad();
 
-                Assert.That(result.Success, Is.False);
-                Assert.That(result.Error, Is.EqualTo(UIPageOpenError.OperationExpired));
-                Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
-                Assert.That(TestPanelController.CreateCount, Is.Zero);
-
-                await fixture.DisposeAsync();
-            });
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.CreateCount, Is.Zero);
+            yield return fixture.Dispose();
         }
 
         [UnityTest]
-        public IEnumerator CancelAsync_CloseOnCancel_ReleasesTopPage()
+        public IEnumerator DelayedShow_OperationCompletesOnlyAfterTransition()
         {
-            return UniTask.ToCoroutine(async () =>
-            {
-                RuntimeFixture fixture = RuntimeFixture.Create(false, true, true);
-                try
-                {
-                    UIOpenResult openResult = await fixture.Manager.OpenAsync(
-                        PageId,
-                        UIOpenArgs.None.WithSceneScopeId("scene-cancel"));
-                    Assert.That(openResult.Success, Is.True);
+            RuntimeFixture fixture = RuntimeFixture.Create(false, true);
+            IUIOperationSource<UITransitionResult> transitionSource =
+                new ManualUIOperationFactory()
+                    .Create<UITransitionResult>(
+                        AppUIOperationDescriptor.Create("DelayedShow"));
+            transitionSource.TrySetRunning();
+            TestPanelController.NextShowTransition =
+                UITransition.WaitFor(transitionSource.Operation);
 
-                    UICancelResult cancelResult = await fixture.Manager.CancelAsync();
+            IUIOperation<UIOpenResult> openOperation =
+                fixture.Manager.Open(PageId);
 
-                    Assert.That(cancelResult.Consumed, Is.True);
-                    Assert.That(cancelResult.Outcome, Is.EqualTo(UICancelOutcome.Closed));
-                    Assert.That(cancelResult.CloseResult.Success, Is.True);
-                    Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
-                    Assert.That(TestPanelController.HideCount, Is.EqualTo(1));
-                    Assert.That(TestPanelController.DisposeCount, Is.EqualTo(1));
-                    Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
-                }
-                finally
-                {
-                    await fixture.DisposeAsync();
-                }
-            });
+            Assert.That(openOperation.IsTerminal, Is.False);
+            Assert.That(TestPanelController.ShowCount, Is.Zero);
+            transitionSource.TrySetSucceeded(UITransitionResult.Ok());
+            yield return WaitFor(openOperation);
+            AssertSucceeded(openOperation, out UIOpenResult result);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(TestPanelController.ShowCount, Is.EqualTo(1));
+            yield return fixture.Dispose();
         }
 
         [UnityTest]
-        public IEnumerator ProviderBackedNotice_UsesPrefabAndReleasesLeaseOnProviderClear()
+        public IEnumerator Cancel_CloseOnCancel_ReleasesTopPage()
         {
-            return UniTask.ToCoroutine(async () =>
-            {
-                RuntimeFixture fixture = RuntimeFixture.Create(false, false, false, true);
-                try
-                {
-                    Assert.That(fixture.Provider.SyncLoadCount, Is.EqualTo(1));
+            RuntimeFixture fixture = RuntimeFixture.Create(false, true, true);
+            IUIOperation<UIOpenResult> openOperation = fixture.Manager.Open(
+                PageId,
+                UIOpenArgs.None.WithSceneScopeId("scene-cancel"));
+            yield return WaitFor(openOperation);
+            AssertSucceeded(openOperation, out UIOpenResult openResult);
+            Assert.That(openResult.Success, Is.True);
 
-                    ToastHandle handle = fixture.Manager.Notices.Toast("provider-toast");
+            IUIOperation<UICancelResult> cancelOperation =
+                fixture.Manager.Cancel();
+            yield return WaitFor(cancelOperation);
+            AssertSucceeded(cancelOperation, out UICancelResult cancelResult);
 
-                    Assert.That(handle.IsValid, Is.True);
-                    Assert.That(CountActiveProviderNoticeViews(fixture.NoticeRoot), Is.EqualTo(1));
-                    Assert.That(fixture.Provider.ReleaseCount, Is.Zero);
+            Assert.That(cancelResult.Consumed, Is.True);
+            Assert.That(
+                cancelResult.Outcome,
+                Is.EqualTo(UICancelOutcome.Closed));
+            Assert.That(cancelResult.CloseResult.Success, Is.True);
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
+            Assert.That(TestPanelController.HideCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.DisposeCount, Is.EqualTo(1));
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            yield return fixture.Dispose();
+        }
 
-                    fixture.Manager.ClearAssetProvider();
+        [UnityTest]
+        public IEnumerator ProviderBackedNotice_UsesPrefabAndReleasesLeaseOnShutdown()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                false,
+                true);
+            Assert.That(fixture.Provider.SyncLoadCount, Is.EqualTo(1));
 
-                    Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
-                }
-                finally
-                {
-                    await fixture.DisposeAsync();
-                }
+            ToastHandle handle =
+                fixture.Manager.Notices.Toast("provider-toast");
 
-                Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
-            });
+            Assert.That(handle.IsValid, Is.True);
+            Assert.That(
+                CountActiveProviderNoticeViews(fixture.NoticeRoot),
+                Is.EqualTo(1));
+            Assert.That(fixture.Provider.ReleaseCount, Is.Zero);
+
+            fixture.Manager.Shutdown();
+
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            yield return fixture.Dispose();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
         }
 
         [UnityTest]
         public IEnumerator RaycastZone_PassChannelMask_AllowsConfiguredChannelOnly()
         {
-            return UniTask.ToCoroutine(async () =>
-            {
-                InputRaycastFixture fixture = InputRaycastFixture.Create(false);
-                try
-                {
-                    await UniTask.NextFrame();
-                    await UniTask.Yield(PlayerLoopTiming.PostLateUpdate);
-                    Canvas.ForceUpdateCanvases();
+            InputRaycastFixture fixture = InputRaycastFixture.Create(false);
+            yield return null;
+            yield return null;
+            Canvas.ForceUpdateCanvases();
 
-                    bool panBlocked = AppUIInputHitResolver.Shared.TryGetFirstBlocker(
-                        fixture.ScreenCenter,
-                        AppUIInputChannel.ViewportPan,
-                        out GameObject panBlocker);
-                    bool pointerBlocked = AppUIInputHitResolver.Shared.TryGetFirstBlocker(
-                        fixture.ScreenCenter,
-                        AppUIInputChannel.PrimaryPointer,
-                        out GameObject pointerBlocker);
+            bool panBlocked = AppUIInputHitResolver.Shared.TryGetFirstBlocker(
+                fixture.ScreenCenter,
+                AppUIInputChannel.ViewportPan,
+                out GameObject panBlocker);
+            bool pointerBlocked = AppUIInputHitResolver.Shared.TryGetFirstBlocker(
+                fixture.ScreenCenter,
+                AppUIInputChannel.PrimaryPointer,
+                out GameObject pointerBlocker);
 
-                    Assert.That(panBlocked, Is.False);
-                    Assert.That(panBlocker, Is.Null);
-                    Assert.That(pointerBlocked, Is.True);
-                    Assert.That(pointerBlocker, Is.EqualTo(fixture.PolicySurface));
-                }
-                finally
-                {
-                    await fixture.DisposeAsync();
-                }
-            });
+            Assert.That(panBlocked, Is.False);
+            Assert.That(panBlocker, Is.Null);
+            Assert.That(pointerBlocked, Is.True);
+            Assert.That(pointerBlocker, Is.EqualTo(fixture.PolicySurface));
+            yield return fixture.Dispose();
         }
 
         [UnityTest]
         public IEnumerator RaycastZone_InteractiveSelectableBlocksPassedChannel()
         {
-            return UniTask.ToCoroutine(async () =>
-            {
-                InputRaycastFixture fixture = InputRaycastFixture.Create(true);
-                try
-                {
-                    await UniTask.NextFrame();
-                    await UniTask.Yield(PlayerLoopTiming.PostLateUpdate);
-                    Canvas.ForceUpdateCanvases();
+            InputRaycastFixture fixture = InputRaycastFixture.Create(true);
+            yield return null;
+            yield return null;
+            Canvas.ForceUpdateCanvases();
 
-                    bool blocked = AppUIInputHitResolver.Shared.TryGetFirstBlocker(
-                        fixture.ScreenCenter,
-                        AppUIInputChannel.ViewportPan,
-                        out GameObject blocker);
+            bool blocked = AppUIInputHitResolver.Shared.TryGetFirstBlocker(
+                fixture.ScreenCenter,
+                AppUIInputChannel.ViewportPan,
+                out GameObject blocker);
 
-                    Assert.That(blocked, Is.True);
-                    Assert.That(blocker, Is.EqualTo(fixture.ZoneObject));
-                }
-                finally
-                {
-                    await fixture.DisposeAsync();
-                }
-            });
+            Assert.That(blocked, Is.True);
+            Assert.That(blocker, Is.EqualTo(fixture.ZoneObject));
+            yield return fixture.Dispose();
         }
 
         private static int CountActiveToastViews(RectTransform root)
@@ -400,16 +433,22 @@ namespace Joi.H.AppUI.Tests
                     pagePrefab,
                     noticePrefab,
                     delayPageLoad);
+                ManualUIOperationFactory operationFactory =
+                    new ManualUIOperationFactory();
+                fixture.Provider.SetOperationFactory(operationFactory);
                 fixture.Manager.Initialize(
                     registry,
-                    fixture.Provider,
+                    new AppUIRuntimeDependencies(
+                        operationFactory,
+                        fixture.Provider,
+                        new ImmediateAppUIExecutionContext()),
                     roots,
                     null,
                     noticeSettings);
                 return fixture;
             }
 
-            public async UniTask DisposeAsync()
+            public IEnumerator Dispose()
             {
                 if (Root != null)
                 {
@@ -425,7 +464,7 @@ namespace Joi.H.AppUI.Tests
                 }
 
                 ownedObjects.Clear();
-                await UniTask.Yield(PlayerLoopTiming.Update);
+                yield return null;
             }
 
             private static void SetDefinitionIdentity(
@@ -464,8 +503,8 @@ namespace Joi.H.AppUI.Tests
             private readonly GameObject pagePrefab;
             private readonly GameObject noticePrefab;
             private readonly bool delayPageLoad;
-            private readonly UniTaskCompletionSource<UIAssetLoadResult<GameObject>> pendingLoad =
-                new UniTaskCompletionSource<UIAssetLoadResult<GameObject>>();
+            private IUIOperationFactory operationFactory;
+            private Action completePendingLoad;
 
             public CountingAssetProvider(
                 GameObject pagePrefab,
@@ -481,6 +520,13 @@ namespace Joi.H.AppUI.Tests
             public int SyncLoadCount { get; private set; }
             public int ReleaseCount { get; private set; }
 
+            public void SetOperationFactory(
+                IUIOperationFactory value)
+            {
+                operationFactory = value ??
+                    throw new ArgumentNullException(nameof(value));
+            }
+
             public bool TryLoad<T>(string assetId, out UIAssetLoadResult<T> result)
                 where T : Object
             {
@@ -494,46 +540,51 @@ namespace Joi.H.AppUI.Tests
                 }
 
                 result = UIAssetLoadResult<T>.Failure(
-                    UIAssetLoadStatus.NotFound,
-                    "No synchronous test asset: " + assetId);
+                    UIAssetLoadStatus.SynchronousLoadUnsupported,
+                    "The test provider loads page assets asynchronously: " +
+                    assetId);
                 return false;
             }
 
-            public UniTask<UIAssetLoadResult<T>> LoadAsync<T>(string assetId)
+            public IUIOperation<UIAssetLoadResult<T>> Load<T>(
+                string assetId,
+                CancellationToken cancellationToken)
                 where T : Object
             {
+                IUIOperationSource<UIAssetLoadResult<T>> source =
+                    operationFactory.Create<UIAssetLoadResult<T>>(
+                        AppUIOperationDescriptor.Create(
+                            "RuntimeTestLoad",
+                            cancellationToken));
+                source.TrySetRunning();
                 AsyncLoadCount++;
-                if (typeof(T) != typeof(GameObject) || pagePrefab == null || assetId != PageAssetId)
+                if (typeof(T) != typeof(GameObject) ||
+                    pagePrefab == null ||
+                    assetId != PageAssetId)
                 {
-                    return UniTask.FromResult(UIAssetLoadResult<T>.Failure(
-                        UIAssetLoadStatus.NotFound,
-                        "Unknown test asset: " + assetId));
+                    source.TrySetSucceeded(
+                        UIAssetLoadResult<T>.Failure(
+                            UIAssetLoadStatus.NotFound,
+                            "Unknown test asset: " + assetId));
+                    return source.Operation;
                 }
 
                 if (!delayPageLoad)
                 {
-                    return UniTask.FromResult(CreateSuccessResult<T>());
+                    source.TrySetSucceeded(CreateSuccessResult<T>());
+                    return source.Operation;
                 }
 
-                return AwaitPendingLoad<T>();
+                completePendingLoad = () =>
+                    source.TrySetSucceeded(CreateSuccessResult<T>());
+                return source.Operation;
             }
 
             public void CompletePendingLoad()
             {
-                pendingLoad.TrySetResult(UIAssetLoadResult<GameObject>.Success(
-                    pagePrefab,
-                    new UIAssetLease(() => ReleaseCount++)));
-            }
-
-            private async UniTask<UIAssetLoadResult<T>> AwaitPendingLoad<T>()
-                where T : Object
-            {
-                UIAssetLoadResult<GameObject> result = await pendingLoad.Task;
-                return new UIAssetLoadResult<T>(
-                    result.Status,
-                    result.Asset as T,
-                    result.Lease,
-                    result.ErrorMessage);
+                Action completion = completePendingLoad;
+                completePendingLoad = null;
+                completion?.Invoke();
             }
 
             private UIAssetLoadResult<T> CreateSuccessResult<T>()
@@ -611,7 +662,7 @@ namespace Joi.H.AppUI.Tests
                 return fixture;
             }
 
-            public async UniTask DisposeAsync()
+            public IEnumerator Dispose()
             {
                 if (canvasObject != null)
                 {
@@ -623,7 +674,7 @@ namespace Joi.H.AppUI.Tests
                     Object.Destroy(eventSystemObject);
                 }
 
-                await UniTask.Yield(PlayerLoopTiming.Update);
+                yield return null;
             }
         }
 
@@ -641,6 +692,7 @@ namespace Joi.H.AppUI.Tests
             public static int DisposeCount { get; private set; }
             public static object LastData { get; private set; }
             public static TestPanelController LastInstance { get; private set; }
+            public static UITransition NextShowTransition { get; set; }
 
             public static void ResetState()
             {
@@ -652,6 +704,7 @@ namespace Joi.H.AppUI.Tests
                 DisposeCount = 0;
                 LastData = null;
                 LastInstance = null;
+                NextShowTransition = UITransition.Immediate;
             }
 
             protected override void OnCreateEx(UIControllerContext context)
@@ -678,6 +731,13 @@ namespace Joi.H.AppUI.Tests
             protected override void OnShowEx()
             {
                 ShowCount++;
+            }
+
+            protected override UITransition BeginShowTransition()
+            {
+                UITransition transition = NextShowTransition;
+                NextShowTransition = UITransition.Immediate;
+                return transition;
             }
 
             protected override void OnHideEx()

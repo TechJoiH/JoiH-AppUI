@@ -11,7 +11,7 @@ and how to complete a minimal working integration without reading internals.
 
 - Primary audience: Unity developers evaluating a reusable UGUI framework.
 - Assumed knowledge: Unity scenes, GameObjects, components, prefabs, UPM, and
-  basic C# `async`/`await`.
+  basic C# callbacks.
 - Main language: Simplified Chinese.
 - API types, menu paths, package identifiers, and code remain in English.
 - Tone: technical, direct, and evidence-based rather than promotional.
@@ -27,7 +27,7 @@ and how to complete a minimal working integration without reading internals.
 6. A compact architecture diagram showing host, runtime host, manager/services,
    provider, definitions/registries, controllers, and Unity UI objects.
 7. Requirements and compatibility status.
-8. Git URL installation plus the explicit UniTask prerequisite.
+8. One Git URL installation with no third-party async prerequisite.
 9. A ten-minute quick start covering runtime root, layer roots, runtime profile,
    page definition, registry, opening a page, and shutdown ownership.
 10. A provider-adapter example using only real public APIs.
@@ -40,23 +40,25 @@ and how to complete a minimal working integration without reading internals.
 
 - All code examples must match the public API in `Runtime` and compile in the
   clean consumer project or a dedicated documentation test fixture.
-- Do not mention Annals, its scenes, services, page IDs, or resource stack.
+- Do not mention the source project, its scenes, services, page IDs, or resource stack.
 - Do not claim that AppUI creates an EventSystem, owns scene persistence, or
   owns the application's asset provider lifecycle.
 - Explain that `AppUIRuntimeHost.Shutdown()` runs before a project-owned
   provider is disposed.
-- Explain that the built-in provider uses Resources and custom stacks implement
-  `IUIAssetProvider`; custom editor identifiers use `IUIEditorAssetIdResolver`.
+- Explain that Runtime has no built-in resource provider; custom stacks implement
+  `IUIAssetProvider`, while editor identifiers use `IUIEditorAssetIdResolver`.
 - Keep business services outside the package and inject them through
   application-owned controller/context composition.
 
 ## Claims allowed by current evidence
 
-- UPM package ID `com.joih.appui`, version `0.1.0-pre.1`.
-- Unity 6000.0+, UGUI 2.0, and UniTask 2.5.5 requirements.
+- UPM package ID `com.joih.appui`, version `0.2.0-pre.1`.
+- Unity 6000.0+ and UGUI 2.0 requirements, with no concrete async dependency.
 - No third-party inspector dependency.
-- EditMode 101/101 and PlayMode 8/8 automated tests pass.
-- Windows x64 Mono and IL2CPP Development Player builds pass.
+- EditMode 125/125 and PlayMode 11/11 automated tests pass in the current
+  dependency-free consumer project.
+- Reuse previous Windows build claims only after rerunning them for the current
+  release candidate.
 - Runtime hot-loop input contract measured zero allocation for 100,000 calls.
 - The package contains no source-project namespace or business-page coupling.
 
@@ -65,7 +67,7 @@ every host project.
 
 ## Pre-release and license messaging
 
-- State clearly that `0.1.0-pre.1` is a pre-release package.
+- State clearly that `0.2.0-pre.1` is a pre-release package.
 - Explain that public and serialized APIs may change before 1.0.
 - Do not call the repository open source until a license is selected and added.
 - Do not include a license badge or implied permission to redistribute.
@@ -77,5 +79,5 @@ every host project.
 3. Compile executable code examples in the clean Unity test project.
 4. Run Markdown link and placeholder scans.
 5. Re-run EditMode and PlayMode suites if any source or sample code changes.
-6. Confirm Git diff contains only the README, this maintainer design document,
-   and any explicitly required documentation test fixture.
+6. Confirm Git diff contains only intentional package, Sample, test, and public
+   documentation changes for this release candidate.

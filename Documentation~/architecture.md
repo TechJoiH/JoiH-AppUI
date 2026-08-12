@@ -1,78 +1,64 @@
-# Architecture
+# 架构设计
 
-## Dependency direction
+## 依赖方向
 
-```text
-Host application
-  -> host adapters and composition root
-    -> Joi.H AppUI Runtime
-      -> Unity UGUI / TextMeshPro / UniTask
+```mermaid
+flowchart LR
+    Business["业务与场景流程"] --> Service["IUIService"]
+    Composition["项目组合根"] --> Host["AppUIRuntimeHost"]
+    Adapters["项目实现：Operation / Asset / Execution"] --> Host
+    Host --> Runtime["Joi.H.AppUI.Runtime"]
+    Runtime --> Core["Joi.H.AppUI.Core 契约"]
+    Runtime --> UGUI["Unity UGUI / TextMeshPro"]
+    Editor["Joi.H.AppUI.Editor"] --> Assets["Definition / Prefab / Binding"]
+    Runtime --> Assets
 ```
 
-The package never references a concrete host application, scene, gameplay
-action, or project resource service.
+Core 不引用具体异步后端或资源框架；Runtime 不引用接入项目；业务只通过公开服务和 Controller Context 使用框架。
 
-## Runtime modules
+## 模块职责
 
-- `AppUIRuntimeHost`: scene composition boundary and provider injection.
-- `AppUIManager`: public page/service facade and runtime orchestration.
-- `Definition`: page/group data assets and indexed registries.
-- `Layer` and `Stack`: Canvas domains, ordering, visibility, pause, and input
-  depth.
-- `Operation`: versioned open/close coordination and stale continuation guards.
-- `SceneBinding`: explicit scene-scope enter, exit, and batch release.
-- `Selection`: semantic focus graph, regions, groups, nodes, commit authority,
-  scrolling, and trace diagnostics.
-- `Input`: raycast-based blocking using generic input channels and authored
-  passthrough zones.
-- `Notice`: pooled Toast, Tooltip, FloatingText, and numeric notice views.
-- `Binding`: editor scanning, generated partial code, prefab binding, ownership
-  validation, and build-time read-only checks.
+- `Bootstrap`：显式组合三项宿主能力并初始化 Runtime；
+- `Definition`：页面/Group 配置和 Registry；
+- `Operation`：页面并发、版本、pending intent 与过期保护；
+- `Layer` / `Stack`：显示顺序、暂停深度、输入权和焦点恢复；
+- `SceneBinding`：场景进入规则、退出规则和 Scope 批量释放；
+- `Binding`：编辑器生成、写入、验证；
+- `Selection`：焦点图、Group、滚动、虚拟化和调试追踪；
+- `Input`：基于 EventSystem Raycast 的输入阻挡；
+- `Notice`：独立于页面栈的轻量提示。
 
-## Lifecycle
+## 一次 Open 的数据流
 
-```text
-Host.Initialize(provider)
-  -> Manager.Initialize(...)
-    -> validate definitions and layers
-    -> configure notice pools
-
-OpenAsync(pageId)
-  -> resolve definition and strategy
-  -> provider.LoadAsync(prefabId)
-  -> instantiate and validate one PanelBaseController
-  -> OnCreate -> OnInit -> data/refresh -> ShowAsync
-  -> publish stack, input, and focus state
-
-CloseAsync(pageId)
-  -> CanClose -> remove interaction authority -> HideAsync
-  -> OnDispose -> destroy -> UIAssetLease.Dispose
-
-Host.Shutdown()
-  -> release provider-backed notice assets
-  -> clear provider reference
+```mermaid
+sequenceDiagram
+    participant App as 业务
+    participant UI as IUIService
+    participant Op as OperationFactory
+    participant Provider as AssetProvider
+    participant Controller
+    App->>UI: Open(pageId, args)
+    UI->>Op: Create<UIOpenResult>()
+    UI->>Provider: TryLoad 或 Load
+    Provider-->>UI: UIAssetLoadResult + Lease
+    UI->>Controller: Create / Init / Data / Refresh
+    UI->>Controller: BeginShowTransition
+    Controller-->>UI: Immediate 或 Operation
+    UI-->>App: completion + UIOpenResult
 ```
 
-Every asynchronous page operation carries a version. Continuations that resume
-after a newer operation or scope change are rejected before committing state.
+每次操作同时携带运行时代次与页面版本。晚到回调在提交状态前校验；失效结果不会重新显示页面，但其 Lease 仍会归还。
 
-## Asset ownership
+## 框架与业务边界
 
-`IUIAssetProvider` returns `UIAssetLoadResult<T>`. The optional `UIAssetLease`
-encapsulates provider-specific release work and is disposed at most once. AppUI
-therefore does not need to know whether the asset came from Resources,
-Addressables, an AssetBundle, or a remote cache.
+宿主负责 EventSystem、场景切换、Root 是否跨场景、业务服务、三项依赖实现和最终视觉验收。AppUI 负责页面状态机、栈、Scope、焦点/输入协议、Binding 契约和 Lease 归还。
 
-## Input ownership
+AppUI 不自动扫描业务程序集、不创建 Addressables 或 Resources fallback，也不把 Sample 实现注册到 Runtime。
 
-Applications map concrete input actions to `AppUIInputChannel`. AppUI policies
-only decide whether the chosen channel is blocked at a screen position.
-Interactive `Selectable` hits always block passthrough. Non-interactive regions
-use `BlockAll`, `PassAll`, `BlockInteractiveOnly`, or `PassChannelMask`.
+## 程序集
 
-## Assembly boundaries
-
-- `Joi.H.AppUI.Runtime`: player-safe runtime API and implementation.
-- `Joi.H.AppUI.Editor`: generation and validation tools; never enters builds.
-- `Joi.H.AppUI.Tests.Editor`: EditMode contract tests.
-- `Joi.H.AppUI.Tests.Runtime`: PlayMode contract tests.
+- `Joi.H.AppUI.Core`：Operation、资源和执行上下文契约；
+- `Joi.H.AppUI.Runtime`：Player 可用的页面与交互实现；
+- `Joi.H.AppUI.Editor`：生成和验证工具；
+- `Joi.H.AppUI.Tests.*`：包测试，不进入 Player；
+- `Joi.H.AppUI.Samples.Basic`：用户主动导入的示例实现。

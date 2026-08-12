@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using Cysharp.Threading.Tasks;
 
 namespace Joi.H.AppUI
 {
@@ -27,80 +26,73 @@ namespace Joi.H.AppUI
             knownPageStateProvider = pageStateProvider;
         }
 
-        /// <summary>
-        /// 当同页 Open 忙碌且策略允许 QueueIfBusy 时，创建 Open pending 并返回等待真实执行结果的任务。
-        /// 低优先级覆盖失败时直接返回 AlreadyOpenRejected。
-        /// </summary>
-        public UniTask<UIOpenResult> EnqueueOpenPendingAsync(string pageId, UIOpenArgs args)
+        public bool TryEnqueueOpenPending(
+            string pageId,
+            UIOpenArgs args,
+            IUIOperationSource<UIOpenResult> source)
         {
-            UIPendingIntent intent = new UIPendingIntent
+            if (source == null)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            return TryStorePendingIntent(new UIPendingIntent
             {
                 PageId = pageId ?? string.Empty,
                 Intent = UIPageIntent.Open,
-                Priority = GetPendingIntentPriority(UIPageIntent.Open, false),
+                Priority = GetPendingIntentPriority(
+                    UIPageIntent.Open,
+                    false),
                 OpenArgs = args,
-                OpenCompletion = new UniTaskCompletionSource<UIOpenResult>(),
-            };
-
-            if (!TryStorePendingIntent(intent))
-            {
-                return UniTask.FromResult(UIOpenResult.Fail(UIPageOpenError.AlreadyOpenRejected));
-            }
-
-            return intent.OpenCompletion.Task;
+                OpenSource = source,
+            });
         }
 
-        /// <summary>
-        /// 当同页正在执行操作时，创建 Close/Release pending。
-        /// ReleaseOnClose=true 映射成 Release 意图，优先级高于普通 Close。
-        /// </summary>
-        public UniTask<UICloseResult> EnqueueClosePendingAsync(string pageId, UICloseRequest request)
+        public bool TryEnqueueClosePending(
+            string pageId,
+            UICloseRequest request,
+            IUIOperationSource<UICloseResult> source)
         {
-            UIPageIntent intentType = request.ReleaseOnClose ? UIPageIntent.Release : UIPageIntent.Close;
-            UIPendingIntent intent = new UIPendingIntent
+            if (source == null)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            UIPageIntent intentType = request.ReleaseOnClose
+                ? UIPageIntent.Release
+                : UIPageIntent.Close;
+            return TryStorePendingIntent(new UIPendingIntent
             {
                 PageId = pageId ?? string.Empty,
                 Intent = intentType,
-                Priority = GetPendingIntentPriority(intentType, request.ReleaseOnClose),
+                Priority = GetPendingIntentPriority(
+                    intentType,
+                    request.ReleaseOnClose),
                 CloseRequest = request,
-                CloseCompletion = new UniTaskCompletionSource<UICloseResult>(),
-            };
-
-            if (!TryStorePendingIntent(intent))
-            {
-                return UniTask.FromResult(UICloseResult.Fail(
-                    pageId,
-                    GetKnownPageState(pageId),
-                    UICloseError.Busy));
-            }
-
-            return intent.CloseCompletion.Task;
+                CloseSource = source,
+            });
         }
 
-        /// <summary>
-        /// 当同页忙碌时，创建 Refresh pending。
-        /// Refresh 优先级最低，遇到更高优先级 Close/Release 会被 OperationExpired。
-        /// </summary>
-        public UniTask<UIRefreshResult> EnqueueRefreshPendingAsync(string pageId, UIRefreshArgs args)
+        public bool TryEnqueueRefreshPending(
+            string pageId,
+            UIRefreshArgs args,
+            IUIOperationSource<UIRefreshResult> source)
         {
-            UIPendingIntent intent = new UIPendingIntent
+            if (source == null)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            return TryStorePendingIntent(new UIPendingIntent
             {
                 PageId = pageId ?? string.Empty,
                 Intent = UIPageIntent.Refresh,
-                Priority = GetPendingIntentPriority(UIPageIntent.Refresh, false),
+                Priority = GetPendingIntentPriority(
+                    UIPageIntent.Refresh,
+                    false),
                 RefreshArgs = args,
-                RefreshCompletion = new UniTaskCompletionSource<UIRefreshResult>(),
-            };
-
-            if (!TryStorePendingIntent(intent))
-            {
-                return UniTask.FromResult(UIRefreshResult.Fail(
-                    pageId,
-                    GetKnownPageState(pageId),
-                    UIRefreshError.Busy));
-            }
-
-            return intent.RefreshCompletion.Task;
+                RefreshSource = source,
+            });
         }
 
         /// <summary>
@@ -147,27 +139,36 @@ namespace Joi.H.AppUI
             switch (intent.Intent)
             {
                 case UIPageIntent.Open:
-                    intent.OpenCompletion?.TrySetResult(UIOpenResult.Fail(UIPageOpenError.OperationExpired));
+                    if (intent.OpenSource != null)
+                    {
+                        intent.OpenSource.TrySetExpired();
+                        break;
+                    }
+
                     break;
                 case UIPageIntent.Release:
                 case UIPageIntent.Close:
-                    intent.CloseCompletion?.TrySetResult(UICloseResult.Fail(
-                        intent.PageId,
-                        GetKnownPageState(intent.PageId),
-                        UICloseError.OperationExpired));
+                    if (intent.CloseSource != null)
+                    {
+                        intent.CloseSource.TrySetExpired();
+                        break;
+                    }
+
                     break;
                 case UIPageIntent.Refresh:
-                    intent.RefreshCompletion?.TrySetResult(UIRefreshResult.Fail(
-                        intent.PageId,
-                        GetKnownPageState(intent.PageId),
-                        UIRefreshError.OperationExpired));
+                    if (intent.RefreshSource != null)
+                    {
+                        intent.RefreshSource.TrySetExpired();
+                        break;
+                    }
+
                     break;
             }
         }
 
         /// <summary>
         /// 将 pending 完成为 Cancelled。
-        /// Manager 销毁时会使用该方法，确保没有调用方一直等待 UniTaskCompletionSource。
+        /// Manager 销毁时会使用该方法，确保没有调用方一直等待完成通知。
         /// </summary>
         public void CompletePendingIntentAsCancelled(UIPendingIntent intent)
         {
@@ -179,20 +180,29 @@ namespace Joi.H.AppUI
             switch (intent.Intent)
             {
                 case UIPageIntent.Open:
-                    intent.OpenCompletion?.TrySetResult(UIOpenResult.Fail(UIPageOpenError.Cancelled));
+                    if (intent.OpenSource != null)
+                    {
+                        intent.OpenSource.TrySetCancelled();
+                        break;
+                    }
+
                     break;
                 case UIPageIntent.Release:
                 case UIPageIntent.Close:
-                    intent.CloseCompletion?.TrySetResult(UICloseResult.Fail(
-                        intent.PageId,
-                        GetKnownPageState(intent.PageId),
-                        UICloseError.Cancelled));
+                    if (intent.CloseSource != null)
+                    {
+                        intent.CloseSource.TrySetCancelled();
+                        break;
+                    }
+
                     break;
                 case UIPageIntent.Refresh:
-                    intent.RefreshCompletion?.TrySetResult(UIRefreshResult.Fail(
-                        intent.PageId,
-                        GetKnownPageState(intent.PageId),
-                        UIRefreshError.Cancelled));
+                    if (intent.RefreshSource != null)
+                    {
+                        intent.RefreshSource.TrySetCancelled();
+                        break;
+                    }
+
                     break;
             }
         }
@@ -211,22 +221,29 @@ namespace Joi.H.AppUI
             switch (intent.Intent)
             {
                 case UIPageIntent.Open:
-                    intent.OpenCompletion?.TrySetResult(UIOpenResult.Fail(UIPageOpenError.Exception, exception));
+                    if (intent.OpenSource != null)
+                    {
+                        intent.OpenSource.TrySetFailed(exception);
+                        break;
+                    }
+
                     break;
                 case UIPageIntent.Release:
                 case UIPageIntent.Close:
-                    intent.CloseCompletion?.TrySetResult(UICloseResult.Fail(
-                        intent.PageId,
-                        GetKnownPageState(intent.PageId),
-                        UICloseError.Exception,
-                        exception));
+                    if (intent.CloseSource != null)
+                    {
+                        intent.CloseSource.TrySetFailed(exception);
+                        break;
+                    }
+
                     break;
                 case UIPageIntent.Refresh:
-                    intent.RefreshCompletion?.TrySetResult(UIRefreshResult.Fail(
-                        intent.PageId,
-                        GetKnownPageState(intent.PageId),
-                        UIRefreshError.Exception,
-                        exception));
+                    if (intent.RefreshSource != null)
+                    {
+                        intent.RefreshSource.TrySetFailed(exception);
+                        break;
+                    }
+
                     break;
             }
         }
@@ -378,6 +395,18 @@ namespace Joi.H.AppUI
 
                 operation.MarkCancelling();
                 operation.MarkCancelled();
+                if (operation is UIOpenOperation openOperation)
+                {
+                    openOperation.Source?.TrySetCancelled();
+                }
+                else if (operation is UICloseOperation closeOperation)
+                {
+                    closeOperation.Source?.TrySetCancelled();
+                }
+                else if (operation is UIRefreshOperation refreshOperation)
+                {
+                    refreshOperation.Source?.TrySetCancelled();
+                }
             }
 
             activeOperations.Clear();

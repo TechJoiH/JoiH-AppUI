@@ -1,16 +1,24 @@
 # Changelog
 
+## [0.2.0-pre.1]
+
+### Breaking
+
+- Public page APIs now return backend-neutral `IUIOperation<T>` and use `Open`、`Refresh`、`Close`、`Cancel`、`BindScene`、`UnbindScene`、`ReleaseScope` names.
+- Runtime initialization now requires `AppUIRuntimeDependencies` with an `IUIOperationFactory`, `IUIAssetProvider`, and `IAppUIExecutionContext`.
+- Removed the third-party async package dependency and all related assembly references.
+- Removed the built-in Resources asset provider, automatic provider fallback, and automatic Awake initialization.
+- Replaced controller async animation hooks with `UITransition` and project-owned Operations.
+
+### Added
+
+- Added `Joi.H.AppUI.Core` contract assembly.
+- Added callback-driven page, scene, flow, focus virtualization, and transition state machines.
+- Added an opt-in Basic Integration Sample with pure callback operations, Unity execution context, and explicit-reference asset loading.
+- Added Chinese-first public documentation for integration, concepts, architecture, lifecycle, Binding, focus, input, validation, and FAQ.
+
 ## [0.1.0-pre.1]
 
 - Established `com.joih.appui` and namespace `Joi.H.AppUI`.
-- Added provider-neutral asset loading and one-shot asset leases.
-- Added `AppUIRuntimeHost` and Resources default provider.
-- Replaced application-specific input actions with generic input channels.
-- Replaced third-party inspectors and windows with Unity Editor implementations.
-- Added EditMode and PlayMode contract suites and a Basic Integration sample.
-- Added PlayMode integration coverage for page lifecycle, one-shot resource
-  release, Notice fallback/scope cleanup, and interrupted late-load rejection.
-- Expanded PlayMode coverage to Manager Cancel, provider-backed Notice leases,
-  real EventSystem passthrough zones, and interactive Selectable blocking.
-- Verified Windows x64 Mono and IL2CPP Development Player builds in the clean
-  Unity 6 consumer project.
+- Added page/layer/scope lifecycle, Binding, focus navigation, input policies, notices, Editor validation, and initial contract tests.
+- This version depended on a concrete async package and included a Resources default; both boundaries were intentionally removed in `0.2.0-pre.1` before stable release.

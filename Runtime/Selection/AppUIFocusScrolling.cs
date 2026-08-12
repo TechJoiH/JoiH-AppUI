@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Threading;
-using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -98,7 +97,7 @@ namespace Joi.H.AppUI
 
     public interface IAppUIFocusVirtualizationAdapter
     {
-        UniTask<AppUIFocusRealizationResult> EnsureRealizedAsync(
+        IUIOperation<AppUIFocusRealizationResult> EnsureRealized(
             AppUIFocusRealizationRequest request,
             CancellationToken cancellationToken);
     }

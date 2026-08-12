@@ -1,0 +1,14 @@
+{
+  "name": "Joi.H.AppUI.Core",
+  "rootNamespace": "Joi.H.AppUI",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

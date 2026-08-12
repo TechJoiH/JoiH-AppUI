@@ -1,3 +1,5 @@
+using System;
+using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -19,18 +21,68 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
-        public void ResourcesProvider_EmptyAssetId_ReturnsInvalidId()
+        public void Provider_UnsupportedSyncLoad_IsExplicit()
         {
-            ResourcesUIAssetProvider provider = new ResourcesUIAssetProvider();
+            ContractProvider provider = new ContractProvider(
+                new ManualUIOperationFactory());
 
             bool success = provider.TryLoad<GameObject>(
-                string.Empty,
+                "page",
                 out UIAssetLoadResult<GameObject> result);
 
             Assert.That(success, Is.False);
-            Assert.That(result.IsSuccess, Is.False);
-            Assert.That(result.Status, Is.EqualTo(UIAssetLoadStatus.InvalidAssetId));
-            Assert.That(result.Lease, Is.Null);
+            Assert.That(
+                result.Status,
+                Is.EqualTo(UIAssetLoadStatus.SynchronousLoadUnsupported));
+        }
+
+        [Test]
+        public void DefaultLoadStrategy_ForwardsCancellationTokenToProvider()
+        {
+            ManualUIOperationFactory factory =
+                new ManualUIOperationFactory();
+            ContractProvider provider = new ContractProvider(factory);
+            UIPageDefinition definition =
+                ScriptableObject.CreateInstance<UIPageDefinition>();
+            CancellationTokenSource cancellation =
+                new CancellationTokenSource();
+            try
+            {
+                SetPrefabAssetId(definition, "page");
+
+                IUIOperation<UILoadResult> operation =
+                    new DefaultUILoadStrategy().Load(
+                        definition,
+                        provider,
+                        factory,
+                        cancellation.Token);
+
+                Assert.That(operation.IsTerminal, Is.True);
+                Assert.That(
+                    provider.ReceivedCancellationToken,
+                    Is.EqualTo(cancellation.Token));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(definition);
+                cancellation.Dispose();
+            }
+        }
+
+        [Test]
+        public void Transition_Immediate_DoesNotOwnOperation()
+        {
+            UITransition transition = UITransition.Immediate;
+
+            Assert.That(transition.IsImmediate, Is.True);
+            Assert.That(transition.Operation, Is.Null);
+        }
+
+        [Test]
+        public void Transition_WaitForNull_Throws()
+        {
+            Assert.Throws<ArgumentNullException>(() =>
+                UITransition.WaitFor(null));
         }
 
         [Test]
@@ -48,6 +100,64 @@ namespace Joi.H.AppUI.Tests
 
             Assert.That(releaseCount, Is.EqualTo(1));
             Assert.That(result.ErrorMessage, Is.EqualTo("failed"));
+        }
+
+        private static void SetPrefabAssetId(
+            UIPageDefinition definition,
+            string value)
+        {
+            typeof(UIDefinitionAssetBase)
+                .GetField(
+                    "m_PrefabAssetId",
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(definition, value);
+        }
+
+        private sealed class ContractProvider : IUIAssetProvider
+        {
+            private readonly IUIOperationFactory factory;
+
+            public ContractProvider(IUIOperationFactory factory)
+            {
+                this.factory = factory;
+            }
+
+            public CancellationToken ReceivedCancellationToken
+            {
+                get;
+                private set;
+            }
+
+            public bool TryLoad<T>(
+                string assetId,
+                out UIAssetLoadResult<T> result)
+                where T : UnityEngine.Object
+            {
+                result = UIAssetLoadResult<T>.Failure(
+                    UIAssetLoadStatus.SynchronousLoadUnsupported,
+                    "Synchronous loading is not supported.");
+                return false;
+            }
+
+            public IUIOperation<UIAssetLoadResult<T>> Load<T>(
+                string assetId,
+                CancellationToken cancellationToken)
+                where T : UnityEngine.Object
+            {
+                ReceivedCancellationToken = cancellationToken;
+                IUIOperationSource<UIAssetLoadResult<T>> source =
+                    factory.Create<UIAssetLoadResult<T>>(
+                        AppUIOperationDescriptor.Create(
+                            "ContractLoad",
+                            cancellationToken));
+                source.TrySetRunning();
+                source.TrySetSucceeded(
+                    UIAssetLoadResult<T>.Failure(
+                        UIAssetLoadStatus.NotFound,
+                        "Not found."));
+                return source.Operation;
+            }
         }
     }
 }

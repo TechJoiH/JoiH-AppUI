@@ -1,43 +1,51 @@
-﻿using Cysharp.Threading.Tasks;
+using System;
 using UnityEngine;
 
 namespace Joi.H.AppUI
 {
     /// <summary>
-    /// 场景 UI 绑定组件。
-    /// 场景 owner 可通过它构建 SceneUIBindingData，并在进入/退出时委托 IUIService 处理 UI 生命周期。
+    /// Scene-owned bridge that forwards authored binding data to IUIService.
     /// </summary>
     public class SceneUIBinding : MonoBehaviour
     {
         [SerializeField]
         private SceneUIBindingData bindingData = new SceneUIBindingData();
 
-        /// <summary>返回当前序列化的场景 UI 绑定数据。</summary>
         public SceneUIBindingData BuildBindingData()
         {
             return bindingData;
         }
 
-        /// <summary>执行场景进入 UI 绑定。</summary>
-        public async UniTask BindAsync(IUIService ui)
+        public IUIOperation<UISceneBindResult> Bind(IUIService ui)
         {
-            if (ui == null || bindingData == null)
+            if (ui == null)
             {
-                return;
+                throw new ArgumentNullException(nameof(ui));
             }
 
-            await ui.BindSceneAsync(bindingData);
+            if (bindingData == null)
+            {
+                throw new InvalidOperationException(
+                    "Scene UI binding data is missing.");
+            }
+
+            return ui.BindScene(bindingData);
         }
 
-        /// <summary>执行场景退出 UI 解绑。</summary>
-        public UniTask<UISceneExitResult> UnbindAsync(IUIService ui)
+        public IUIOperation<UISceneExitResult> Unbind(IUIService ui)
         {
-            if (ui == null || bindingData == null)
+            if (ui == null)
             {
-                return UniTask.FromResult(UISceneExitResult.FromResults(string.Empty, string.Empty, null));
+                throw new ArgumentNullException(nameof(ui));
             }
 
-            return ui.UnbindSceneAsync(bindingData);
+            if (bindingData == null)
+            {
+                throw new InvalidOperationException(
+                    "Scene UI binding data is missing.");
+            }
+
+            return ui.UnbindScene(bindingData);
         }
     }
 }
