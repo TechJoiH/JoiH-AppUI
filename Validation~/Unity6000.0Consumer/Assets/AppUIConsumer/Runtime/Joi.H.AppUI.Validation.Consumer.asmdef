@@ -1,0 +1,18 @@
+{
+  "name": "Joi.H.AppUI.Validation.Consumer",
+  "rootNamespace": "Joi.H.AppUI.Validation.Consumer",
+  "references": [
+    "Joi.H.AppUI.Core",
+    "Joi.H.AppUI.Runtime",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

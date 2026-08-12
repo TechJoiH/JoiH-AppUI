@@ -285,6 +285,52 @@ try {
     }
 
     if (Test-GroupRequested 'Consumer') {
+        Invoke-Test 'Official Unity 6000 consumer template materializes with pinned versions and clean assets' {
+            $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+            $template = Join-Path $repositoryRoot 'Validation~\Unity6000.0Consumer'
+            $destination = Join-Path $testRoot 'official-consumer-materialized'
+            $packagePath = Join-Path $testRoot 'official-package'
+            [System.IO.Directory]::CreateDirectory($packagePath) | Out-Null
+
+            New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference $packagePath | Out-Null
+
+            $projectVersion = Get-Content -LiteralPath (Join-Path $destination 'ProjectSettings\ProjectVersion.txt') -Raw -Encoding UTF8
+            Assert-True ($projectVersion -match 'm_EditorVersion:\s*6000\.0\.25f1') 'Official consumer Unity patch version drifted.'
+            Assert-True ($projectVersion -match '4859ab7b5a49') 'Official consumer Unity revision drifted.'
+
+            $manifest = Get-Content -LiteralPath (Join-Path $destination 'Packages\manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            Assert-Equal '1.4.5' $manifest.dependencies.'com.unity.test-framework' 'Official consumer Test Framework version drifted.'
+            Assert-Equal '2.0.0' $manifest.dependencies.'com.unity.ugui' 'Official consumer UGUI version drifted.'
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $template 'Packages\manifest.json'))) 'Official template contains a materialized manifest.'
+
+            foreach ($requiredPath in @(
+                'README.md',
+                '.gitignore',
+                'Assets\AppUIConsumer\Runtime\Joi.H.AppUI.Validation.Consumer.asmdef',
+                'Assets\AppUIConsumer\Runtime\Adapters\ConsumerOperationFactory.cs',
+                'Assets\AppUIConsumer\Runtime\Adapters\ConsumerExecutionContext.cs',
+                'Assets\AppUIConsumer\Runtime\Adapters\ConsumerAssetProvider.cs',
+                'ProjectSettings\ProjectSettings.asset',
+                'ProjectSettings\EditorSettings.asset',
+                'ProjectSettings\EditorBuildSettings.asset',
+                'ProjectSettings\GraphicsSettings.asset',
+                'ProjectSettings\QualitySettings.asset',
+                'ProjectSettings\InputManager.asset',
+                'ProjectSettings\TagManager.asset',
+                'ProjectSettings\TimeManager.asset'
+            )) {
+                Assert-True (Test-Path -LiteralPath (Join-Path $destination $requiredPath) -PathType Leaf) "Official consumer file is missing: $requiredPath"
+            }
+
+            $assetRoot = Join-Path $destination 'Assets'
+            $assetTargets = @(Get-ChildItem -LiteralPath $assetRoot -Recurse -Force | Where-Object {
+                -not $_.Name.EndsWith('.meta', [System.StringComparison]::OrdinalIgnoreCase)
+            })
+            foreach ($assetTarget in $assetTargets) {
+                Assert-True (Test-Path -LiteralPath ($assetTarget.FullName + '.meta') -PathType Leaf) "Official consumer asset is missing meta: $($assetTarget.FullName)"
+            }
+        }
+
         Invoke-Test 'Consumer workspace materializes a file package without mutating the template' {
             $template = Join-Path $testRoot 'consumer-template'
             New-ConsumerTestTemplate $template

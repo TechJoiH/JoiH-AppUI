@@ -1,0 +1,25 @@
+{
+  "name": "Joi.H.AppUI.Validation.Consumer.EditModeTests",
+  "rootNamespace": "Joi.H.AppUI.Validation.Consumer.Tests",
+  "references": [
+    "Joi.H.AppUI.Core",
+    "Joi.H.AppUI.Runtime",
+    "Joi.H.AppUI.Validation.Consumer"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

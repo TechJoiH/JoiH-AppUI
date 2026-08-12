@@ -1,0 +1,14 @@
+/Library/
+/Temp/
+/Logs/
+/Obj/
+/UserSettings/
+/Builds/
+/Packages/manifest.json
+/Packages/packages-lock.json
+/Assets/AppUIConsumerGenerated/
+/TestResults/
+/ValidationOutput/
+*.csproj
+*.sln
+*.user
