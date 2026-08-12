@@ -413,6 +413,60 @@ namespace Joi.H.AppUI
         }
 
         /// <summary>
+        /// 取消符合条件的 Open operation 与 pending Open intent。
+        /// ReleaseScope 在页面实例尚未建立时使用该入口，使晚到的资源结果只能进入过期清理，不能重新提交页面。
+        /// </summary>
+        public void CancelOpenOperations(
+            Predicate<UIOpenOperation> activePredicate,
+            Predicate<UIPendingIntent> pendingPredicate)
+        {
+            if (activePredicate != null)
+            {
+                List<IUIPageOperation> operations =
+                    new List<IUIPageOperation>(activeOperations.Values);
+                for (int i = 0; i < operations.Count; i++)
+                {
+                    UIOpenOperation operation =
+                        operations[i] as UIOpenOperation;
+                    if (operation == null || !operation.IsActive ||
+                        !activePredicate(operation))
+                    {
+                        continue;
+                    }
+
+                    operation.MarkCancelling();
+                    operation.MarkCancelled();
+                    operation.Source?.TrySetCancelled();
+                    UnregisterOperation(operation);
+                }
+            }
+
+            if (pendingPredicate == null || pendingIntentsByPageId.Count == 0)
+            {
+                return;
+            }
+
+            List<string> pageIds =
+                new List<string>(pendingIntentsByPageId.Keys);
+            for (int i = 0; i < pageIds.Count; i++)
+            {
+                string pageId = pageIds[i];
+                if (!pendingIntentsByPageId.TryGetValue(
+                        pageId,
+                        out UIPendingIntent intent) ||
+                    intent == null ||
+                    intent.Intent != UIPageIntent.Open ||
+                    !pendingPredicate(intent))
+                {
+                    continue;
+                }
+
+                pendingIntentsByPageId.Remove(pageId);
+                CompletePendingIntentAsCancelled(intent);
+            }
+        }
+
+        /// <summary>
         /// 校验 operation 是否仍然有效。
         /// 只检查取消、active 对象身份和 OperationVersion；SceneScope 匹配由外层串联 SceneScopeCoordinator。
         /// </summary>

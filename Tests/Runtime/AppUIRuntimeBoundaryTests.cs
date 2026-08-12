@@ -190,6 +190,35 @@ namespace Joi.H.AppUI.Tests
         }
 
         [UnityTest]
+        public IEnumerator ReleaseScope_PendingOpenLateLoadCannotCommitAndReleasesLease()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(true, true);
+            IUIOperation<UIOpenResult> openOperation = fixture.Manager.Open(
+                PageId,
+                UIOpenArgs.None.WithSceneScopeId("scene-released"));
+
+            Assert.That(openOperation.IsTerminal, Is.False);
+            IUIOperation<UIScopeReleaseResult> releaseOperation =
+                fixture.Manager.ReleaseScope(
+                    UIPageScope.SceneScope,
+                    "scene-released");
+            yield return WaitFor(releaseOperation);
+            AssertSucceeded(releaseOperation, out UIScopeReleaseResult result);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(
+                openOperation.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+
+            fixture.Provider.CompletePendingLoad();
+
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.CreateCount, Is.Zero);
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
         public IEnumerator DelayedShow_OperationCompletesOnlyAfterTransition()
         {
             RuntimeFixture fixture = RuntimeFixture.Create(false, true);

@@ -1,20 +1,16 @@
 {
-  "name": "Joi.H.AppUI.Validation.Consumer.EditModeTests",
+  "name": "Joi.H.AppUI.Validation.Consumer.PlayModeTests",
   "rootNamespace": "Joi.H.AppUI.Validation.Consumer.Tests",
   "references": [
     "Joi.H.AppUI.Core",
     "Joi.H.AppUI.Runtime",
-    "Joi.H.AppUI.Editor",
     "Joi.H.AppUI.Validation.Consumer",
-    "Unity.TextMeshPro",
     "UnityEngine.UI"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"
   ],
-  "includePlatforms": [
-    "Editor"
-  ],
+  "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
   "overrideReferences": false,

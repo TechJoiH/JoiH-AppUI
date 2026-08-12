@@ -313,13 +313,31 @@ namespace Joi.H.AppUI
         {
             RequireInitialized();
             EnsureRuntimeServices();
+            string normalized =
+                UISceneScopeCoordinator.NormalizeSceneScopeId(sceneScopeId);
+            if (scope != UIPageScope.GlobalScope)
+            {
+                operationCoordinator.CancelOpenOperations(
+                    operation =>
+                        !instanceRegistry.TryGet(
+                            operation.PageId,
+                            out UIPageInstance _) &&
+                        IsOpenOperationInScope(
+                            operation.PageId,
+                            operation.SceneScopeId,
+                            scope,
+                            normalized),
+                    intent => IsOpenOperationInScope(
+                        intent.PageId,
+                        intent.OpenArgs.SceneScopeId,
+                        scope,
+                        normalized));
+            }
+
             IUIOperation<UIScopeReleaseResult> operation =
                 sceneScopeCoordinator.ReleaseScope(scope, sceneScopeId);
             if (scope != UIPageScope.GlobalScope)
             {
-                string normalized =
-                    UISceneScopeCoordinator.NormalizeSceneScopeId(
-                        sceneScopeId);
                 UIOperationObserver.Observe(
                     operation,
                     executionContext,
@@ -327,6 +345,23 @@ namespace Joi.H.AppUI
             }
 
             return operation;
+        }
+
+        private bool IsOpenOperationInScope(
+            string pageId,
+            string operationSceneScopeId,
+            UIPageScope scope,
+            string normalizedSceneScopeId)
+        {
+            return pageRegistry != null &&
+                   pageRegistry.TryGet(pageId, out UIPageDefinition definition) &&
+                   definition != null &&
+                   definition.Scope == scope &&
+                   string.Equals(
+                       UISceneScopeCoordinator.NormalizeSceneScopeId(
+                           operationSceneScopeId),
+                       normalizedSceneScopeId,
+                       StringComparison.Ordinal);
         }
 
         public IUIOperation<UICancelResult> Cancel()

@@ -32,7 +32,8 @@ namespace Joi.H.AppUI.Validation.Consumer
 
             public void Complete()
             {
-                if (source.Operation.CancellationToken.IsCancellationRequested)
+                if (owner.HonorCancellationOnPendingCompletion &&
+                    source.Operation.CancellationToken.IsCancellationRequested)
                 {
                     source.TrySetCancelled();
                     return;
@@ -58,6 +59,8 @@ namespace Joi.H.AppUI.Validation.Consumer
         }
 
         public bool CompleteLoadsImmediately { get; set; }
+
+        public bool HonorCancellationOnPendingCompletion { get; set; } = true;
 
         public int LoadCount
         {
@@ -91,6 +94,14 @@ namespace Joi.H.AppUI.Validation.Consumer
             where T : UnityObject
         {
             Interlocked.Increment(ref loadCount);
+            if (!CompleteLoadsImmediately)
+            {
+                result = UIAssetLoadResult<T>.Failure(
+                    UIAssetLoadStatus.SynchronousLoadUnsupported,
+                    "Consumer validation is exercising the asynchronous load path.");
+                return false;
+            }
+
             result = Resolve<T>(assetId);
             return result.IsSuccess;
         }
