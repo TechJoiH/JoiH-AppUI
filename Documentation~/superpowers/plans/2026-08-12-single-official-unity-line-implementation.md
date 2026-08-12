@@ -320,7 +320,7 @@ Expected: 因 `AppUI.ReleaseTools.psm1` 或函数不存在而失败。
 
 - [ ] **Step 3: Implement archive export from the tracked tree**
 
-`Export-AppUICandidateSnapshot` 使用 `git archive --format=tar <sourceCommit>` 导出到新目录，再展开到 `candidate/package/`。禁止 `Copy-Item $RepositoryPath`。目标目录必须不存在；工具只创建自己的新目录，不删除未知路径。
+`Export-AppUICandidateSnapshot` 使用 `git archive --format=zip <sourceCommit>` 导出到新目录，再由 .NET `ZipArchive` 展开到 `candidate/package/`。Windows `bsdtar` 会按本机代码页损坏 UTF-8 Git 路径，因此不得用于候选解压。禁止 `Copy-Item $RepositoryPath`。目标目录必须不存在；工具只创建自己的新目录，不删除未知路径。
 
 - [ ] **Step 4: Implement the normalized content manifest**
 
