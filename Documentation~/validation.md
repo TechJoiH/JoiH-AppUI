@@ -130,7 +130,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIG
 
 每个 Unity 子进程默认最多运行 120 秒。超时后工具终止该精确进程，当前流水线停止；不得继续后续步骤，也不得用旧候选的结果补齐本次报告。`Blocked` 不是 `Passed`，也不是 `Known Incompatible`。
 
-完整运行前会先验证 Unity 精确版本，并通过 `vswhere.exe` 只接受 Visual Studio 2022（17.x）C++ toolchain。`vcvars64.bat` 必须能暴露 `cl.exe`、`link.exe`、`rc.exe` 与 `WindowsSdkDir`；否则写出 `build-environment.json` 并以 `Blocked/MissingToolchain` 或 `Blocked/ToolchainProbeFailed` 停止。
+完整运行前会先验证 Unity 精确版本，并通过 `vswhere.exe` 只接受 Visual Studio 2022（17.x）C++ toolchain。`vcvars64.bat` 必须能暴露 `cl.exe`、`link.exe`、`rc.exe` 与 `WindowsSdkDir`；否则写出 `build-environment.json` 并以 `Blocked/MissingToolchain` 或 `Blocked/ToolchainProbeFailed` 停止。显式传入 Visual Studio 安装目录时也执行同一工具链探测，不允许用路径覆盖绕过门禁；探测命令写入受控临时脚本，以正确处理安装路径中的空格。
 
 ## 报告与 Artifact
 
@@ -173,8 +173,8 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 - Static Policy：`Passed`；
 - Candidate Snapshot 与 Commit/Tree/Version/Manifest Hash：`Passed`；
 - Unity `6000.0.25f1` 版本检查：`Passed`；
-- Visual Studio 2022 C++ 工具链预检：`Blocked/MissingToolchain`；
-- 当前候选的 Package resolve、Sample、Binding、EditMode、PlayMode、Mono、IL2CPP：`NotRun`，因为流水线已在环境预检处停止；
+- Visual Studio 2022 C++ 工具链预检：`Passed`；
+- 当前候选的 Package resolve、Sample、Binding、EditMode、PlayMode、Mono、IL2CPP：`NotRun`，等待从新的精确候选和 Run Root 执行完整流水线；
 - 远端 Commit SHA Smoke：`NotRun`；
 - 不可变 Tag 与 Tag URL Smoke：`NotRun`。
 

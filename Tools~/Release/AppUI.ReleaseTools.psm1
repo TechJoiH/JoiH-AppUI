@@ -1605,27 +1605,45 @@ function Test-AppUIBuildEnvironment {
         }
     }
 
-    if (-not $usingOverride -and -not $DisableVsWhereDiscovery) {
-        $probeCommand = 'call "' + $vcVarsPath + '" >nul && ' +
-            'if not defined WindowsSdkDir exit /b 3 && ' +
-            'where cl.exe >nul && where link.exe >nul && where rc.exe >nul'
+    $tempBase = [System.IO.Path]::GetTempPath()
+    $probeRoot = Join-Path $tempBase ('joih-appui-toolchain-' + [Guid]::NewGuid().ToString('N'))
+    $probeScript = Join-Path $probeRoot 'probe.cmd'
+    try {
+        [System.IO.Directory]::CreateDirectory($probeRoot) | Out-Null
+        Write-AppUIUtf8NoBom -Path $probeScript -Value (@"
+@echo off
+call "$vcVarsPath" >nul
+if errorlevel 1 exit /b 2
+if not defined WindowsSdkDir exit /b 3
+where cl.exe >nul || exit /b 4
+where link.exe >nul || exit /b 5
+where rc.exe >nul || exit /b 6
+exit /b 0
+"@ -replace "`n", "`r`n")
         $probe = Invoke-AppUIProcess `
             -FilePath 'cmd.exe' `
-            -ArgumentList @('/d', '/s', '/c', $probeCommand) `
+            -ArgumentList @('/d', '/c', $probeScript) `
             -TimeoutSeconds 30
-        if ($probe.Status -ne 'Passed') {
-            return [PSCustomObject][ordered]@{
-                schemaVersion = 'appui-build-environment.v1'
-                gate = 'IL2CPP'
-                Status = 'Blocked'
-                Reason = 'ToolchainProbeFailed'
-                UnityVersion = $unityVersion
-                ExpectedUnityVersion = $ExpectedUnityVersion
-                VsInstallationPath = $vsInstallationPath
-                VcVarsPath = $vcVarsPath
-                Details = "vcvars64.bat did not expose cl.exe, link.exe, rc.exe and WindowsSdkDir. ExitCode=$($probe.ExitCode)"
-                checkedAtUtc = [DateTime]::UtcNow.ToString('o')
-            }
+    }
+    finally {
+        if ((Test-Path -LiteralPath $probeRoot) -and
+            $probeRoot.StartsWith($tempBase, [System.StringComparison]::OrdinalIgnoreCase) -and
+            (Split-Path -Leaf $probeRoot).StartsWith('joih-appui-toolchain-', [System.StringComparison]::Ordinal)) {
+            Remove-Item -LiteralPath $probeRoot -Recurse -Force
+        }
+    }
+    if ($probe.Status -ne 'Passed') {
+        return [PSCustomObject][ordered]@{
+            schemaVersion = 'appui-build-environment.v1'
+            gate = 'IL2CPP'
+            Status = 'Blocked'
+            Reason = 'ToolchainProbeFailed'
+            UnityVersion = $unityVersion
+            ExpectedUnityVersion = $ExpectedUnityVersion
+            VsInstallationPath = $vsInstallationPath
+            VcVarsPath = $vcVarsPath
+            Details = "vcvars64.bat did not expose cl.exe, link.exe, rc.exe and WindowsSdkDir. ExitCode=$($probe.ExitCode)"
+            checkedAtUtc = [DateTime]::UtcNow.ToString('o')
         }
     }
 

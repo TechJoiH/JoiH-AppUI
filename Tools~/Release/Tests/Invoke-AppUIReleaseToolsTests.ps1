@@ -675,10 +675,26 @@ public static class FakeGitProgram
             $preflightRoot = Join-Path $testRoot 'preflight'
             $unity = Join-Path $preflightRoot 'Unity.exe'
             $vswhere = Join-Path $preflightRoot 'vswhere.exe'
-            $vsInstall = Join-Path $preflightRoot 'VS2022'
+            $vsInstall = Join-Path $preflightRoot 'VS 2022 With Spaces'
+            $toolRoot = Join-Path $vsInstall 'Fake Tools'
             Set-Utf8NoBomContent $unity 'fixture'
             Set-Utf8NoBomContent $vswhere 'fixture'
-            Set-Utf8NoBomContent (Join-Path $vsInstall 'VC\Auxiliary\Build\vcvars64.bat') '@echo off'
+            $fakeTool = Join-Path $preflightRoot 'fake-tool.exe'
+            Add-Type -TypeDefinition @'
+public static class FakeToolProgram
+{
+    public static int Main(string[] args) { return 0; }
+}
+'@ -OutputAssembly $fakeTool -OutputType ConsoleApplication
+            [System.IO.Directory]::CreateDirectory($toolRoot) | Out-Null
+            foreach ($toolName in @('cl.exe', 'link.exe', 'rc.exe')) {
+                Copy-Item -LiteralPath $fakeTool -Destination (Join-Path $toolRoot $toolName)
+            }
+            Set-Utf8NoBomContent (Join-Path $vsInstall 'VC\Auxiliary\Build\vcvars64.bat') @"
+@echo off
+set "WindowsSdkDir=$preflightRoot\Fake SDK"
+set "PATH=$toolRoot;%PATH%"
+"@
 
             $blocked = Test-AppUIBuildEnvironment `
                 -UnityPath $unity `
@@ -698,6 +714,17 @@ public static class FakeGitProgram
             Assert-Equal 'Passed' $passed.Status 'Valid VS2022 fixture was rejected.'
             Assert-Equal '6000.0.25f1' $passed.UnityVersion 'Unity version was not preserved.'
             Assert-Equal $vsInstall $passed.VsInstallationPath 'VS2022 path was not preserved.'
+
+            $brokenVsInstall = Join-Path $preflightRoot 'Broken VS 2022'
+            Set-Utf8NoBomContent (Join-Path $brokenVsInstall 'VC\Auxiliary\Build\vcvars64.bat') '@echo off'
+            $brokenOverride = Test-AppUIBuildEnvironment `
+                -UnityPath $unity `
+                -ExpectedUnityVersion '6000.0.25f1' `
+                -UnityVersionOverride '6000.0.25f1' `
+                -VsWherePath $vswhere `
+                -VsInstallationPathOverride $brokenVsInstall
+            Assert-Equal 'Blocked' $brokenOverride.Status 'Invalid override bypassed the toolchain probe.'
+            Assert-Equal 'ToolchainProbeFailed' $brokenOverride.Reason 'Invalid override block reason was wrong.'
 
             $wrongUnity = Test-AppUIBuildEnvironment `
                 -UnityPath $unity `

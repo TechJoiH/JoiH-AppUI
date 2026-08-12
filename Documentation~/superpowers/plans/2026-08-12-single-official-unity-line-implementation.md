@@ -172,7 +172,7 @@ Task 10：Tag URL 冒烟、Release Artifact、主分支证据索引
 
 任何箭头前的必需门禁失败都停止后续发布动作；失败不会降级成警告。
 
-当前实施状态：Tasks 1-7 已完成并形成精确本地候选；Task 8 的静态策略、Snapshot 与环境预检已执行，环境预检以 `Blocked/MissingToolchain` 停止在 Consumer 物化之前。安装受支持的 Visual Studio 2022 C++ 工具链需要用户授权；Push、Tag 与 GitHub Release 尚未执行。
+当前实施状态：Tasks 1-7 已完成；Visual Studio 2022 C++ Build Tools 已在用户授权后独立安装，Task 8 的真实环境预检已经通过。工具链探测同时覆盖自动发现和显式路径覆盖，当前将从新的精确本地候选和 Run Root 重新执行完整 Pre-tag 流水线；Push、Tag 与 GitHub Release 尚未执行。
 
 远端 `ls-remote` 使用 30 秒有界进程；连接或远端失败必须报告 `Blocked/RemoteUnavailable`，超时报告 `Blocked/Timeout`。未拿到成功的远端响应时，不得推断为 `NotPushed` 或 Tag 未占用。
 
