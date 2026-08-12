@@ -2,7 +2,7 @@
 
 Joi.H AppUI 是面向 Unity 6 UGUI 的页面与交互框架。它统一页面定义、分层、作用域、生命周期、Binding、焦点导航和输入阻挡，但不替项目选择异步库、资源系统或业务架构。
 
-> 当前版本：`0.2.0-pre.1`。这是预发布版本，1.0 前 API 与序列化字段仍可能调整。
+> 当前版本：`0.2.0-pre.1`。这是 Unity 6 Official Target 下的预发布候选，尚未完成 IL2CPP、不可变 Tag 和 Tag URL 安装门禁，不能视为 Officially Supported Release。1.0 前 API 与序列化字段仍可能调整。
 
 ## 为什么做
 
@@ -42,19 +42,23 @@ AppUI Core 只定义契约，不提供默认异步或资源实现。接入项目
 | 输入策略 | `AppUIInputPolicyRoot`、`AppUIInputZone`、`AppUIInputHitResolver` | 声明 UI 输入阻挡与世界输入穿透 |
 | 轻量提示 | `INoticeService` | Toast、Tooltip、FloatingText 等非页面提示 |
 
-## 环境要求
+## Unity 支持范围
 
-- Unity `6000.0` 或更高版本
+- 唯一 Official Target：Unity 6.0 / `6000.0`
 - UGUI `2.0`
 - TextMeshPro（Unity UI 栈）
 - 无第三方 Inspector 或异步包硬依赖
 
+选择 Unity 6.0 是因为它是 AppUI 当前主要开发、真实项目使用和发布验证环境；该目标不会随 Unity 最新 LTS 自动变化。Unity 6.1/6.2/6.3 不会因为版本号更高而自动获得官方支持。
+
+Unity 2022.3 与 2021.3 当前属于 `Community Port`：允许用户自行移植，但官方不提供对应 Package、Tag、CI 或维护承诺。完整的五级状态定义见 [Unity 版本支持政策](Documentation~/supported-unity-versions.md)，自行适配见[社区 Unity 移植指南](Documentation~/community-unity-porting.md)。Community Verified 只代表存在社区外部证据，不等于官方维护。
+
 ## 安装
 
-打开 `Window > Package Manager`，点击 `+ > Add package from git URL...`，输入：
+真实项目应安装经过验证的普通 SemVer Tag，不要长期跟随 `main`。打开 `Window > Package Manager`，点击 `+ > Add package from git URL...`，输入：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git
+https://github.com/TechJoiH/JoiH-AppUI.git#vX.Y.Z
 ```
 
 也可以直接加入 `Packages/manifest.json`：
@@ -62,12 +66,12 @@ https://github.com/TechJoiH/JoiH-AppUI.git
 ```json
 {
   "dependencies": {
-    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git"
+    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#vX.Y.Z"
   }
 }
 ```
 
-当前仓库若仍为 Private，Git 需要使用已授权的 GitHub 凭据；公开后无需私有仓库权限。
+当前还没有通过全部门禁的官方 Tag，因此 `vX.Y.Z` 是格式说明而不是可直接复制的现有版本。评估当前候选时必须固定精确 Commit，并自行承担预发布风险；不要把无版本的仓库 URL 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
 
 ## 最短接入路径
 
@@ -160,11 +164,14 @@ AppUI 只等待 `IUIOperation<UITransitionResult>`，不关心 `projectTransitio
 - [Focus System](Documentation~/focus-system.md)
 - [Input Policy](Documentation~/input-policy.md)
 - [Editor Tools & Validation](Documentation~/editor-tools-validation.md)
+- [Unity 版本支持政策](Documentation~/supported-unity-versions.md)
+- [社区 Unity 移植指南](Documentation~/community-unity-porting.md)
 - [FAQ](Documentation~/faq.md)
 
 ## 当前验证与限制
 
 - 已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；最新数字见[验证与发布门禁](Documentation~/validation.md)。
+- 当前尚无 Officially Supported Release；IL2CPP、不可变 Tag 和 Tag URL 冒烟完成前不会提升状态。
 - `0.x` 期间允许破坏性整理，升级前请阅读 [CHANGELOG](CHANGELOG.md)。
 - 最终视觉、字体、动画手感、Prefab 点击区域仍需要在接入项目中人工验收。
 - 对外分发许可证尚未确定；在 LICENSE 明确前，不应推定获得复制、修改或再分发授权。

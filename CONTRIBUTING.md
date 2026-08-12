@@ -24,4 +24,28 @@
 
 PR 应说明职责边界、行为变化、测试结果、兼容性影响和人工验证步骤。不要在同一 PR 顺带重构无关模块。
 
+## Unity 版本兼容贡献
+
+官方唯一目标环境是 Unity 6.0 / `6000.0`。非官方版本适配先按[社区 Unity 移植指南](Documentation~/community-unity-porting.md)在 Fork 和干净 Consumer 中复现、验证。
+
+兼容 PR 按以下顺序审查：
+
+1. 是否给出精确 Unity 版本、AppUI Commit 和最小复现；
+2. 是否只需修改社区 Fork 的 `package.json`；
+3. 是否能改用已有共同公共 API；
+4. 是否确实需要集中式 Compatibility 门面；
+5. 是否保持公开 API、序列化字段、enum 数值和 Meta GUID；
+6. 是否保持 Unity 6 全量门禁；
+7. 文档是否明确标记为非官方适配。
+
+以下内容不会合入官方仓库：
+
+- 官方 Unity 2022/2021 清单、分支、Tag、Consumer 或 CI 矩阵；
+- 为旧 Unity 修改 AppUI Core 协议；
+- 在普通 Runtime/Editor 文件散布版本宏；
+- 旧版专用第三方依赖；
+- 降低 Unity 6 的 Binding、测试或 Player Build 门禁。
+
+申请加入 Community Verified 索引时，必须提供精确 Unity 版本、上游和 Fork Commit、清单、EditMode/PlayMode XML、Binding 报告、Mono/IL2CPP 摘要、Tag 安装冒烟和已知限制的长期链接。收录只代表社区证据可复查，不产生官方维护责任。
+
 项目的对外分发许可证尚未确定。在 LICENSE 发布和贡献授权流程明确前，请先通过 Issue 讨论，不要提交需要合并的外部代码。

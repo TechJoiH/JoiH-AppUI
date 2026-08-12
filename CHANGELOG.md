@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Documented Unity 6.0 / `6000.0` as the single Official Target without tying the decision to Unity's upstream support calendar.
+- Added five mutually exclusive compatibility states and an external-evidence-only Community Verified index.
+- Added a standalone Community Unity Porting Guide for project-owned manifests, compatibility boundaries, validation and unofficial tags.
+
+### Planned validation work
+
+- Formalize `Validation~/Unity6000.0Consumer/` as the only official external Consumer template.
+- Add deterministic candidate snapshots, content manifests and external release reports.
+- Complete IL2CPP, pushed Commit Git URL and immutable Tag Git URL gates before declaring an Officially Supported Release.
+
 ## [0.2.0-pre.1]
 
 ### Breaking

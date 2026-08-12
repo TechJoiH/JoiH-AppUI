@@ -2,13 +2,17 @@
 
 目标：在独立 Unity 6 项目中完成安装、显式初始化，并让一个页面走完打开、刷新和关闭。
 
+本教程只覆盖 AppUI 的唯一 Official Target：Unity 6.0 / `6000.0`。使用 Unity 2022.3、2021.3 或其他版本时，先阅读[社区 Unity 移植指南](community-unity-porting.md)；不要把本教程理解为那些版本已获官方支持。
+
 ## 1. 安装
 
 在 Package Manager 选择 `Add package from git URL...`：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git
+https://github.com/TechJoiH/JoiH-AppUI.git#vX.Y.Z
 ```
+
+真实项目应把 `vX.Y.Z` 替换成 [Officially Supported Releases](supported-unity-versions.md#officially-supported-releases) 中列出的不可变 Tag，不要使用无版本的 `main`。当前尚无完成全部门禁的官方 Tag；评估预发布候选时必须固定精确 Commit。
 
 AppUI 只依赖 UGUI，不要求安装第三方异步包。
 

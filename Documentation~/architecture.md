@@ -55,6 +55,19 @@ sequenceDiagram
 
 AppUI 不自动扫描业务程序集、不创建 Addressables 或 Resources fallback，也不把 Sample 实现注册到 Runtime。
 
+## 环境差异边界
+
+AppUI 官方只维护 Unity 6.0 / `6000.0` 一条源码和发行线。异步库、资源系统、宿主框架与非官方 Unity 版本都属于边界适配：
+
+```text
+Task / UniTask / 回调       → 项目 Operation Adapter
+Addressables / YooAsset    → 项目 Asset Provider
+GameFramework / 自研框架    → 项目 Host Adapter
+Unity 2022.3 / 2021.3      → Community Port
+```
+
+取消多版本官方维护不等于删除可移植性设计。真实 Unity API 差异出现时可以集中到 Compatibility 门面，但不提前创建空目录，也不让版本宏进入 Core、公开生命周期、Definition 或 Binding 生成代码。完整规则见[社区 Unity 移植指南](community-unity-porting.md)。
+
 ## 程序集
 
 - `Joi.H.AppUI.Core`：Operation、资源和执行上下文契约；

@@ -43,3 +43,43 @@ Focus、业务 Selection 和 Hover 应分离。默认移动只改变 Focus；业
 ## 谁释放资源？
 
 Provider 在成功结果中返回 `UIAssetLease`。AppUI 在页面/Notice 释放或晚到结果被丢弃时 Dispose Lease；项目实现 Lease 回调并保持可重复调用安全。
+
+## Unity 2022.3 能使用吗？
+
+可以尝试移植，但当前状态是 `Community Port`，不是官方支持。请 Fork 一个固定的 AppUI Tag/Commit，修改你自己 Fork 的包清单，在干净 Unity 2022.3 Consumer 中完成编译、Binding、测试、Mono 和 IL2CPP。步骤见[社区 Unity 移植指南](community-unity-porting.md)。
+
+## 为什么官方只维护 Unity 6.0？
+
+Unity 6.0 / `6000.0` 是 AppUI 当前主要开发、真实项目使用和完整验证环境。一条官方线能让个人开源项目把精力放在 API、Focus、Binding、工具链和接入稳定性，而不是维护多套 Package、Tag、Consumer 与构建矩阵。这个选择不依赖 Unity 上游支持周期。
+
+## Unity 6.1、6.2、6.3 会自动受支持吗？
+
+不会。`package.json` 的最低版本约束和“官方完成验证”是两回事。新 Unity 版本只有经过明确的目标迁移决策、外部 Consumer 和全部发布门禁后，才会进入 Officially Supported Releases。
+
+## Official Target 和 Officially Supported 有什么区别？
+
+Official Target 是官方投入开发和验证的目标环境。Officially Supported 是某个精确 AppUI Tag 在精确 Unity 版本中完成全部门禁后的发布状态。当前目标是 Unity 6.0，但 `0.2.0-pre.1` 仍缺 IL2CPP 与 Tag 安装证据，因此尚不是 Officially Supported Release。
+
+## Community Port 和 Community Verified 有什么区别？
+
+Community Port 表示允许自行移植并有教程，但没有完整证据。Community Verified 表示社区已经提交精确版本、Fork/Commit、测试、Binding 和 Player Build 证据。两者都不等于官方维护；Community Verified 只会进入外部证据索引。
+
+## Unsupported 是否表示一定不能运行？
+
+不是。Unsupported 只表示不在官方支持范围且没有兼容保证。只有存在精确、可复现的不兼容证据时，状态才是 Known Incompatible。
+
+## Known Incompatible 如何判定？
+
+必须给出精确 Unity 版本、AppUI Commit、最小复现工程、错误日志以及无法正常工作的明确证据。宿主项目的单次报错、猜测或缺少本机工具链都不足以判定 Known Incompatible。
+
+## 可以提交 Unity 2022 兼容 PR 吗？
+
+可以提交不改变 Unity 6 行为的共同 API 修正、已复现的最小 Compatibility 门面、教程修正和外部证据链接。不能要求官方降低 `package.json`、建立旧版分支/Tag/Consumer/CI、修改 Core 协议或散布版本宏。
+
+## 为什么不能直接修改官方 package.json 支持旧 Unity？
+
+官方清单定义官方安装与验证边界。降低它会让所有用户误以为旧版本已完成维护承诺。社区 Fork 可以修改自己的清单并承担对应测试和发布责任。
+
+## 为什么真实项目应该安装 Tag 而不是 main？
+
+`main` 会继续接收改动，不能保证某天重新解析时得到相同源码。不可变 SemVer Tag 可以把包版本、Commit、测试报告和迁移说明固定在一起。官方 Tag 发布后不会移动；如果发现问题，会发布新版本。
