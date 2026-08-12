@@ -2,6 +2,7 @@
   "name": "Joi.H.AppUI.Samples.Basic",
   "rootNamespace": "Joi.H.AppUI.Samples.Basic",
   "references": [
+    "Joi.H.AppUI.Core",
     "Joi.H.AppUI.Runtime",
     "UniTask"
   ],

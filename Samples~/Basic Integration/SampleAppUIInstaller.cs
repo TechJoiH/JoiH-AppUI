@@ -14,8 +14,9 @@ namespace Joi.H.AppUI.Samples.Basic
     }
 
     /// <summary>
-    /// Minimal consumer adapter. Configure AppUIRuntimeHost with
-    /// Initialize On Awake disabled, then this installer injects the provider.
+    /// Minimal consumer composition root. The sample keeps the asset provider
+    /// local, while the project explicitly supplies its operation factory and
+    /// Unity execution context.
     /// </summary>
     [DefaultExecutionOrder(-200)]
     public sealed class SampleAppUIInstaller : MonoBehaviour
@@ -26,6 +27,12 @@ namespace Joi.H.AppUI.Samples.Basic
         [SerializeField]
         private List<SampleUIAssetEntry> assets =
             new List<SampleUIAssetEntry>();
+
+        [SerializeField]
+        private MonoBehaviour operationFactorySource;
+
+        [SerializeField]
+        private MonoBehaviour executionContextSource;
 
         private void Awake()
         {
@@ -42,7 +49,33 @@ namespace Joi.H.AppUI.Samples.Basic
                 return;
             }
 
-            runtimeHost.Initialize(new DirectReferenceUIAssetProvider(assets));
+            IUIOperationFactory operationFactory =
+                operationFactorySource as IUIOperationFactory;
+            IAppUIExecutionContext executionContext =
+                executionContextSource as IAppUIExecutionContext;
+            if (operationFactory == null || executionContext == null)
+            {
+                Debug.LogError(
+                    "<Joi.H.AppUI.Sample> Assign project-owned " +
+                    "IUIOperationFactory and IAppUIExecutionContext components.",
+                    this);
+                return;
+            }
+
+            DirectReferenceUIAssetProvider assetProvider =
+                new DirectReferenceUIAssetProvider(assets);
+            AppUIInitializationResult result = runtimeHost.Initialize(
+                new AppUIRuntimeDependencies(
+                    operationFactory,
+                    assetProvider,
+                    executionContext));
+            if (!result.Success)
+            {
+                Debug.LogError(
+                    "<Joi.H.AppUI.Sample> Initialization failed: " +
+                    result.Status,
+                    this);
+            }
         }
     }
 

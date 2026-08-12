@@ -1,11 +1,11 @@
+using System;
 using UnityEngine;
 
 namespace Joi.H.AppUI
 {
     /// <summary>
     /// Scene composition root for an AppUI runtime.
-    /// Projects may inject any IUIAssetProvider before initialization; otherwise the
-    /// built-in Resources provider can be used as a dependency-free default.
+    /// The integrating project must explicitly provide every runtime dependency.
     /// </summary>
     [DisallowMultipleComponent]
     [DefaultExecutionOrder(-100)]
@@ -32,13 +32,7 @@ namespace Joi.H.AppUI
         [SerializeField]
         private AppUINoticeSettings noticeSettings;
 
-        [SerializeField]
-        private bool initializeOnAwake = true;
-
-        [SerializeField]
-        private bool useResourcesProviderWhenMissing = true;
-
-        private IUIAssetProvider assetProvider;
+        private AppUIRuntimeDependencies dependencies;
         private bool initialized;
 
         public AppUIManager Manager
@@ -46,9 +40,19 @@ namespace Joi.H.AppUI
             get { return uiManager; }
         }
 
+        public AppUIRuntimeDependencies Dependencies
+        {
+            get { return dependencies; }
+        }
+
         public IUIAssetProvider AssetProvider
         {
-            get { return assetProvider; }
+            get
+            {
+                return dependencies != null
+                    ? dependencies.AssetProvider
+                    : null;
+            }
         }
 
         public bool IsInitialized
@@ -59,10 +63,6 @@ namespace Joi.H.AppUI
         private void Awake()
         {
             ResolveSceneReferences();
-            if (initializeOnAwake)
-            {
-                Initialize(null);
-            }
         }
 
 #if UNITY_EDITOR
@@ -73,46 +73,30 @@ namespace Joi.H.AppUI
 #endif
 
         /// <summary>
-        /// Initializes the runtime once. Pass a project provider explicitly, or null to
-        /// use ResourcesUIAssetProvider when the serialized fallback is enabled.
+        /// Initializes AppUI exactly once with project-owned dependencies.
+        /// Missing dependencies return a structured failure and never trigger fallback.
         /// </summary>
-        public bool Initialize(IUIAssetProvider provider)
+        public AppUIInitializationResult Initialize(
+            AppUIRuntimeDependencies runtimeDependencies)
         {
             if (initialized)
             {
-                if (provider != null && !ReferenceEquals(provider, assetProvider))
-                {
-                    SetAssetProvider(provider);
-                }
-
-                return true;
+                return ReferenceEquals(dependencies, runtimeDependencies)
+                    ? AppUIInitializationResult.AlreadyInitialized()
+                    : AppUIInitializationResult.Failure(
+                        AppUIInitializationStatus
+                            .AlreadyInitializedWithDifferentDependencies);
             }
 
             ResolveSceneReferences();
-            if (uiManager == null)
+            AppUIInitializationResult validation =
+                ValidateInitialization(runtimeDependencies);
+            if (!validation.Success)
             {
-                Debug.LogError(
-                    "<Joi.H.AppUI> AppUIRuntimeHost requires AppUIManager.",
-                    this);
-                return false;
+                return validation;
             }
 
-            UIPageDefinitionRegistry resolvedRegistry =
-                profile != null && profile.PageRegistry != null
-                    ? profile.PageRegistry
-                    : pageRegistry;
-            if (resolvedRegistry == null)
-            {
-                Debug.LogError(
-                    "<Joi.H.AppUI> AppUIRuntimeHost requires a page registry.",
-                    this);
-                return false;
-            }
-
-            assetProvider = provider ??
-                (useResourcesProviderWhenMissing
-                    ? new ResourcesUIAssetProvider()
-                    : null);
+            UIPageDefinitionRegistry resolvedRegistry = ResolveRegistry();
             UILayerSettings resolvedLayerSettings =
                 profile != null && profile.LayerSettings != null
                     ? profile.LayerSettings
@@ -122,40 +106,93 @@ namespace Joi.H.AppUI
                     ? profile.NoticeSettings
                     : noticeSettings;
 
-            uiManager.Initialize(
-                resolvedRegistry,
-                assetProvider,
-                layerRoots,
-                resolvedLayerSettings,
-                resolvedNoticeSettings);
-            initialized = true;
-            return true;
-        }
-
-        public void SetAssetProvider(IUIAssetProvider provider)
-        {
-            if (provider == null)
+            try
             {
-                Debug.LogError(
-                    "<Joi.H.AppUI> Asset provider cannot be null.",
-                    this);
-                return;
+                uiManager.Initialize(
+                    resolvedRegistry,
+                    runtimeDependencies,
+                    layerRoots,
+                    resolvedLayerSettings,
+                    resolvedNoticeSettings);
+                dependencies = runtimeDependencies;
+                initialized = true;
+                return AppUIInitializationResult.Ok();
             }
-
-            assetProvider = provider;
-            uiManager?.SetAssetProvider(provider);
+            catch (Exception exception)
+            {
+                uiManager.Shutdown();
+                dependencies = null;
+                initialized = false;
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.DependencyContractFailed,
+                    exception);
+            }
         }
 
+        /// <summary>
+        /// Stops the runtime and releases the injected dependency references.
+        /// A later explicit Initialize call may provide a new dependency set.
+        /// </summary>
         public void Shutdown()
         {
             if (!initialized)
             {
+                dependencies = null;
                 return;
             }
 
-            uiManager?.ClearAssetProvider();
-            assetProvider = null;
+            uiManager?.Shutdown();
+            dependencies = null;
             initialized = false;
+        }
+
+        private AppUIInitializationResult ValidateInitialization(
+            AppUIRuntimeDependencies runtimeDependencies)
+        {
+            if (runtimeDependencies == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingDependencies);
+            }
+
+            if (runtimeDependencies.OperationFactory == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingOperationFactory);
+            }
+
+            if (runtimeDependencies.AssetProvider == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingAssetProvider);
+            }
+
+            if (runtimeDependencies.ExecutionContext == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingExecutionContext);
+            }
+
+            if (uiManager == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingManager);
+            }
+
+            if (ResolveRegistry() == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingRegistry);
+            }
+
+            return AppUIInitializationResult.Ok();
+        }
+
+        private UIPageDefinitionRegistry ResolveRegistry()
+        {
+            return profile != null && profile.PageRegistry != null
+                ? profile.PageRegistry
+                : pageRegistry;
         }
 
         private void ResolveSceneReferences()

@@ -35,6 +35,10 @@ namespace Joi.H.AppUI
             new Dictionary<string, IUIDestroyStrategy>(4);
 
         private IUIAssetProvider assetProvider;
+        private AppUIRuntimeDependencies runtimeDependencies;
+        private IUIOperationFactory operationFactory;
+        private IAppUIExecutionContext executionContext;
+        private int runtimeEpoch;
         private IUILoadStrategy defaultLoadStrategy;
         private IUIDestroyStrategy defaultDestroyStrategy;
         private bool initialized;
@@ -47,7 +51,11 @@ namespace Joi.H.AppUI
 
         public IUIService Service
         {
-            get { return this; }
+            get
+            {
+                RequireInitialized();
+                return this;
+            }
         }
 
         /// <summary>
@@ -58,6 +66,7 @@ namespace Joi.H.AppUI
         {
             get
             {
+                RequireInitialized();
                 EnsureRuntimeServices();
                 return noticeService;
             }
@@ -66,6 +75,69 @@ namespace Joi.H.AppUI
         public bool HasAssetProvider
         {
             get { return assetProvider != null; }
+        }
+
+        internal IUIOperationFactory OperationFactory
+        {
+            get { return operationFactory; }
+        }
+
+        internal IAppUIExecutionContext ExecutionContext
+        {
+            get { return executionContext; }
+        }
+
+        internal int RuntimeEpoch
+        {
+            get { return runtimeEpoch; }
+        }
+
+        /// <summary>
+        /// Initializes the manager from the explicit host dependency set.
+        /// </summary>
+        public void Initialize(
+            UIPageDefinitionRegistry registry,
+            AppUIRuntimeDependencies dependencies,
+            UILayerRoot[] roots,
+            UILayerSettings settings,
+            AppUINoticeSettings appNoticeSettings)
+        {
+            if (dependencies == null)
+            {
+                throw new ArgumentNullException(nameof(dependencies));
+            }
+
+            if (dependencies.OperationFactory == null)
+            {
+                throw new ArgumentException(
+                    "OperationFactory is required.",
+                    nameof(dependencies));
+            }
+
+            if (dependencies.AssetProvider == null)
+            {
+                throw new ArgumentException(
+                    "AssetProvider is required.",
+                    nameof(dependencies));
+            }
+
+            if (dependencies.ExecutionContext == null)
+            {
+                throw new ArgumentException(
+                    "ExecutionContext is required.",
+                    nameof(dependencies));
+            }
+
+            runtimeDependencies = dependencies;
+            operationFactory = dependencies.OperationFactory;
+            executionContext = dependencies.ExecutionContext;
+            runtimeEpoch++;
+            Initialize(
+                registry,
+                dependencies.AssetProvider,
+                roots,
+                settings,
+                appNoticeSettings);
         }
 
         /// <summary>
@@ -161,14 +233,6 @@ namespace Joi.H.AppUI
             destroyStrategies[strategy.StrategyId ?? string.Empty] = strategy;
         }
 
-        private void Awake()
-        {
-            if (!initialized && pageRegistry != null)
-            {
-                InitializeInternal();
-            }
-        }
-
         private void Update()
         {
             TickUpdate(Time.deltaTime, Time.unscaledDeltaTime);
@@ -190,6 +254,26 @@ namespace Joi.H.AppUI
 
         private void OnDestroy()
         {
+            ShutdownRuntime();
+        }
+
+        /// <summary>
+        /// Stops this manager without waiting for an external asynchronous backend.
+        /// </summary>
+        public void Shutdown()
+        {
+            ShutdownRuntime();
+        }
+
+        private void ShutdownRuntime()
+        {
+            runtimeEpoch++;
+            if (!initialized)
+            {
+                ClearRuntimeDependencies();
+                return;
+            }
+
             EnsureRuntimeServices();
             operationCoordinator.CancelAllActiveOperations();
             operationCoordinator.CancelAllPendingIntents();
@@ -213,6 +297,24 @@ namespace Joi.H.AppUI
             presentationCoordinator.Clear();
             noticeService.Dispose();
             initialized = false;
+            loadStrategies.Clear();
+            destroyStrategies.Clear();
+            defaultLoadStrategy = null;
+            defaultDestroyStrategy = null;
+            sceneScopeCoordinator = null;
+            presentationCoordinator = null;
+            layerRuntimeConfigurator = null;
+            pageInstanceReleaser = null;
+            noticeService = null;
+            ClearRuntimeDependencies();
+        }
+
+        private void ClearRuntimeDependencies()
+        {
+            runtimeDependencies = null;
+            operationFactory = null;
+            executionContext = null;
+            assetProvider = null;
         }
 
         private void InitializeInternal()
@@ -1102,10 +1204,22 @@ namespace Joi.H.AppUI
         {
             if (!initialized)
             {
-                InitializeInternal();
+                throw new InvalidOperationException(
+                    "<Joi.H.AppUI> Runtime is not initialized. " +
+                    "Initialize AppUIRuntimeHost with explicit dependencies first.");
             }
 
-            return initialized && pageRegistry != null;
+            return pageRegistry != null;
+        }
+
+        private void RequireInitialized()
+        {
+            if (!initialized)
+            {
+                throw new InvalidOperationException(
+                    "<Joi.H.AppUI> Runtime is not initialized. " +
+                    "Initialize AppUIRuntimeHost with explicit dependencies first.");
+            }
         }
 
         private static bool ValidateDefinition(UIPageDefinition definition)
