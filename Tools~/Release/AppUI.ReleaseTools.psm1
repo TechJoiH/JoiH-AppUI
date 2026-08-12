@@ -143,6 +143,61 @@ function Resolve-AppUIGitIdentity {
     }
 }
 
+function Resolve-AppUIRemoteTagIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepositoryPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Tag
+    )
+
+    if ($Tag -notmatch '^v[0-9A-Za-z][0-9A-Za-z.+-]*$') {
+        throw "Remote tag is not a valid AppUI SemVer tag: $Tag"
+    }
+
+    $result = Invoke-AppUIGitText `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @(
+            'ls-remote',
+            'origin',
+            "refs/tags/$Tag",
+            "refs/tags/$Tag^{}")
+    $lines = @($result.Text -split "`r?`n" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    })
+    if ($lines.Count -eq 0) {
+        throw "Remote tag does not exist: $Tag"
+    }
+
+    $peeled = $lines | Where-Object { $_ -match "refs/tags/$([regex]::Escape($Tag))\^\{\}$" } | Select-Object -First 1
+    $selected = if ($null -ne $peeled) { $peeled } else {
+        $lines | Where-Object { $_ -match "refs/tags/$([regex]::Escape($Tag))$" } | Select-Object -First 1
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$selected)) {
+        throw "Remote tag could not be resolved: $Tag"
+    }
+
+    $commit = ([string]$selected -split "\s+")[0]
+    if ($commit -notmatch '^[0-9a-f]{40}$') {
+        throw "Remote tag did not resolve to a commit SHA: $Tag"
+    }
+
+    $treeResult = Invoke-AppUIGitText `
+        -RepositoryPath $RepositoryPath `
+        -Arguments @('rev-parse', "$commit^{tree}")
+    if ($treeResult.Text -notmatch '^[0-9a-f]{40}$') {
+        throw "Remote tag commit did not resolve to a tree: $Tag"
+    }
+
+    return [PSCustomObject][ordered]@{
+        Tag = $Tag
+        SourceCommit = $commit
+        SourceTree = $treeResult.Text
+    }
+}
+
 function Invoke-AppUIGitBinaryToFile {
     [CmdletBinding()]
     param(
@@ -830,9 +885,517 @@ function Test-AppUIPackagePolicy {
     }
 }
 
+function Read-AppUINUnit3Result {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [switch]$RequirePassed
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        throw "NUnit result does not exist: $resolvedPath"
+    }
+
+    try {
+        [xml]$document = Get-Content -LiteralPath $resolvedPath -Raw -Encoding UTF8
+    }
+    catch {
+        throw "NUnit result is malformed: $resolvedPath. $($_.Exception.Message)"
+    }
+
+    $run = $document.'test-run'
+    if ($null -eq $run) {
+        throw "NUnit result does not contain test-run: $resolvedPath"
+    }
+
+    try {
+        $total = [int]$run.total
+        $passed = [int]$run.passed
+        $failed = [int]$run.failed
+        $skipped = [int]$run.skipped
+        $durationMs = [long]([double]$run.duration * 1000.0)
+    }
+    catch {
+        throw "NUnit result contains invalid counters: $resolvedPath"
+    }
+
+    $failedNames = @(
+        $document.SelectNodes('//test-case[@result="Failed"]') |
+            ForEach-Object { [string]$_.fullname }
+    )
+    $status = if ($failed -eq 0 -and
+        [string]$run.result -notmatch '^Failed') { 'Passed' } else { 'Failed' }
+    if ($RequirePassed -and $status -ne 'Passed') {
+        throw "NUnit result failed: $resolvedPath. Failed=$failed. Tests=$($failedNames -join ', ')"
+    }
+
+    return [PSCustomObject][ordered]@{
+        Status = $status
+        Total = $total
+        Passed = $passed
+        Failed = $failed
+        Skipped = $skipped
+        DurationMs = $durationMs
+        FailedTests = $failedNames
+        EvidenceFile = [System.IO.Path]::GetFileName($resolvedPath)
+    }
+}
+
+function Invoke-AppUIProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [string[]]$ArgumentList = @(),
+
+        [ValidateRange(1, 86400)]
+        [int]$TimeoutSeconds = 120
+    )
+
+    $resolvedFile = (Get-Command $FilePath -ErrorAction Stop).Source
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $process = Start-Process `
+        -FilePath $resolvedFile `
+        -ArgumentList $ArgumentList `
+        -PassThru `
+        -WindowStyle Hidden
+    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) {
+        try {
+            $process.Kill()
+            $process.WaitForExit()
+        }
+        catch {
+            throw "Timed out process could not be terminated. Id=$($process.Id). $($_.Exception.Message)"
+        }
+    }
+
+    $stopwatch.Stop()
+    $exitCode = if ($timedOut) { $null } else { $process.ExitCode }
+    $processId = $process.Id
+    $process.Dispose()
+    return [PSCustomObject][ordered]@{
+        Status = if ($timedOut) { 'Blocked' } elseif ($exitCode -eq 0) { 'Passed' } else { 'Failed' }
+        ExitCode = $exitCode
+        TimedOut = $timedOut
+        DurationMs = $stopwatch.ElapsedMilliseconds
+        ProcessId = $processId
+    }
+}
+
+function Invoke-AppUIUnityProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UnityPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ProjectPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$LogFile,
+
+        [string[]]$Arguments = @(),
+
+        [ValidateRange(1, 86400)]
+        [int]$TimeoutSeconds = 120
+    )
+
+    $resolvedUnity = [System.IO.Path]::GetFullPath($UnityPath)
+    $resolvedProject = [System.IO.Path]::GetFullPath($ProjectPath)
+    $resolvedLog = [System.IO.Path]::GetFullPath($LogFile)
+    if (-not (Test-Path -LiteralPath $resolvedUnity -PathType Leaf)) {
+        throw "Unity executable does not exist: $resolvedUnity"
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedProject -PathType Container)) {
+        throw "Unity project does not exist: $resolvedProject"
+    }
+
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $resolvedLog)) | Out-Null
+    $unityArguments = @(
+        '-batchmode',
+        '-nographics',
+        '-projectPath',
+        $resolvedProject
+    ) + $Arguments + @('-logFile', $resolvedLog)
+    $result = Invoke-AppUIProcess `
+        -FilePath $resolvedUnity `
+        -ArgumentList $unityArguments `
+        -TimeoutSeconds $TimeoutSeconds
+    return [PSCustomObject][ordered]@{
+        Status = $result.Status
+        ExitCode = $result.ExitCode
+        TimedOut = $result.TimedOut
+        DurationMs = $result.DurationMs
+        ProcessId = $result.ProcessId
+        LogFile = $resolvedLog
+    }
+}
+
+function Get-AppUIJsonEvidenceGate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Binding', 'Build', 'Smoke')]
+        [string]$Kind
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf)) {
+        return [PSCustomObject][ordered]@{
+            status = 'NotRun'
+            evidenceFile = [System.IO.Path]::GetFileName($resolvedPath)
+            durationMs = 0
+        }
+    }
+
+    try {
+        $document = Get-Content -LiteralPath $resolvedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        throw "Evidence JSON is malformed: $resolvedPath. $($_.Exception.Message)"
+    }
+
+    if ($Kind -eq 'Binding') {
+        $passed = [bool]$document.success -and [int]$document.errorCount -eq 0
+        $duration = if ($document.PSObject.Properties['durationMs']) { [long]$document.durationMs } else { 0 }
+    }
+    elseif ($Kind -eq 'Build') {
+        $passed = [string]$document.result -eq 'Succeeded'
+        $duration = if ($document.PSObject.Properties['totalTimeMs']) { [long]$document.totalTimeMs } else { 0 }
+    }
+    else {
+        $passed = [bool]$document.initialized -and
+            [bool]$document.openPassed -and [bool]$document.closePassed
+        $duration = if ($document.PSObject.Properties['durationMs']) { [long]$document.durationMs } else { 0 }
+    }
+
+    return [PSCustomObject][ordered]@{
+        status = if ($passed) { 'Passed' } else { 'Failed' }
+        evidenceFile = [System.IO.Path]::GetFileName($resolvedPath)
+        durationMs = $duration
+    }
+}
+
+function New-AppUIReleaseReport {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$IdentityPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$EvidenceRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSourceCommit,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSourceTree,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedPackageVersion,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PlannedTag,
+
+        [AllowEmptyString()]
+        [string]$ResolvedTag = '',
+
+        [AllowEmptyString()]
+        [string]$RepositoryPath = ''
+    )
+
+    $resolvedIdentityPath = [System.IO.Path]::GetFullPath($IdentityPath)
+    $resolvedEvidenceRoot = [System.IO.Path]::GetFullPath($EvidenceRoot)
+    if (-not (Test-Path -LiteralPath $resolvedIdentityPath -PathType Leaf)) {
+        throw "Candidate identity does not exist: $resolvedIdentityPath"
+    }
+
+    $identity = Get-Content -LiteralPath $resolvedIdentityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($comparison in @(
+        @('sourceCommit', [string]$identity.sourceCommit, $ExpectedSourceCommit),
+        @('sourceTree', [string]$identity.sourceTree, $ExpectedSourceTree),
+        @('packageVersion', [string]$identity.packageVersion, $ExpectedPackageVersion)
+    )) {
+        if ($comparison[1] -ne $comparison[2]) {
+            throw "Release report $($comparison[0]) mismatch. Expected=$($comparison[2]) Actual=$($comparison[1])"
+        }
+    }
+
+    $expectedTag = 'v' + $ExpectedPackageVersion
+    if ($PlannedTag -ne $expectedTag) {
+        throw "Release report plannedTag mismatch. Expected=$expectedTag Actual=$PlannedTag"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedTag) -and
+        $ResolvedTag -ne $PlannedTag) {
+        throw "Release report resolvedTag mismatch. Expected=$PlannedTag Actual=$ResolvedTag"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedTag)) {
+        if ([string]::IsNullOrWhiteSpace($RepositoryPath)) {
+            throw "Formal release report requires RepositoryPath to resolve the remote tag."
+        }
+
+        $remoteTag = Resolve-AppUIRemoteTagIdentity `
+            -RepositoryPath $RepositoryPath `
+            -Tag $ResolvedTag
+        if ($remoteTag.SourceCommit -ne $ExpectedSourceCommit) {
+            throw "Remote tag sourceCommit mismatch. Expected=$ExpectedSourceCommit Actual=$($remoteTag.SourceCommit)"
+        }
+
+        if ($remoteTag.SourceTree -ne $ExpectedSourceTree) {
+            throw "Remote tag sourceTree mismatch. Expected=$ExpectedSourceTree Actual=$($remoteTag.SourceTree)"
+        }
+    }
+
+    $editMode = Read-AppUINUnit3Result -Path (Join-Path $resolvedEvidenceRoot 'editmode.xml')
+    $playMode = Read-AppUINUnit3Result -Path (Join-Path $resolvedEvidenceRoot 'playmode.xml')
+    $binding = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'binding-validation.json') -Kind Binding
+    $mono = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'build-windowsmono.json') -Kind Build
+    $il2cpp = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'build-windowsil2cpp.json') -Kind Build
+    $commitSmoke = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'commit-git-install-smoke.json') -Kind Smoke
+    $tagSmoke = Get-AppUIJsonEvidenceGate -Path (Join-Path $resolvedEvidenceRoot 'tag-git-install-smoke.json') -Kind Smoke
+    $unityVersion = ''
+    $bindingDocument = Get-Content -LiteralPath (Join-Path $resolvedEvidenceRoot 'binding-validation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($bindingDocument.PSObject.Properties['unityVersion']) {
+        $unityVersion = [string]$bindingDocument.unityVersion
+    }
+
+    $allRequiredPassed = @(
+        $editMode.Status,
+        $playMode.Status,
+        $binding.status,
+        $mono.status,
+        $il2cpp.status
+    ) -notcontains 'Failed' -and @(
+        $editMode.Status,
+        $playMode.Status,
+        $binding.status,
+        $mono.status,
+        $il2cpp.status
+    ) -notcontains 'NotRun'
+
+    $report = [ordered]@{
+        schemaVersion = 'appui-release-report.v1'
+        status = if ($allRequiredPassed) { 'Passed' } else { 'Blocked' }
+        repository = [string]$identity.repository
+        sourceCommit = [string]$identity.sourceCommit
+        sourceTree = [string]$identity.sourceTree
+        plannedTag = $PlannedTag
+        resolvedTag = if ([string]::IsNullOrWhiteSpace($ResolvedTag)) { $null } else { $ResolvedTag }
+        packageVersion = [string]$identity.packageVersion
+        packageManifestSha256 = [string]$identity.packageManifestSha256
+        unityVersion = $unityVersion
+        operatingSystem = 'Windows'
+        uguiVersion = '2.0.0'
+        editMode = [ordered]@{
+            status = $editMode.Status
+            passed = $editMode.Passed
+            failed = $editMode.Failed
+            skipped = $editMode.Skipped
+            evidenceFile = $editMode.EvidenceFile
+            durationMs = $editMode.DurationMs
+        }
+        playMode = [ordered]@{
+            status = $playMode.Status
+            passed = $playMode.Passed
+            failed = $playMode.Failed
+            skipped = $playMode.Skipped
+            evidenceFile = $playMode.EvidenceFile
+            durationMs = $playMode.DurationMs
+        }
+        bindingValidation = $binding
+        monoBuild = $mono
+        il2cppBuild = $il2cpp
+        commitGitInstallSmoke = $commitSmoke
+        tagGitInstallSmoke = $tagSmoke
+        generatedAtUtc = [DateTime]::UtcNow.ToString('o')
+    }
+
+    $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $resolvedOutput)) | Out-Null
+    Write-AppUIUtf8NoBom -Path $resolvedOutput -Value (($report | ConvertTo-Json -Depth 10) + "`n")
+    return [PSCustomObject]$report
+}
+
+function Protect-AppUILog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InputPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputPath,
+
+        [string]$RepositoryPath = '',
+        [string]$ConsumerPath = '',
+        [string]$UserProfilePath = ''
+    )
+
+    $text = Get-Content -LiteralPath $InputPath -Raw -Encoding UTF8
+    foreach ($replacement in @(
+        @($RepositoryPath, '<REPOSITORY>'),
+        @($ConsumerPath, '<CONSUMER>'),
+        @($UserProfilePath, '<USER_PROFILE>')
+    )) {
+        if ([string]::IsNullOrWhiteSpace($replacement[0])) {
+            continue
+        }
+
+        foreach ($variant in @(
+            $replacement[0],
+            $replacement[0].Replace('\', '/'),
+            $replacement[0].Replace('/', '\')
+        ) | Select-Object -Unique) {
+            $text = [regex]::Replace(
+                $text,
+                [regex]::Escape($variant),
+                $replacement[1],
+                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+    }
+
+    $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
+    [System.IO.Directory]::CreateDirectory((Split-Path -Parent $resolvedOutput)) | Out-Null
+    Write-AppUIUtf8NoBom -Path $resolvedOutput -Value $text
+}
+
+function Test-AppUIArtifactSecrets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [switch]$ThrowOnSecret
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not (Test-Path -LiteralPath $resolvedPath)) {
+        throw "Artifact path does not exist: $resolvedPath"
+    }
+
+    $files = if (Test-Path -LiteralPath $resolvedPath -PathType Container) {
+        @(Get-ChildItem -LiteralPath $resolvedPath -Recurse -Force -File)
+    } else {
+        @(Get-Item -LiteralPath $resolvedPath)
+    }
+    $patterns = @(
+        '(?i)github_pat_[a-z0-9_]+',
+        '(?i)ghp_[a-z0-9]+',
+        '(?i)Authorization\s*:\s*(?:Bearer|Basic)\s+\S+',
+        '-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'
+    )
+    $findings = New-Object System.Collections.Generic.List[string]
+    foreach ($file in $files) {
+        if ($file.Length -gt 20MB) {
+            continue
+        }
+
+        $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+        foreach ($pattern in $patterns) {
+            if ($content -match $pattern) {
+                $findings.Add($file.FullName + ': ' + $Matches[0])
+            }
+        }
+    }
+
+    if ($findings.Count -gt 0 -and $ThrowOnSecret) {
+        throw "Artifact secret audit failed: $($findings -join ' | ')"
+    }
+
+    return $findings.Count -eq 0
+}
+
+function New-AppUISanitizedLogArchive {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$InputDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputArchive,
+
+        [string]$RepositoryPath = '',
+        [string]$ConsumerPath = '',
+        [string]$UserProfilePath = ''
+    )
+
+    $resolvedInput = [System.IO.Path]::GetFullPath($InputDirectory)
+    $resolvedArchive = [System.IO.Path]::GetFullPath($OutputArchive)
+    if (-not (Test-Path -LiteralPath $resolvedInput -PathType Container)) {
+        throw "Log input directory does not exist: $resolvedInput"
+    }
+
+    if (Test-Path -LiteralPath $resolvedArchive) {
+        throw "Log archive already exists: $resolvedArchive"
+    }
+
+    $archiveParent = Split-Path -Parent $resolvedArchive
+    [System.IO.Directory]::CreateDirectory($archiveParent) | Out-Null
+    $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        'joih-appui-sanitized-logs-' + [Guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($temporaryRoot) | Out-Null
+    try {
+        $files = @(Get-ChildItem -LiteralPath $resolvedInput -Recurse -Force -File)
+        foreach ($file in $files) {
+            $relative = $file.FullName.Substring($resolvedInput.Length).TrimStart('\', '/')
+            $destination = Join-Path $temporaryRoot $relative
+            [System.IO.Directory]::CreateDirectory((Split-Path -Parent $destination)) | Out-Null
+            Protect-AppUILog `
+                -InputPath $file.FullName `
+                -OutputPath $destination `
+                -RepositoryPath $RepositoryPath `
+                -ConsumerPath $ConsumerPath `
+                -UserProfilePath $UserProfilePath
+        }
+
+        Test-AppUIArtifactSecrets `
+            -Path $temporaryRoot `
+            -ThrowOnSecret | Out-Null
+        Compress-Archive `
+            -Path (Join-Path $temporaryRoot '*') `
+            -DestinationPath $resolvedArchive `
+            -CompressionLevel Optimal
+        if (-not (Test-Path -LiteralPath $resolvedArchive -PathType Leaf)) {
+            throw "Sanitized log archive was not created: $resolvedArchive"
+        }
+    }
+    finally {
+        if ((Test-Path -LiteralPath $temporaryRoot) -and
+            $temporaryRoot.StartsWith([System.IO.Path]::GetTempPath(), [System.StringComparison]::OrdinalIgnoreCase) -and
+            (Split-Path -Leaf $temporaryRoot).StartsWith('joih-appui-sanitized-logs-', [System.StringComparison]::Ordinal)) {
+            Remove-Item -LiteralPath $temporaryRoot -Recurse -Force
+        }
+    }
+
+    return [PSCustomObject][ordered]@{
+        ArchivePath = $resolvedArchive
+        Sha256 = Get-AppUISha256 -Path $resolvedArchive
+    }
+}
+
 Export-ModuleMember -Function @(
     'Resolve-AppUIGitIdentity',
     'Export-AppUICandidateSnapshot',
     'New-AppUIConsumerWorkspace',
-    'Test-AppUIPackagePolicy'
+    'Test-AppUIPackagePolicy',
+    'Read-AppUINUnit3Result',
+    'Invoke-AppUIProcess',
+    'Invoke-AppUIUnityProcess',
+    'New-AppUIReleaseReport',
+    'Protect-AppUILog',
+    'Test-AppUIArtifactSecrets',
+    'New-AppUISanitizedLogArchive'
 )

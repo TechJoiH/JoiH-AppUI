@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('All', 'Snapshot', 'Consumer', 'Policy', 'Docs')]
+    [ValidateSet('All', 'Snapshot', 'Consumer', 'Policy', 'Orchestration', 'Docs')]
     [string[]]$TestGroup = @('All')
 )
 
@@ -190,6 +190,7 @@ function New-PolicyTestRepository {
     $DependenciesJson
   }
 }
+
 "@
     Set-Utf8NoBomContent (Join-Path $Path 'Runtime\SafeType.cs') $RuntimeSource
     Set-Utf8NoBomContent (Join-Path $Path 'Runtime\SafeType.cs.meta') @'
@@ -204,6 +205,39 @@ folderAsset: yes
     Invoke-TestGit $Path add -- package.json Runtime.meta Runtime/SafeType.cs Runtime/SafeType.cs.meta | Out-Null
     Invoke-TestGit $Path commit -m 'Policy fixture' | Out-Null
     return Invoke-TestGit $Path rev-parse HEAD
+}
+
+function New-ReleaseEvidenceFixture {
+    param(
+        [string]$Path,
+        [string]$SourceCommit = '0123456789abcdef0123456789abcdef01234567',
+        [string]$SourceTree = '89abcdef0123456789abcdef0123456789abcdef',
+        [string]$Version = '1.2.3-test.1'
+    )
+
+    [System.IO.Directory]::CreateDirectory($Path) | Out-Null
+    Set-Utf8NoBomContent (Join-Path $Path 'candidate-identity.json') (@{
+        repository = 'TechJoiH/JoiH-AppUI'
+        sourceCommit = $SourceCommit
+        sourceTree = $SourceTree
+        packageVersion = $Version
+        packageManifestSha256 = ('a' * 64)
+    } | ConvertTo-Json)
+    foreach ($name in @('editmode.xml', 'playmode.xml')) {
+        Set-Utf8NoBomContent (Join-Path $Path $name) @'
+<?xml version="1.0" encoding="utf-8"?>
+<test-run total="3" passed="3" failed="0" skipped="0" duration="1.25" result="Passed">
+  <test-suite result="Passed">
+    <test-case fullname="Fixture.Passes" result="Passed" />
+  </test-suite>
+</test-run>
+'@
+    }
+
+    Set-Utf8NoBomContent (Join-Path $Path 'binding-validation.json') '{"success":true,"errorCount":0,"durationMs":25,"unityVersion":"6000.0.25f1"}'
+    Set-Utf8NoBomContent (Join-Path $Path 'build-windowsmono.json') '{"result":"Succeeded","totalTimeMs":100}'
+    Set-Utf8NoBomContent (Join-Path $Path 'build-windowsil2cpp.json') '{"result":"Succeeded","totalTimeMs":200}'
+    Set-Utf8NoBomContent (Join-Path $Path 'commit-git-install-smoke.json') '{"initialized":true,"openPassed":true,"closePassed":true}'
 }
 
 function Test-GroupRequested {
@@ -444,6 +478,144 @@ guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             Assert-True (-not $result.Success) 'Multi-version profile/empty compatibility fixture was accepted.'
             Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'SingleOfficialUnityLine' }).Count -eq 1) 'Single official line error was not reported.'
             Assert-True (@($result.Checks | Where-Object { $_.Status -eq 'Error' -and $_.Name -eq 'CompatibilityYagni' }).Count -eq 1) 'Empty compatibility shell error was not reported.'
+        }
+    }
+
+    if (Test-GroupRequested 'Orchestration') {
+        Invoke-Test 'NUnit3 parser reports exact counts and rejects bad evidence' {
+            $evidence = Join-Path $testRoot 'nunit-evidence'
+            New-ReleaseEvidenceFixture $evidence
+            $result = Read-AppUINUnit3Result -Path (Join-Path $evidence 'editmode.xml')
+            Assert-Equal 3 $result.Total 'NUnit total was parsed incorrectly.'
+            Assert-Equal 3 $result.Passed 'NUnit passed was parsed incorrectly.'
+            Assert-Equal 0 $result.Failed 'NUnit failed was parsed incorrectly.'
+            Assert-Equal 'Passed' $result.Status 'NUnit status was parsed incorrectly.'
+
+            Set-Utf8NoBomContent (Join-Path $evidence 'failed.xml') @'
+<test-run total="1" passed="0" failed="1" skipped="0" result="Failed">
+  <test-case fullname="Fixture.Fails" result="Failed" />
+</test-run>
+'@
+            Assert-Throws {
+                Read-AppUINUnit3Result -Path (Join-Path $evidence 'failed.xml') -RequirePassed
+            } 'failed|Fixture.Fails' 'Failed NUnit evidence was accepted.'
+            Assert-Throws {
+                Read-AppUINUnit3Result -Path (Join-Path $evidence 'missing.xml')
+            } 'does not exist' 'Missing NUnit evidence was accepted.'
+        }
+
+        Invoke-Test 'Bounded process runner returns Blocked and terminates a timeout' {
+            $slowScript = Join-Path $testRoot 'slow-process.ps1'
+            Set-Utf8NoBomContent $slowScript 'Start-Sleep -Seconds 10'
+            $powershellPath = (Get-Command powershell.exe).Source
+            $result = Invoke-AppUIProcess `
+                -FilePath $powershellPath `
+                -ArgumentList @('-NoProfile', '-File', $slowScript) `
+                -TimeoutSeconds 1
+            Assert-Equal 'Blocked' $result.Status 'Timed out process was not blocked.'
+            Assert-True $result.TimedOut 'Timed out process did not report TimedOut.'
+        }
+
+        Invoke-Test 'Release report enforces candidate identity and tag contract' {
+            $evidence = Join-Path $testRoot 'report-evidence'
+            New-ReleaseEvidenceFixture $evidence
+            $output = Join-Path $evidence 'pretag-report.json'
+            $report = New-AppUIReleaseReport `
+                -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                -EvidenceRoot $evidence `
+                -OutputPath $output `
+                -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                -ExpectedPackageVersion '1.2.3-test.1' `
+                -PlannedTag 'v1.2.3-test.1'
+            Assert-Equal $null $report.resolvedTag 'Pre-tag report resolved a tag.'
+            Assert-Equal 'Passed' $report.editMode.status 'EditMode report status was wrong.'
+            Assert-True (Test-Path -LiteralPath $output) 'Release report was not written.'
+
+            Assert-Throws {
+                New-AppUIReleaseReport `
+                    -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                    -EvidenceRoot $evidence `
+                    -OutputPath (Join-Path $evidence 'bad-report.json') `
+                    -ExpectedSourceCommit ('f' * 40) `
+                    -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                    -ExpectedPackageVersion '1.2.3-test.1' `
+                    -PlannedTag 'v1.2.3-test.1'
+            } 'sourceCommit' 'Mismatched report identity was accepted.'
+            Assert-Throws {
+                New-AppUIReleaseReport `
+                    -IdentityPath (Join-Path $evidence 'candidate-identity.json') `
+                    -EvidenceRoot $evidence `
+                    -OutputPath (Join-Path $evidence 'bad-tag-report.json') `
+                    -ExpectedSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+                    -ExpectedSourceTree '89abcdef0123456789abcdef0123456789abcdef' `
+                    -ExpectedPackageVersion '1.2.3-test.1' `
+                    -PlannedTag 'v1.2.4'
+            } 'plannedTag' 'Mismatched planned tag was accepted.'
+        }
+
+        Invoke-Test 'Artifact sanitization redacts paths and rejects secrets' {
+            $artifactRoot = Join-Path $testRoot 'artifact-audit'
+            [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
+            $raw = Join-Path $artifactRoot 'raw.log'
+            $safe = Join-Path $artifactRoot 'safe.log'
+            Set-Utf8NoBomContent $raw 'repo=C:\work\repo consumer=C:\work\consumer user=C:\Users\Tester'
+            Protect-AppUILog `
+                -InputPath $raw `
+                -OutputPath $safe `
+                -RepositoryPath 'C:\work\repo' `
+                -ConsumerPath 'C:\work\consumer' `
+                -UserProfilePath 'C:\Users\Tester'
+            $safeText = Get-Content -LiteralPath $safe -Raw -Encoding UTF8
+            Assert-True ($safeText -match '<REPOSITORY>') 'Repository path was not redacted.'
+            Assert-True ($safeText -match '<CONSUMER>') 'Consumer path was not redacted.'
+            Assert-True ($safeText -match '<USER_PROFILE>') 'User profile path was not redacted.'
+            Assert-True (Test-AppUIArtifactSecrets -Path $safe) 'Sanitized log failed the secret audit.'
+
+            Set-Utf8NoBomContent (Join-Path $artifactRoot 'secret.log') 'Authorization: Bearer github_pat_example'
+            Assert-Throws {
+                Test-AppUIArtifactSecrets -Path $artifactRoot -ThrowOnSecret
+            } 'secret|Authorization|github_pat' 'Secret-bearing artifact was accepted.'
+
+            Remove-Item -LiteralPath (Join-Path $artifactRoot 'secret.log') -Force
+            $archive = Join-Path $testRoot 'sanitized-logs.zip'
+            $archiveResult = New-AppUISanitizedLogArchive `
+                -InputDirectory $artifactRoot `
+                -OutputArchive $archive `
+                -RepositoryPath 'C:\work\repo' `
+                -ConsumerPath 'C:\work\consumer' `
+                -UserProfilePath 'C:\Users\Tester'
+            Assert-True (Test-Path -LiteralPath $archive -PathType Leaf) 'Sanitized log archive was not created.'
+            Assert-True ($archiveResult.Sha256 -match '^[0-9a-f]{64}$') 'Sanitized log archive hash was invalid.'
+        }
+
+        Invoke-Test 'Release entry points expose the documented orchestration contract' {
+            foreach ($relativePath in @(
+                '..\Invoke-AppUIPreTagValidation.ps1',
+                '..\Invoke-AppUIGitInstallSmoke.ps1',
+                '..\New-AppUIReleaseReport.ps1'
+            )) {
+                Assert-True (Test-Path -LiteralPath (Join-Path $PSScriptRoot $relativePath) -PathType Leaf) "Release entry point is missing: $relativePath"
+            }
+
+            $preTagText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Invoke-AppUIPreTagValidation.ps1') -Raw -Encoding UTF8
+            foreach ($token in @(
+                'StaticPolicy',
+                'Snapshot',
+                'ImportBasicIntegration',
+                'CreateFixturesAndGenerateBindings',
+                'BindAndValidate',
+                'BuildMono',
+                'BuildIl2Cpp',
+                'New-AppUIReleaseReport'
+            )) {
+                Assert-True ($preTagText.Contains($token)) "Pre-tag entry point is missing contract token: $token"
+            }
+
+            $gitSmokeText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Invoke-AppUIGitInstallSmoke.ps1') -Raw -Encoding UTF8
+            Assert-True ($gitSmokeText -match '40-character|SemVer') 'Git smoke does not document immutable refs.'
+            Assert-True ($gitSmokeText.Contains('commit-git-install-smoke.json')) 'Commit smoke output is missing.'
+            Assert-True ($gitSmokeText.Contains('tag-git-install-smoke.json')) 'Tag smoke output is missing.'
         }
     }
 }
