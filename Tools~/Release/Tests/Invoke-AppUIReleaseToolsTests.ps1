@@ -948,6 +948,7 @@ set "PATH=$toolRoot;%PATH%"
             $repoPath = 'C:\work\repo'
             $consumerPath = 'C:\work\consumer'
             $profilePath = 'C:\Users\Tester'
+            $validationRootPath = 'D:\validation\run'
             $sourceNames = @(
                 'release-report.json',
                 'package-manifest.json',
@@ -961,9 +962,9 @@ set "PATH=$toolRoot;%PATH%"
             )
             foreach ($name in $sourceNames) {
                 $value = if ($name.EndsWith('.json')) {
-                    '{"path":"C:\\work\\repo","consumer":"C:/work/consumer","profile":"C:\\Users\\Tester"}'
+                    '{"path":"C:\\work\\repo","consumer":"C:/work/consumer","profile":"C:\\Users\\Tester","validation":"D:\\validation\\run\\evidence"}'
                 } else {
-                    '<test-run path="C:\work\repo" />'
+                    '<test-run path="C:\work\repo" validation="D:\validation\run\snapshot" />'
                 }
                 Set-Utf8NoBomContent (Join-Path $source $name) $value
             }
@@ -978,7 +979,8 @@ set "PATH=$toolRoot;%PATH%"
                 -Version '0.2.0-pre.2' `
                 -RepositoryPath $repoPath `
                 -ConsumerPath $consumerPath `
-                -UserProfilePath $profilePath
+                -UserProfilePath $profilePath `
+                -ValidationRootPath $validationRootPath
             Assert-Equal 10 $bundle.ArtifactCount 'Release artifact count was wrong.'
             Assert-Equal 10 @(Get-ChildItem -LiteralPath $output -File).Count 'Release artifact directory contained the wrong count.'
             foreach ($file in Get-ChildItem -LiteralPath $output -File | Where-Object Extension -ne '.zip') {
@@ -988,6 +990,7 @@ set "PATH=$toolRoot;%PATH%"
 
             $bindingArtifact = Get-Content -LiteralPath (Join-Path $output 'appui-v0.2.0-pre.2-binding-validation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             Assert-Equal '<REPOSITORY>' $bindingArtifact.path 'Escaped JSON repository path was not redacted safely.'
+            Assert-Equal '<VALIDATION_ROOT>\evidence' $bindingArtifact.validation 'Validation Run Root was not redacted safely.'
 
             $unsafeSource = Join-Path $testRoot 'release-artifact-unsafe-source'
             Copy-Item -LiteralPath $source -Destination $unsafeSource -Recurse
@@ -999,7 +1002,8 @@ set "PATH=$toolRoot;%PATH%"
                     -Version '0.2.0-pre.2' `
                     -RepositoryPath $repoPath `
                     -ConsumerPath $consumerPath `
-                    -UserProfilePath $profilePath
+                    -UserProfilePath $profilePath `
+                    -ValidationRootPath $validationRootPath
             } 'local path audit failed|absolute path' 'Unlisted local path was accepted in release artifacts.'
         }
 
@@ -1039,6 +1043,9 @@ set "PATH=$toolRoot;%PATH%"
             Assert-True ($gitSmokeText.Contains('commit-git-install-smoke.json')) 'Commit smoke output is missing.'
             Assert-True ($gitSmokeText.Contains('tag-git-install-smoke.json')) 'Tag smoke output is missing.'
             Assert-True ($gitSmokeText.Contains('Resolve-AppUIRemoteTagIdentity')) 'Tag smoke is not bound to the remote Tag identity.'
+
+            $artifactText = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\New-AppUIReleaseArtifacts.ps1') -Raw -Encoding UTF8
+            Assert-True ($artifactText.Contains('ValidationRootPath')) 'Release artifact entry point cannot redact the explicit validation Run Root.'
         }
 
         Invoke-Test 'Release readiness distinguishes pushed candidate and occupied tag' {
@@ -1118,7 +1125,7 @@ set "PATH=$toolRoot;%PATH%"
             $repositoryRoot = [System.IO.Path]::GetFullPath(
                 (Join-Path $PSScriptRoot '..\..\..'))
             $package = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-            Assert-Equal '0.2.0-pre.3' $package.version 'Planned package version drifted.'
+            Assert-Equal '0.2.0-pre.4' $package.version 'Planned package version drifted.'
             Assert-Equal '6000.0' $package.unity 'Official Unity target drifted.'
             Assert-Equal 1 @($package.dependencies.PSObject.Properties).Count 'Package gained an undeclared dependency.'
             Assert-Equal '2.0.0' $package.dependencies.'com.unity.ugui' 'UGUI dependency drifted.'
@@ -1154,9 +1161,10 @@ set "PATH=$toolRoot;%PATH%"
             }
 
             $readme = Get-Content -LiteralPath (Join-Path $repositoryRoot 'README.md') -Raw -Encoding UTF8
-            Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.3')) 'README does not show the planned immutable tag URL.'
+            Assert-True ($readme.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4')) 'README does not show the planned immutable tag URL.'
             Assert-True ($readme.Contains('Planned tag; install only after it appears on the GitHub Release page.')) 'README does not warn that the planned tag is unavailable before release.'
             Assert-True ($readme.Contains('v0.2.0-pre.2') -and $readme.Contains('Failed Release Attempt')) 'README does not preserve the failed pre.2 release attempt.'
+            Assert-True ($readme.Contains('v0.2.0-pre.3') -and $readme.Contains('Failed Release Attempt')) 'README does not preserve the failed pre.3 release attempt.'
             Assert-True ($readme -notmatch 'git#main|\.git#main') 'README recommends main as a production install.'
             Assert-True ($readme.Contains('Historical Development Evidence')) 'README does not separate historical candidate evidence.'
 

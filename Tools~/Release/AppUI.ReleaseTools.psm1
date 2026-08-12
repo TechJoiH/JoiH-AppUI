@@ -1989,6 +1989,8 @@ function Protect-AppUILog {
         [string]$ConsumerPath = '',
         [string]$UserProfilePath = '',
 
+        [string]$ValidationRootPath = '',
+
         [switch]$RedactAllLocalPathRoots
     )
 
@@ -1996,7 +1998,8 @@ function Protect-AppUILog {
     foreach ($replacement in @(
         @($RepositoryPath, '<REPOSITORY>'),
         @($ConsumerPath, '<CONSUMER>'),
-        @($UserProfilePath, '<USER_PROFILE>')
+        @($UserProfilePath, '<USER_PROFILE>'),
+        @($ValidationRootPath, '<VALIDATION_ROOT>')
     )) {
         if ([string]::IsNullOrWhiteSpace($replacement[0])) {
             continue
@@ -2284,7 +2287,8 @@ function New-AppUIReleaseArtifacts {
 
         [string]$RepositoryPath = '',
         [string]$ConsumerPath = '',
-        [string]$UserProfilePath = ''
+        [string]$UserProfilePath = '',
+        [string]$ValidationRootPath = ''
     )
 
     if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z.+-]*$') {
@@ -2336,7 +2340,8 @@ function New-AppUIReleaseArtifacts {
                 -OutputPath $destinationPath `
                 -RepositoryPath $RepositoryPath `
                 -ConsumerPath $ConsumerPath `
-                -UserProfilePath $UserProfilePath
+                -UserProfilePath $UserProfilePath `
+                -ValidationRootPath $ValidationRootPath
         }
 
         Test-AppUIArtifactSecrets `

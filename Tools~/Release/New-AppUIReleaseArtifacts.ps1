@@ -11,7 +11,8 @@ param(
 
     [string]$RepositoryPath = '',
     [string]$ConsumerPath = '',
-    [string]$UserProfilePath = ''
+    [string]$UserProfilePath = '',
+    [string]$ValidationRootPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,4 +25,5 @@ New-AppUIReleaseArtifacts `
     -Version $Version `
     -RepositoryPath $RepositoryPath `
     -ConsumerPath $ConsumerPath `
-    -UserProfilePath $UserProfilePath | Format-List
+    -UserProfilePath $UserProfilePath `
+    -ValidationRootPath $ValidationRootPath | Format-List

@@ -22,13 +22,14 @@ AppUI 的官方目标由项目自身的验证策略决定，不与 Unity 当前�
 
 目前没有完成全部发布门禁的不可变官方 Tag。
 
-当前计划发布的 `0.2.0-pre.3` 是 Unity 6 Official Target 下的新预发布候选。发布证据不能跨 Commit 或版本复用；它仍需从新的 Run Root 完成全部 Consumer、Commit SHA、不可变 Tag 与 Tag URL 门禁，因此目前不能标记为 `Officially Supported`。
+当前计划发布的 `0.2.0-pre.4` 是 Unity 6 Official Target 下的新预发布候选。发布证据不能跨 Commit 或版本复用；它仍需从新的 Run Root 完成全部 Consumer、Commit SHA、不可变 Tag、Tag URL 与正式 Artifact 门禁，因此目前不能标记为 `Officially Supported`。
 
 ### Failed Release Attempts
 
 | Tag | Commit | 状态 | 原因 |
 |---|---|---|---|
 | `v0.2.0-pre.2` | `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc` | `Failed Release Attempt` | Pre-tag、Mono/IL2CPP 与 Commit SHA smoke 通过；Tag smoke 因发布工具未导出远端 Tag 解析命令而在进入 Unity 前失败，没有 GitHub Release |
+| `v0.2.0-pre.3` | `df311323c4ca33f14f9128b4a6c7bc6c58836d2a` | `Failed Release Attempt` | Pre-tag、Commit SHA 与 Tag smoke 通过；正式 Artifact 审计发现验证 Run Root 绝对路径，没有 GitHub Release |
 
 失败尝试不是第六种兼容状态，也不是 `Known Incompatible`：它描述的是发布流水线没有完成，不代表该 AppUI/Unity 组合已确认不兼容。对应 Tag 保持不可变，但不会进入 Officially Supported Releases。
 

@@ -1,6 +1,24 @@
 # Changelog
 
-## [0.2.0-pre.3] - Unreleased
+## [0.2.0-pre.4] - Unreleased
+
+### Fixed
+
+- Added an explicit validation Run Root redaction boundary for structured Binding and NUnit release evidence.
+- Preserved strict rejection of unlisted machine paths while allowing caller-declared validation paths to become `<VALIDATION_ROOT>`.
+
+### Release policy
+
+- All validation and release evidence must be regenerated for the new `0.2.0-pre.4` Commit and Tree.
+- `v0.2.0-pre.2` and `v0.2.0-pre.3` remain immutable and are never moved, deleted or reused.
+
+## [0.2.0-pre.3] - 2026-08-12 (Tag only; no GitHub Release)
+
+### Failed Release Attempt
+
+- Full Pre-tag validation, Commit SHA smoke and Tag URL smoke passed for Commit `df311323c4ca33f14f9128b4a6c7bc6c58836d2a`.
+- Formal Artifact staging correctly rejected absolute validation Run Root paths in Binding, EditMode and PlayMode evidence.
+- No GitHub Release was created; the immutable Tag remains as failure evidence.
 
 ### Fixed
 
@@ -9,7 +27,7 @@
 
 ### Release policy
 
-- All Pre-tag, Commit SHA, Tag URL and release evidence must be regenerated for the new `0.2.0-pre.3` Commit and Tree.
+- All Pre-tag, Commit SHA, Tag URL and release evidence was regenerated for the `0.2.0-pre.3` Commit and Tree.
 - `v0.2.0-pre.2` remains immutable and is never moved, deleted or reused.
 
 ## [0.2.0-pre.2] - 2026-08-12 (Tag only; no GitHub Release)

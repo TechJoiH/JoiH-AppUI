@@ -51,7 +51,7 @@ https://github.com/TechJoiH/JoiH-AppUI.git#<40-character-commit-sha>
 只有 Commit SHA Smoke 通过并再次获得明确授权，才创建普通 SemVer Tag。Tag 创建后使用另一个全新 Consumer 安装：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.3
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4
 ```
 
 Tag Smoke 失败时不移动、不删除并重建同名 Tag。修复必须发布新版本。
@@ -106,9 +106,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/New-AppUICons
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIPreTagValidation.ps1 `
   -RepositoryPath (Get-Location).Path `
   -SourceCommit <40-character-commit> `
-  -PlannedTag v0.2.0-pre.3 `
+  -PlannedTag v0.2.0-pre.4 `
   -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
-  -RunRoot D:\AppUIValidation\v0.2.0-pre.3-local
+  -RunRoot D:\AppUIValidation\v0.2.0-pre.4-local
 ```
 
 远端 Commit 或 Tag Smoke 使用 `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`。该脚本只接受 TechJoiH 官方仓库的 40 位 Commit 或 SemVer Tag URL。
@@ -116,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIP
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1 `
   -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#<commit-or-tag>' `
-  -ExpectedPackageVersion '0.2.0-pre.3' `
+  -ExpectedPackageVersion '0.2.0-pre.4' `
   -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
   -RunRoot D:\AppUIValidation\git-smoke
 ```
@@ -148,7 +148,7 @@ Commit 与 Tag Smoke 可以来自各自独立 Run Root；`New-AppUIReleaseReport
 
 正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再把 Unity、SDK、工具链等其余本机绝对路径根泛化为 `<LOCAL_PATH_ROOT>/`，随后扫描残留绝对路径、`ghp_`、`github_pat_`、Authorization Header 和私钥标记；任一审计失败时不创建 Release。结构化 Release Artifact 不执行这种泛化，未列入替换边界的绝对路径仍会被拒绝。
 
-`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成同时通过秘密与本机路径审计的 `appui-v0.2.0-pre.3-logs.zip`。候选仓库不接收这些运行产物。
+`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成同时通过秘密与本机路径审计的 `appui-v0.2.0-pre.4-logs.zip`。候选仓库不接收这些运行产物。正式结构化 Artifact 还必须显式传入外部验证 Run Root，使 Binding 与 NUnit 中的已知路径替换为 `<VALIDATION_ROOT>`；未列入边界的路径仍会被拒绝。
 
 Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式报告、Package Manifest、EditMode/PlayMode XML、Binding、Mono/IL2CPP、Commit/Tag Smoke 和日志 ZIP 复制到新的 `artifacts/` 目录。九个文本文件都会执行同样的路径脱敏与秘密审计；目录必须恰好包含十个文件才能进入 GitHub Release。
 
@@ -160,9 +160,15 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 
 因此没有创建 GitHub Release，该 Tag 不是 Officially Supported Release，也不会移动、删除或复用。这个失败属于发布工具集成缺陷，不是 Unity 或 AppUI Runtime 的 `Known Incompatible` 证据。
 
-## 当前 `0.2.0-pre.3` 验证状态
+## `v0.2.0-pre.3` Failed Release Attempt
 
-`pre.2` 的结果现在属于 `Historical Development Evidence`，仅证明先前候选和门禁的大部分链路曾工作，不能复用于 `pre.3`。新的精确候选必须重新执行：
+`v0.2.0-pre.3` 已固定到 Commit `df311323c4ca33f14f9128b4a6c7bc6c58836d2a`。其完整 Pre-tag、Binding、EditMode 134/134、PlayMode 17/17、Mono、IL2CPP、Commit SHA 与 Tag URL smoke 均通过；正式十项 Artifact 生成时，路径审计正确拒绝了 Binding/EditMode/PlayMode 中残留的外部验证 Run Root 绝对路径，因此没有创建 GitHub Release。
+
+该 Tag 保持不可变，不会移动、删除或复用；失败属于发布证据脱敏边界缺口，不是 AppUI Runtime 或 Unity 的 `Known Incompatible`。
+
+## 当前 `0.2.0-pre.4` 验证状态
+
+`pre.2` 与 `pre.3` 的结果现在属于 `Historical Development Evidence`，仅证明先前候选和门禁链路曾工作，不能复用于 `pre.4`。新的精确候选必须重新执行：
 
 - Unity：`6000.0.25f1`；
 - Package Manager、Basic Integration、Domain Reload；
@@ -182,7 +188,7 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 - 远端 Commit SHA Smoke：`NotRun`；
 - 不可变 Tag 与 Tag URL Smoke：`NotRun`。
 
-因此 `0.2.0-pre.3` 当前仍是 Official Target 下的未发布候选。当前候选的 Consumer 全门禁、IL2CPP、远端 Commit、不可变 Tag 与 Tag URL 证据全部完成前，不得登记为 Officially Supported Release。
+因此 `0.2.0-pre.4` 当前仍是 Official Target 下的未发布候选。当前候选的 Consumer 全门禁、IL2CPP、远端 Commit、不可变 Tag、Tag URL 与正式 Artifact 证据全部完成前，不得登记为 Officially Supported Release。
 
 ## 人工验收
 
