@@ -22,6 +22,7 @@ AppUI 的官方目标由项目自身的验证策略决定，不与 Unity 当前�
 
 | AppUI | Unity | 状态 | Commit | 证据 |
 |---|---|---|---|---|
+| `v0.3.0-pre.1` | `6000.0.25f1` | `Officially Supported`（Pre-release API） | `fa2b062c4adeacd09c450fe9704bfc45fb7179e0` | [GitHub Pre-release 与十项证据](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1) |
 | `v0.2.0-pre.4` | `6000.0.25f1` | `Officially Supported`（Pre-release API） | `547a82a4cb870e3fa1982832ea7f11034f2daba5` | [GitHub Pre-release 与十项证据](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4) |
 
 该状态只覆盖上表的精确 AppUI Tag 与 Unity Editor。它不自动扩大到其他 `6000.x`、Unity 6.1/6.2/6.3、Unity 2022.3 或 Unity 2021.3。

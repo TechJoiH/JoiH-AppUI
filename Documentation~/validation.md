@@ -166,47 +166,29 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 
 该 Tag 保持不可变，不会移动、删除或复用；失败属于发布证据脱敏边界缺口，不是 AppUI Runtime 或 Unity 的 `Known Incompatible`。
 
-## 当前 `0.3.0-pre.1` 候选状态
+## 最新已发布 `v0.3.0-pre.1` 验证状态
 
-`package.json` 已进入 `0.3.0-pre.1`，但在完整 Pre-tag、远端 Commit、不可变
-Tag URL、十项 Artifact 与 GitHub Pre-release 通过前，它仍是 Unreleased
-Candidate。开发阶段的包内和 Sample 契约测试属于 Historical Development
-Evidence，不能代替从候选 Commit 产生的 Current Release Evidence。
+发布前的包内 EditMode 150/150、PlayMode 14/14、Basic 11/11 与 Custom Host
+10/10 是 `Historical Development Evidence`，用于开发回归，但不作为正式发布
+结论。`v0.3.0-pre.1` 的 `Current Release Evidence` 来自精确候选快照和外部
+Consumer：
 
-发布流水线还必须从同一个精确 Commit 重新验证 Host Configuration、SceneScope
-generation、Instance/Lease、Editor Resolver、Host Contract Test Kit、Binding、
-Mono 与 IL2CPP。任一 Gate 失败都停止发布，不创建或移动 Tag。
-
-## 最新已发布 `0.2.0-pre.4` 验证状态
-
-`pre.2` 与 `pre.3` 的结果现在属于 `Historical Development Evidence`，仅证明先前候选和门禁链路曾工作，不能复用于 `pre.4`。新的精确候选必须重新执行：
-
-- Unity：`6000.0.25f1`；
-- Package Manager、Basic Integration、Domain Reload；
-- Binding、EditMode、PlayMode；
-- Windows x64 Mono 与 IL2CPP；
-- Commit SHA 与新的不可变 Tag Git URL smoke。
-
-这些结果属于 `Historical Development Evidence`，用于证明 Consumer、Fixture 与门禁实现可工作，但它们绑定前序 Commit，**不能作为当前精确发布候选的 Release 证据复用**。任何候选 Tree 变化后，都必须用新的 Run Root 从 Static Policy 重新执行完整流程。
-
-`v0.2.0-pre.4` 的 `Current Release Evidence` 状态是：
-
-- Source Commit：`547a82a4cb870e3fa1982832ea7f11034f2daba5`；
-- Source Tree：`a567f45949413ae9781c94e79b6351a9b3454603`；
-- Package Manifest SHA-256：`7a69dd49ea76eb62800173c285075e0e40d2d59efe65a33fc9592d7807a4403b`；
+- Source Commit：`fa2b062c4adeacd09c450fe9704bfc45fb7179e0`；
+- Source Tree：`6da206c18fc295949d86645c38199b444c241165`；
+- Package Manifest SHA-256：`1187024f89e531600fcefbd7c1e945a37636f9d7b11723c128a43ae6c8aa7491`；
 - Static Policy 与 Candidate Snapshot：`Passed`；
 - Unity `6000.0.25f1` 版本检查：`Passed`；
 - Visual Studio 2022 C++ 工具链预检：`Passed`；
 - Package resolve、Sample、Domain Reload：`Passed`；
 - Binding：`Passed`，0 Error、0 Warning、8 Info；
-- EditMode：`Passed`，134/134；
-- PlayMode：`Passed`，17/17；
+- EditMode：`Passed`，166/166；
+- PlayMode：`Passed`，30/30；
 - Windows x64 Mono 与 IL2CPP：`Passed`，0 Error、0 Warning；
-- 远端 Commit SHA Smoke 与 `v0.2.0-pre.4` Tag URL Smoke：`Passed`；
-- Formal Report、十项 Artifact、秘密与本机路径审计：`Passed`；
-- GitHub Pre-release：[v0.2.0-pre.4](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4)，10 个附件。
+- 远端 Commit SHA Smoke 与 `v0.3.0-pre.1` Tag URL Smoke：`Passed`；
+- Formal Report、十项 Artifact、秘密、本机路径与远端 SHA-256 审计：`Passed`；
+- GitHub Pre-release：[v0.3.0-pre.1](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1)，10 个附件。
 
-因此 `v0.2.0-pre.4` 在 Unity `6000.0.25f1` 上登记为 `Officially Supported` 的 Pre-release。该结论绑定精确 Tag/Commit/Tree/Manifest，不可复制到其他 Unity 或 AppUI 版本。
+因此 `v0.3.0-pre.1` 在 Unity `6000.0.25f1` 上登记为 `Officially Supported` 的 Pre-release。该结论绑定精确 Tag/Commit/Tree/Manifest，不可复制到其他 Unity 或 AppUI 版本。较早的 `v0.2.0-pre.4` 仍保留在[官方发布清单](supported-unity-versions.md#officially-supported-releases)中，其证据不能复用于 `0.3`。
 
 ## 人工验收
 

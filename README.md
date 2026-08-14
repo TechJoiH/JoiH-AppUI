@@ -2,7 +2,7 @@
 
 Joi.H AppUI 是面向 Unity 6 UGUI 的页面与交互框架。它统一页面定义、分层、作用域、生命周期、Binding、焦点导航和输入阻挡，但不替项目选择异步库、资源系统或业务架构。
 
-> 当前源码候选：`0.3.0-pre.1`。它加入确定性 Runtime Configuration、SceneScope generation、对称 Instance/Lease 所有权、显式 Editor AssetId Resolver、Host Contract Test Kit 与完整 Custom Host Sample。在不可变 Tag 和正式证据完成前，它不是 Officially Supported Release。当前可安装的 **Officially Supported Pre-release** 仍是 [v0.2.0-pre.4](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4)。1.0 前公共 API 与序列化字段仍可能调整。
+> 当前版本：`0.3.0-pre.1`。它加入确定性 Runtime Configuration、SceneScope generation、对称 Instance/Lease 所有权、显式 Editor AssetId Resolver、Host Contract Test Kit 与完整 Custom Host Sample。该版本已完成不可变 Tag、外部 Consumer、Mono/IL2CPP、Commit/Tag URL 和十项证据门禁，是当前 **Officially Supported Pre-release**：[v0.3.0-pre.1](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1)。1.0 前公共 API 与序列化字段仍可能调整。
 
 > **Failed Release Attempt：**不可变 Tag `v0.2.0-pre.2` 已固定到 Commit `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc`，但 Tag URL 冒烟因发布工具未导出远端 Tag 解析命令而在进入 Unity 前失败，因此没有创建 GitHub Release，也不属于 Officially Supported Release。该 Tag 不会移动、删除或复用。
 
@@ -67,7 +67,7 @@ Unity 2022.3 与 2021.3 当前属于 `Community Port`：允许用户自行移植
 真实项目应安装经过验证的普通 SemVer Tag，不要长期跟随 `main`。打开 `Window > Package Manager`，点击 `+ > Add package from git URL...`，输入：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1
 ```
 
 > 已验证的不可变 Pre-release Tag；不要改为 `main` 或无版本仓库 URL。
@@ -77,12 +77,12 @@ https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4
 ```json
 {
   "dependencies": {
-    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4"
+    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1"
   }
 }
 ```
 
-`v0.2.0-pre.4` 已完成完整 Consumer、Mono/IL2CPP、Commit SHA、Tag URL 与 Artifact 门禁，可以按上面的 URL 安装。已有的 `v0.2.0-pre.2` 与 `v0.2.0-pre.3` 都是失败发布尝试，不在 Officially Supported Releases 中。不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
+`v0.3.0-pre.1` 已完成完整 Consumer、Mono/IL2CPP、Commit SHA、Tag URL 与 Artifact 门禁，可以按上面的 URL 安装。`v0.2.0-pre.4` 仍保留为较早的已验证 Pre-release；`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 是失败发布尝试，不在 Officially Supported Releases 中。不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
 
 ## 最短接入路径
 
@@ -186,8 +186,8 @@ AppUI 只等待 `IUIOperation<UITransitionResult>`，不关心 `projectTransitio
 ## 当前验证与限制
 
 - 框架开发阶段已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；这些历史结果属于 `Historical Development Evidence`，不能跨候选 Commit 充当发布证据，当前状态见[验证与发布门禁](Documentation~/validation.md)。
-- `v0.2.0-pre.4` 已在 Unity `6000.0.25f1` 完成 EditMode 134/134、PlayMode 17/17、Binding 0 Error/0 Warning、Mono/IL2CPP、Commit SHA 与 Tag URL smoke，并发布十项经过秘密和路径审计的证据。它是当前已验证的 Pre-release。
-- `0.3.0-pre.1` 的开发阶段已完成包内 EditMode 150/150、PlayMode 14/14，以及导入 Sample 后的 Basic 11/11、Custom Host 10/10 契约测试；这些只是当前工作区的 Historical Development Evidence，正式发布仍必须从精确候选 Commit 重跑全部外部门禁。
+- `v0.3.0-pre.1` 已在 Unity `6000.0.25f1` 的外部干净 Consumer 中完成 EditMode 166/166、PlayMode 30/30、Binding 0 Error/0 Warning、Mono/IL2CPP、Commit SHA 与 Tag URL smoke，并发布十项经过秘密、路径和远端 SHA-256 审计的证据。它是当前已验证的 Pre-release。
+- 发布前的包内 EditMode 150/150、PlayMode 14/14、Basic 11/11 与 Custom Host 10/10 属于 `Historical Development Evidence`；正式结论只采用绑定精确 Tag/Commit/Tree 的外部 `Current Release Evidence`。
 - `0.x` 期间允许破坏性整理，升级前请阅读 [CHANGELOG](CHANGELOG.md)。
 - 最终视觉、字体、动画手感、Prefab 点击区域仍需要在接入项目中人工验收。
 - 对外分发许可证尚未确定；在 LICENSE 明确前，不应推定获得复制、修改或再分发授权。第三方 Adapter 分发、Community Verified 收录与外部 Adapter Index 继续作为 P2 生态门禁，不因技术 Sample/Test Kit 已完成而自动开放。

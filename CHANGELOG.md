@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.0-pre.1] - Unreleased
+## [0.3.0-pre.1] - 2026-08-14
 
 ### Breaking
 
@@ -28,9 +28,10 @@
 
 ### Release policy
 
-- This entry remains `Unreleased` until the exact candidate passes Binding,
-  EditMode, PlayMode, Mono, IL2CPP, Commit SHA and immutable Tag URL gates and a
-  GitHub Pre-release is created.
+- All validation and release evidence was regenerated for Commit
+  `fa2b062c4adeacd09c450fe9704bfc45fb7179e0` and published with the GitHub
+  Pre-release after Binding, EditMode, PlayMode, Mono, IL2CPP, Commit SHA,
+  immutable Tag URL and ten-artifact hash gates passed.
 - Technical samples and tests do not open third-party adapter distribution;
   LICENSE selection remains a separate P2 ecosystem gate.
 
