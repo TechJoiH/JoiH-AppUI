@@ -255,7 +255,7 @@ ShutdownThenInitialize_ReappliesNewConfiguration
 - Produces: keyed registry, project-selected resolver ID, centralized Missing and
   duplicate diagnostics, and no implicit Resources default.
 
-- [ ] **Step 1: Write failing registry/selection tests**
+- [x] **Step 1: Write failing registry/selection tests**
 
 ```csharp
 Registry_MissingSelection_ReturnsConfiguredDiagnostic
@@ -264,13 +264,13 @@ Settings_SelectedResolverId_ResolvesDeterministically
 Registry_DoesNotInstallResourcesImplicitly
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
-- [ ] **Step 3: Implement keyed resolver registration**
-- [ ] **Step 4: Add `SelectedAssetIdResolverId` to settings**
-- [ ] **Step 5: Route all Editor tools through one resolver service**
-- [ ] **Step 6: Add Project Settings navigation for interactive errors**
-- [ ] **Step 7: Run Editor and Binding tests**
-- [ ] **Step 8: Commit the Editor authoring change**
+- [x] **Step 2: Run tests and verify RED**
+- [x] **Step 3: Implement keyed resolver registration**
+- [x] **Step 4: Add `SelectedAssetIdResolverId` to settings**
+- [x] **Step 5: Route all Editor tools through one resolver service**
+- [x] **Step 6: Add Project Settings navigation for interactive errors**
+- [x] **Step 7: Run Editor and Binding tests**
+- [x] **Step 8: Commit the Editor authoring change**
 
 ### Task 7: Publish an optional Host Integration Contract Test Kit
 

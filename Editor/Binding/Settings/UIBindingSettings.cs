@@ -11,6 +11,11 @@ namespace Joi.H.AppUI.Editor.Binding
     [CreateAssetMenu(fileName = "UIBindingSettings", menuName = "Joi.H AppUI/Binding Settings")]
     public sealed class UIBindingSettings : ScriptableObject
     {
+        [Header("Asset ID Authoring")]
+        [Tooltip(
+            "Resolver ID explicitly registered by the integrating project's Editor adapter.")]
+        public string SelectedAssetIdResolverId = string.Empty;
+
         /// <summary>
         /// 是否在构建前执行只读 Validate All，并用错误阻断构建。
         /// </summary>

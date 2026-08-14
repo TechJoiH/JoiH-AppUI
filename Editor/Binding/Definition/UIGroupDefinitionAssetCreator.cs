@@ -15,7 +15,15 @@ namespace Joi.H.AppUI.Editor.Binding
         [MenuItem("Assets/App UI/Create Group Definition", priority = 2101)]
         public static void Create()
         {
-            string assetId = UIDefinitionEditorUtility.GetSelectedPrefabAssetId();
+            if (!UIDefinitionEditorUtility.TryGetSelectedPrefabAssetId(
+                    out string assetId,
+                    out string error))
+            {
+                Debug.LogError("<Joi.H.AppUI> " + error);
+                UIBindingSettingsProvider.OpenSettings();
+                return;
+            }
+
             UIGroupDefinition definition =
                 UIDefinitionAssetCreator.CreateDefinition<UIGroupDefinition>(
                     string.IsNullOrEmpty(assetId) ? "UIGroupDefinition" : assetId + "GroupDefinition",

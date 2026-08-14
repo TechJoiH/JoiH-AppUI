@@ -341,10 +341,17 @@ namespace Joi.H.AppUI.Editor.Binding
                 draft.DefinitionId = prefabName;
             }
 
-            if (!UIEditorAssetIdResolverRegistry.Current.TryGetAssetId(
-                    draft.PrefabAssetPath,
-                    out string assetId,
-                    out string assetIdError))
+            if (!UIEditorAssetIdResolverRegistry.TryGetSelected(
+                    draft.Settings,
+                    out IUIEditorAssetIdResolver resolver,
+                    out string resolverError))
+            {
+                draft.Errors.Add(resolverError);
+            }
+            else if (!resolver.TryGetAssetId(
+                         draft.PrefabAssetPath,
+                         out string assetId,
+                         out string assetIdError))
             {
                 draft.Errors.Add(assetIdError);
             }

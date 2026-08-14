@@ -13,8 +13,8 @@ namespace Joi.H.AppUI.Editor.Binding
     public sealed class UIBindingAssetDatabaseResolver : IUIEditorPrefabResolver
     {
         /// <summary>
-        /// 使用 Definition 的 PrefabAssetId 定位 Prefab。
-        /// 支持完整 Assets 路径，也支持按文件名在工程中搜索。
+        /// 使用唯一 UIBindingSettings 显式选择的 AssetId resolver 定位 Prefab。
+        /// 不对 AssetId 进行路径或文件名降级解释。
         /// </summary>
         public bool TryResolve(IUIDefinition definition, out string assetPath, out string error)
         {
@@ -26,35 +26,26 @@ namespace Joi.H.AppUI.Editor.Binding
                 return false;
             }
 
-            string assetId = definition.PrefabAssetId;
-            if (UIEditorAssetIdResolverRegistry.Current.TryResolveAssetPath(
-                    assetId,
-                    out assetPath,
-                    out _))
+            if (!UIBindingSettingsUtility.TryFindUniqueSettings(
+                    out UIBindingSettings settings,
+                    out _,
+                    out error))
             {
-                return true;
+                return false;
             }
 
-            if (assetId.StartsWith("Assets/") && AssetDatabase.LoadAssetAtPath<GameObject>(assetId) != null)
+            if (!UIEditorAssetIdResolverRegistry.TryGetSelected(
+                    settings,
+                    out IUIEditorAssetIdResolver resolver,
+                    out error))
             {
-                assetPath = assetId;
-                return true;
+                return false;
             }
 
-            string[] guids = AssetDatabase.FindAssets(Path.GetFileNameWithoutExtension(assetId) + " t:Prefab");
-            for (int i = 0; i < guids.Length; i++)
-            {
-                // Resources id 通常不带扩展名，因此这里按文件名匹配，避免路径差异导致解析失败。
-                string path = AssetDatabase.GUIDToAssetPath(guids[i]);
-                if (Path.GetFileNameWithoutExtension(path) == Path.GetFileNameWithoutExtension(assetId))
-                {
-                    assetPath = path;
-                    return true;
-                }
-            }
-
-            error = "Prefab was not found for asset id: " + assetId;
-            return false;
+            return resolver.TryResolveAssetPath(
+                definition.PrefabAssetId,
+                out assetPath,
+                out error);
         }
 
         /// <summary>

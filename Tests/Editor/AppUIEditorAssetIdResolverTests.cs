@@ -8,7 +8,7 @@ namespace Joi.H.AppUI.Tests
         [TearDown]
         public void TearDown()
         {
-            UIEditorAssetIdResolverRegistry.ResetToResources();
+            UIEditorAssetIdResolverRegistry.Clear();
         }
 
         [Test]
@@ -27,32 +27,120 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
-        public void Registry_AllowsConsumerResolverInjection()
+        public void Registry_MissingSelection_ReturnsConfiguredDiagnostic()
         {
-            PrefixResolver resolver = new PrefixResolver();
+            UIBindingSettings settings =
+                UnityEngine.ScriptableObject.CreateInstance<UIBindingSettings>();
+            PrefixResolver resolver = new PrefixResolver("prefix", "first:");
+            Assert.That(
+                UIEditorAssetIdResolverRegistry.Register(resolver, out _),
+                Is.True);
 
-            UIEditorAssetIdResolverRegistry.SetResolver(resolver);
+            bool success = UIEditorAssetIdResolverRegistry.TryGetSelected(
+                settings,
+                out _,
+                out string error);
+
+            Assert.That(success, Is.False);
+            StringAssert.Contains("SelectedAssetIdResolverId", error);
+            UnityEngine.Object.DestroyImmediate(settings);
+        }
+
+        [Test]
+        public void Registry_DuplicateId_IsRejectedWithoutReplacingOriginal()
+        {
+            PrefixResolver original =
+                new PrefixResolver("shared", "original:");
+            PrefixResolver duplicate =
+                new PrefixResolver("shared", "replacement:");
 
             Assert.That(
-                UIEditorAssetIdResolverRegistry.Current,
-                Is.SameAs(resolver));
+                UIEditorAssetIdResolverRegistry.Register(
+                    original,
+                    out string firstError),
+                Is.True,
+                firstError);
             Assert.That(
-                resolver.TryGetAssetId(
+                UIEditorAssetIdResolverRegistry.Register(
+                    duplicate,
+                    out string duplicateError),
+                Is.False);
+            StringAssert.Contains("shared", duplicateError);
+            Assert.That(
+                UIEditorAssetIdResolverRegistry.TryGet(
+                    "shared",
+                    out IUIEditorAssetIdResolver resolved),
+                Is.True);
+            Assert.That(resolved, Is.SameAs(original));
+        }
+
+        [Test]
+        public void Settings_SelectedResolverId_ResolvesDeterministically()
+        {
+            UIBindingSettings settings =
+                UnityEngine.ScriptableObject.CreateInstance<UIBindingSettings>();
+            settings.SelectedAssetIdResolverId = "second";
+            PrefixResolver first = new PrefixResolver("first", "first:");
+            PrefixResolver second = new PrefixResolver("second", "second:");
+            UIEditorAssetIdResolverRegistry.Register(first, out _);
+            UIEditorAssetIdResolverRegistry.Register(second, out _);
+
+            Assert.That(
+                UIEditorAssetIdResolverRegistry.TryGetSelected(
+                    settings,
+                    out IUIEditorAssetIdResolver selected,
+                    out string error),
+                Is.True,
+                error);
+            Assert.That(selected, Is.SameAs(second));
+            Assert.That(
+                selected.TryGetAssetId(
                     "Assets/UI/Settings.prefab",
                     out string assetId,
                     out _),
                 Is.True);
-            Assert.That(assetId, Is.EqualTo("appui:Settings"));
+            Assert.That(assetId, Is.EqualTo("second:Settings"));
+            UnityEngine.Object.DestroyImmediate(settings);
+        }
+
+        [Test]
+        public void Registry_DoesNotInstallResourcesImplicitly()
+        {
+            UIBindingSettings settings =
+                UnityEngine.ScriptableObject.CreateInstance<UIBindingSettings>();
+            settings.SelectedAssetIdResolverId =
+                ResourcesUIEditorAssetIdResolver.Id;
+
+            bool success = UIEditorAssetIdResolverRegistry.TryGetSelected(
+                settings,
+                out _,
+                out string error);
+
+            Assert.That(success, Is.False);
+            StringAssert.Contains(
+                ResourcesUIEditorAssetIdResolver.Id,
+                error);
+            UnityEngine.Object.DestroyImmediate(settings);
         }
 
         private sealed class PrefixResolver : IUIEditorAssetIdResolver
         {
+            private readonly string prefix;
+
+            public PrefixResolver(string resolverId, string prefix)
+            {
+                ResolverId = resolverId;
+                this.prefix = prefix;
+            }
+
+            public string ResolverId { get; }
+
             public bool TryGetAssetId(
                 string prefabAssetPath,
                 out string assetId,
                 out string error)
             {
-                assetId = "appui:Settings";
+                assetId = prefix + "Settings";
                 error = string.Empty;
                 return true;
             }

@@ -15,7 +15,15 @@ namespace Joi.H.AppUI.Editor.Binding
         [MenuItem("Assets/App UI/Create Page Definition", priority = 2100)]
         public static void Create()
         {
-            string assetId = UIDefinitionEditorUtility.GetSelectedPrefabAssetId();
+            if (!UIDefinitionEditorUtility.TryGetSelectedPrefabAssetId(
+                    out string assetId,
+                    out string error))
+            {
+                Debug.LogError("<Joi.H.AppUI> " + error);
+                UIBindingSettingsProvider.OpenSettings();
+                return;
+            }
+
             UIPageDefinition definition =
                 UIDefinitionAssetCreator.CreateDefinition<UIPageDefinition>(
                     string.IsNullOrEmpty(assetId) ? "UIPageDefinition" : assetId + "Definition",

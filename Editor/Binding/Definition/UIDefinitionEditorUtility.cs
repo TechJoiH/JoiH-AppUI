@@ -35,46 +35,52 @@ namespace Joi.H.AppUI.Editor.Binding
         }
 
         /// <summary>
-        /// Uses the registered editor asset-id resolver for the selected prefab.
-        /// Falls back to the file name when the resolver rejects the path.
+        /// Uses the project-selected editor asset-id resolver for the selected
+        /// prefab. Missing settings or resolver selection is an explicit error.
         /// </summary>
-        public static string GetSelectedPrefabAssetId()
+        public static bool TryGetSelectedPrefabAssetId(
+            out string assetId,
+            out string error)
         {
+            assetId = string.Empty;
+            error = string.Empty;
             GameObject selected = Selection.activeGameObject;
             if (selected == null)
             {
-                return string.Empty;
+                error = "No prefab is selected.";
+                return false;
             }
 
             string path = AssetDatabase.GetAssetPath(selected);
-            if (!string.IsNullOrEmpty(path))
+            if (string.IsNullOrEmpty(path))
             {
-                if (UIEditorAssetIdResolverRegistry.Current.TryGetAssetId(
-                        path,
-                        out string assetId,
-                        out _))
-                {
-                    return assetId;
-                }
-
-                return Path.GetFileNameWithoutExtension(path);
+                path = PrefabUtility
+                    .GetPrefabAssetPathOfNearestInstanceRoot(selected);
             }
 
-            path = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(selected);
-            if (!string.IsNullOrEmpty(path))
+            if (string.IsNullOrEmpty(path))
             {
-                if (UIEditorAssetIdResolverRegistry.Current.TryGetAssetId(
-                        path,
-                        out string prefabAssetId,
-                        out _))
-                {
-                    return prefabAssetId;
-                }
-
-                return Path.GetFileNameWithoutExtension(path);
+                error = "Cannot resolve the selected prefab asset path.";
+                return false;
             }
 
-            return selected.name;
+            if (!UIBindingSettingsUtility.TryFindUniqueSettings(
+                    out UIBindingSettings settings,
+                    out _,
+                    out error))
+            {
+                return false;
+            }
+
+            if (!UIEditorAssetIdResolverRegistry.TryGetSelected(
+                    settings,
+                    out IUIEditorAssetIdResolver resolver,
+                    out error))
+            {
+                return false;
+            }
+
+            return resolver.TryGetAssetId(path, out assetId, out error);
         }
 
     }

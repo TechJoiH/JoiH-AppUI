@@ -22,7 +22,10 @@ namespace Joi.H.AppUI.Editor.Binding
 
             if (settings == null)
             {
-                AppUIFocusProjectValidator.AppendProjectValidation(null, report);
+                AppUIFocusProjectValidator.AppendProjectValidation(
+                    null,
+                    null,
+                    report);
                 report.AddInfo("未配置 UIBindingSettings，已跳过全量校验。");
                 return report;
             }
@@ -34,6 +37,7 @@ namespace Joi.H.AppUI.Editor.Binding
             ValidateGroupPrefabs(settings, visitedPrefabPaths, report);
             // Focus Prefab 校验会进入隔离 Prefab contents；放在其他 Settings 读取之后，保持资产生命周期边界清晰。
             AppUIFocusProjectValidator.AppendProjectValidation(
+                settings,
                 settings.PageDefinitionRegistry,
                 report);
             return report;
@@ -62,7 +66,12 @@ namespace Joi.H.AppUI.Editor.Binding
                     continue;
                 }
 
-                ValidateDefinitionPrefab(page, UIBindingPrefabKind.Page, visitedPrefabPaths, report);
+                ValidateDefinitionPrefab(
+                    settings,
+                    page,
+                    UIBindingPrefabKind.Page,
+                    visitedPrefabPaths,
+                    report);
             }
         }
 
@@ -88,7 +97,12 @@ namespace Joi.H.AppUI.Editor.Binding
                     continue;
                 }
 
-                ValidateDefinitionPrefab(group, UIBindingPrefabKind.Group, visitedPrefabPaths, report);
+                ValidateDefinitionPrefab(
+                    settings,
+                    group,
+                    UIBindingPrefabKind.Group,
+                    visitedPrefabPaths,
+                    report);
             }
         }
 
@@ -113,7 +127,12 @@ namespace Joi.H.AppUI.Editor.Binding
                 UIGroupDefinition definition = AssetDatabase.LoadAssetAtPath<UIGroupDefinition>(path);
                 if (definition != null)
                 {
-                    ValidateDefinitionPrefab(definition, UIBindingPrefabKind.Group, visitedPrefabPaths, report);
+                    ValidateDefinitionPrefab(
+                        settings,
+                        definition,
+                        UIBindingPrefabKind.Group,
+                        visitedPrefabPaths,
+                        report);
                 }
             }
         }
@@ -157,12 +176,20 @@ namespace Joi.H.AppUI.Editor.Binding
         /// 从 Definition 解析 Prefab 并继续校验 Prefab 根 Scope。
         /// </summary>
         private static void ValidateDefinitionPrefab(
+            UIBindingSettings settings,
             IUIDefinition definition,
             UIBindingPrefabKind expectedKind,
             HashSet<string> visitedPrefabPaths,
             UIBindingValidationReport report)
         {
-            if (!UIBindingPrefabResolver.DefaultResolver.TryResolve(definition, out string path, out string error))
+            if (!UIEditorAssetIdResolverRegistry.TryGetSelected(
+                    settings,
+                    out IUIEditorAssetIdResolver resolver,
+                    out string error) ||
+                !resolver.TryResolveAssetPath(
+                    definition.PrefabAssetId,
+                    out string path,
+                    out error))
             {
                 report.AddError(error);
                 return;

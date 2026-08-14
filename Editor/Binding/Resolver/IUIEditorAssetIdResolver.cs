@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
@@ -10,6 +11,8 @@ namespace Joi.H.AppUI.Editor.Binding
     /// </summary>
     public interface IUIEditorAssetIdResolver
     {
+        string ResolverId { get; }
+
         bool TryGetAssetId(
             string prefabAssetPath,
             out string assetId,
@@ -23,31 +26,115 @@ namespace Joi.H.AppUI.Editor.Binding
 
     public static class UIEditorAssetIdResolverRegistry
     {
-        private static IUIEditorAssetIdResolver current =
-            new ResourcesUIEditorAssetIdResolver();
+        private static readonly Dictionary<string, IUIEditorAssetIdResolver>
+            resolvers =
+                new Dictionary<string, IUIEditorAssetIdResolver>(
+                    StringComparer.Ordinal);
 
-        public static IUIEditorAssetIdResolver Current
+        public static bool Register(
+            IUIEditorAssetIdResolver resolver,
+            out string error)
         {
-            get { return current; }
+            error = string.Empty;
+            if (resolver == null)
+            {
+                error = "Cannot register a null IUIEditorAssetIdResolver.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(resolver.ResolverId))
+            {
+                error =
+                    "IUIEditorAssetIdResolver.ResolverId must be non-empty.";
+                return false;
+            }
+
+            if (resolvers.ContainsKey(resolver.ResolverId))
+            {
+                error = "Duplicate editor AssetId resolver id was rejected: " +
+                        resolver.ResolverId;
+                return false;
+            }
+
+            resolvers.Add(resolver.ResolverId, resolver);
+            return true;
         }
 
-        public static void SetResolver(IUIEditorAssetIdResolver resolver)
+        public static bool TryGet(
+            string resolverId,
+            out IUIEditorAssetIdResolver resolver)
         {
-            current = resolver ??
-                throw new ArgumentNullException(nameof(resolver));
+            if (string.IsNullOrEmpty(resolverId))
+            {
+                resolver = null;
+                return false;
+            }
+
+            return resolvers.TryGetValue(resolverId, out resolver);
         }
 
-        public static void ResetToResources()
+        public static bool TryGetSelected(
+            UIBindingSettings settings,
+            out IUIEditorAssetIdResolver resolver,
+            out string error)
         {
-            current = new ResourcesUIEditorAssetIdResolver();
+            resolver = null;
+            error = string.Empty;
+            if (settings == null)
+            {
+                error =
+                    "UIBindingSettings is missing. Open Project Settings > App UI Binding.";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    settings.SelectedAssetIdResolverId))
+            {
+                error =
+                    "UIBindingSettings.SelectedAssetIdResolverId is empty. " +
+                    "Choose a registered resolver in Project Settings > App UI Binding.";
+                return false;
+            }
+
+            if (!resolvers.TryGetValue(
+                    settings.SelectedAssetIdResolverId,
+                    out resolver))
+            {
+                error =
+                    "No IUIEditorAssetIdResolver is registered for id '" +
+                    settings.SelectedAssetIdResolverId +
+                    "'. Register that resolver before using AppUI Editor tools.";
+                return false;
+            }
+
+            return true;
+        }
+
+        public static string[] GetRegisteredResolverIds()
+        {
+            string[] ids = new string[resolvers.Count];
+            resolvers.Keys.CopyTo(ids, 0);
+            Array.Sort(ids, StringComparer.Ordinal);
+            return ids;
+        }
+
+        public static void Clear()
+        {
+            resolvers.Clear();
         }
     }
 
     public sealed class ResourcesUIEditorAssetIdResolver :
         IUIEditorAssetIdResolver
     {
+        public const string Id = "resources";
         private const string ResourcesPrefix = "Assets/Resources/";
         private const string PrefabExtension = ".prefab";
+
+        public string ResolverId
+        {
+            get { return Id; }
+        }
 
         public bool TryGetAssetId(
             string prefabAssetPath,

@@ -14,6 +14,7 @@ namespace Joi.H.AppUI.Editor.Binding
     public static class AppUIFocusProjectValidator
     {
         public static void AppendProjectValidation(
+            UIBindingSettings settings,
             UIPageDefinitionRegistry registry,
             UIBindingValidationReport report)
         {
@@ -44,18 +45,23 @@ namespace Joi.H.AppUI.Editor.Binding
                     continue;
                 }
 
-                ValidatePage(page, report);
+                ValidatePage(settings, page, report);
             }
         }
 
         private static void ValidatePage(
+            UIBindingSettings settings,
             UIPageDefinition page,
             UIBindingValidationReport report)
         {
-            if (!UIBindingPrefabResolver.DefaultResolver.TryResolve(
-                    page,
+            if (!UIEditorAssetIdResolverRegistry.TryGetSelected(
+                    settings,
+                    out IUIEditorAssetIdResolver resolver,
+                    out string error) ||
+                !resolver.TryResolveAssetPath(
+                    page.PrefabAssetId,
                     out string path,
-                    out string error))
+                    out error))
             {
                 report.AddError("Focus Page[" + page.PageId + "]: " + error);
                 return;

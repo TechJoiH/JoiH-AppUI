@@ -8,13 +8,20 @@ namespace Joi.H.AppUI.Editor.Binding
     /// </summary>
     public static class UIBindingSettingsProvider
     {
+        public const string SettingsPath = "Project/App UI 绑定";
+
+        public static void OpenSettings()
+        {
+            SettingsService.OpenProjectSettings(SettingsPath);
+        }
+
         /// <summary>
         /// 注册 Project Settings 面板，直接复用 UIBindingSettings 的默认 Inspector。
         /// </summary>
         [SettingsProvider]
         public static SettingsProvider CreateProvider()
         {
-            return new SettingsProvider("Project/App UI 绑定", SettingsScope.Project)
+            return new SettingsProvider(SettingsPath, SettingsScope.Project)
             {
                 label = "App UI 绑定",
                 guiHandler = delegate(string searchContext)
@@ -33,6 +40,31 @@ namespace Joi.H.AppUI.Editor.Binding
                     if (editor != null)
                     {
                         editor.OnInspectorGUI();
+                    }
+
+                    EditorGUILayout.Space();
+                    if (UIEditorAssetIdResolverRegistry.TryGetSelected(
+                            settings,
+                            out IUIEditorAssetIdResolver resolver,
+                            out string resolverError))
+                    {
+                        EditorGUILayout.HelpBox(
+                            "Active AssetId resolver: " + resolver.ResolverId,
+                            MessageType.Info);
+                    }
+                    else
+                    {
+                        EditorGUILayout.HelpBox(
+                            resolverError,
+                            MessageType.Error);
+                        string[] registeredIds =
+                            UIEditorAssetIdResolverRegistry
+                                .GetRegisteredResolverIds();
+                        EditorGUILayout.LabelField(
+                            "Registered resolver IDs",
+                            registeredIds.Length > 0
+                                ? string.Join(", ", registeredIds)
+                                : "<none>");
                     }
                 },
             };
