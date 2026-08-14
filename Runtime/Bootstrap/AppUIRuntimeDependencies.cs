@@ -3,6 +3,7 @@ namespace Joi.H.AppUI
     /// <summary>
     /// Project-owned runtime capabilities required by AppUI.
     /// All three dependencies are mandatory; AppUI provides no fallback.
+    /// Optional strategies belong to AppUIRuntimeConfiguration instead.
     /// </summary>
     public sealed class AppUIRuntimeDependencies
     {

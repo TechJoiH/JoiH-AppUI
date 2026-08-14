@@ -33,6 +33,7 @@ namespace Joi.H.AppUI
         private AppUINoticeSettings noticeSettings;
 
         private AppUIRuntimeDependencies dependencies;
+        private AppUIRuntimeConfiguration configuration;
         private bool initialized;
 
         public AppUIManager Manager
@@ -79,13 +80,36 @@ namespace Joi.H.AppUI
         public AppUIInitializationResult Initialize(
             AppUIRuntimeDependencies runtimeDependencies)
         {
+            return Initialize(
+                runtimeDependencies,
+                AppUIRuntimeConfiguration.Empty);
+        }
+
+        /// <summary>
+        /// Initializes AppUI with required ports and an immutable optional
+        /// strategy snapshot. Configuration validation completes before the
+        /// manager receives any runtime dependency.
+        /// </summary>
+        public AppUIInitializationResult Initialize(
+            AppUIRuntimeDependencies runtimeDependencies,
+            AppUIRuntimeConfiguration runtimeConfiguration)
+        {
+            AppUIRuntimeConfiguration resolvedConfiguration =
+                runtimeConfiguration ?? AppUIRuntimeConfiguration.Empty;
             if (initialized)
             {
-                return ReferenceEquals(dependencies, runtimeDependencies)
+                if (!ReferenceEquals(dependencies, runtimeDependencies))
+                {
+                    return AppUIInitializationResult.Failure(
+                        AppUIInitializationStatus
+                            .AlreadyInitializedWithDifferentDependencies);
+                }
+
+                return ReferenceEquals(configuration, resolvedConfiguration)
                     ? AppUIInitializationResult.AlreadyInitialized()
                     : AppUIInitializationResult.Failure(
                         AppUIInitializationStatus
-                            .AlreadyInitializedWithDifferentDependencies);
+                            .AlreadyInitializedWithDifferentConfiguration);
             }
 
             ResolveSceneReferences();
@@ -108,13 +132,21 @@ namespace Joi.H.AppUI
 
             try
             {
-                uiManager.Initialize(
+                AppUIInitializationResult managerResult =
+                    uiManager.Initialize(
                     resolvedRegistry,
                     runtimeDependencies,
                     layerRoots,
                     resolvedLayerSettings,
-                    resolvedNoticeSettings);
+                    resolvedNoticeSettings,
+                    resolvedConfiguration);
+                if (!managerResult.Success)
+                {
+                    return managerResult;
+                }
+
                 dependencies = runtimeDependencies;
+                configuration = resolvedConfiguration;
                 initialized = true;
                 return AppUIInitializationResult.Ok();
             }
@@ -122,6 +154,7 @@ namespace Joi.H.AppUI
             {
                 uiManager.Shutdown();
                 dependencies = null;
+                configuration = null;
                 initialized = false;
                 return AppUIInitializationResult.Failure(
                     AppUIInitializationStatus.DependencyContractFailed,
@@ -143,6 +176,7 @@ namespace Joi.H.AppUI
 
             uiManager?.Shutdown();
             dependencies = null;
+            configuration = null;
             initialized = false;
         }
 

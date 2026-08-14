@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Linq;
 using System.Threading;
@@ -55,6 +56,7 @@ namespace Joi.H.AppUI.Tests
                 Is.EqualTo(
                     AppUIInitializationStatus.MissingOperationFactory));
             Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
         }
 
         [Test]
@@ -175,10 +177,154 @@ namespace Joi.H.AppUI.Tests
             Assert.That(fixture.Host.IsInitialized, Is.True);
         }
 
+        [Test]
+        public void Initialize_ConfigurationInstallsStrategiesBeforeDefinitionValidation()
+        {
+            fixture = HostFixture.CreateValid();
+            fixture.AddDefinition("custom-load", "custom-instance");
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(
+                    new IUILoadStrategy[]
+                    {
+                        new StubLoadStrategy("custom-load"),
+                    },
+                    new IUIPageInstanceStrategy[]
+                    {
+                        new StubInstanceStrategy("custom-instance"),
+                    });
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                configuration);
+
+            Assert.That(result.Status,
+                Is.EqualTo(AppUIInitializationStatus.Success));
+            Assert.That(fixture.Host.IsInitialized, Is.True);
+        }
+
+        [Test]
+        public void Initialize_DuplicateLoadStrategyId_ReturnsStructuredFailureBeforeManagerMutation()
+        {
+            fixture = HostFixture.CreateValid();
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(
+                    new IUILoadStrategy[]
+                    {
+                        new StubLoadStrategy("duplicate"),
+                        new StubLoadStrategy("duplicate"),
+                    },
+                    null);
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                configuration);
+
+            Assert.That(result.Status,
+                Is.EqualTo(AppUIInitializationStatus.DuplicateLoadStrategyId));
+            Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
+        }
+
+        [Test]
+        public void Initialize_DuplicateInstanceStrategyId_ReturnsStructuredFailureBeforeManagerMutation()
+        {
+            fixture = HostFixture.CreateValid();
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(
+                    null,
+                    new IUIPageInstanceStrategy[]
+                    {
+                        new StubInstanceStrategy("duplicate"),
+                        new StubInstanceStrategy("duplicate"),
+                    });
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                configuration);
+
+            Assert.That(result.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus.DuplicateInstanceStrategyId));
+            Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
+        }
+
+        [Test]
+        public void Initialize_UnknownDefinitionLoadStrategy_ReturnsStructuredFailureInReleasePolicy()
+        {
+            fixture = HostFixture.CreateValid();
+            fixture.AddDefinition("missing-load", string.Empty);
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                AppUIRuntimeConfiguration.Empty);
+
+            Assert.That(result.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus.UnknownDefinitionLoadStrategy));
+            Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
+        }
+
+        [Test]
+        public void Initialize_UnknownDefinitionInstanceStrategy_ReturnsStructuredFailureInReleasePolicy()
+        {
+            fixture = HostFixture.CreateValid();
+            fixture.AddDefinition(string.Empty, "missing-instance");
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                AppUIRuntimeConfiguration.Empty);
+
+            Assert.That(result.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus.UnknownDefinitionInstanceStrategy));
+            Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
+        }
+
+        [Test]
+        public void ShutdownThenInitialize_ReappliesNewConfiguration()
+        {
+            fixture = HostFixture.CreateValid();
+            UIPageDefinition definition =
+                fixture.AddDefinition("first-load", string.Empty);
+            AppUIRuntimeDependencies firstDependencies =
+                fixture.CreateDependencies();
+
+            Assert.That(
+                fixture.Host.Initialize(
+                    firstDependencies,
+                    new AppUIRuntimeConfiguration(
+                        new IUILoadStrategy[]
+                        {
+                            new StubLoadStrategy("first-load"),
+                        },
+                        null)).Success,
+                Is.True);
+
+            fixture.Host.Shutdown();
+            definition.LoadStrategyId = "second-load";
+            AppUIInitializationResult second = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                new AppUIRuntimeConfiguration(
+                    new IUILoadStrategy[]
+                    {
+                        new StubLoadStrategy("second-load"),
+                    },
+                    null));
+
+            Assert.That(second.Status,
+                Is.EqualTo(AppUIInitializationStatus.Success));
+            Assert.That(fixture.Host.IsInitialized, Is.True);
+        }
+
         private sealed class HostFixture : IDisposable
         {
             private readonly GameObject root;
             private readonly UIPageDefinitionRegistry registry;
+            private readonly List<UIPageDefinition> definitions =
+                new List<UIPageDefinition>();
 
             private HostFixture(
                 bool includeManager,
@@ -245,6 +391,35 @@ namespace Joi.H.AppUI.Tests
                     new ImmediateAppUIExecutionContext());
             }
 
+            public UIPageDefinition AddDefinition(
+                string loadStrategyId,
+                string instanceStrategyId)
+            {
+                UIPageDefinition definition =
+                    ScriptableObject.CreateInstance<UIPageDefinition>();
+                definition.LayerId = UILayerId.SystemLayer;
+                definition.CanvasDomain = UICanvasDomain.System;
+                definition.RequiresRaycaster = false;
+                definition.LoadStrategyId = loadStrategyId;
+                definition.InstanceStrategyId = instanceStrategyId;
+                SetPrivateField(
+                    definition,
+                    typeof(UIDefinitionAssetBase),
+                    "m_DefinitionId",
+                    "HostConfigurationPage");
+                SetPrivateField(
+                    definition,
+                    typeof(UIDefinitionAssetBase),
+                    "m_PrefabAssetId",
+                    "host/configuration-page");
+                definitions.Add(definition);
+                SetPrivateField(
+                    registry,
+                    "m_Pages",
+                    new List<UIPageDefinition>(definitions));
+                return definition;
+            }
+
             public void Dispose()
             {
                 if (Host != null && Host.IsInitialized)
@@ -261,6 +436,16 @@ namespace Joi.H.AppUI.Tests
                 {
                     UnityEngine.Object.DestroyImmediate(registry);
                 }
+
+                for (int i = 0; i < definitions.Count; i++)
+                {
+                    if (definitions[i] != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(definitions[i]);
+                    }
+                }
+
+                definitions.Clear();
             }
 
             private static void SetPrivateField(
@@ -268,7 +453,20 @@ namespace Joi.H.AppUI.Tests
                 string fieldName,
                 object value)
             {
-                FieldInfo field = target.GetType().GetField(
+                SetPrivateField(
+                    target,
+                    target.GetType(),
+                    fieldName,
+                    value);
+            }
+
+            private static void SetPrivateField(
+                object target,
+                Type declaringType,
+                string fieldName,
+                object value)
+            {
+                FieldInfo field = declaringType.GetField(
                     fieldName,
                     BindingFlags.Instance | BindingFlags.NonPublic);
                 Assert.That(field, Is.Not.Null, fieldName);
@@ -320,6 +518,41 @@ namespace Joi.H.AppUI.Tests
                 settings.DamageNumber.ConfigureDefaults(
                     1f, 0.1f, 0f, 0, 1, 16, Color.white);
                 return settings;
+            }
+        }
+
+        private sealed class StubLoadStrategy : IUILoadStrategy
+        {
+            public StubLoadStrategy(string strategyId)
+            {
+                StrategyId = strategyId;
+            }
+
+            public string StrategyId { get; }
+
+            public IUIOperation<UILoadResult> Load(
+                UIPageDefinition definition,
+                IUIAssetProvider assetProvider,
+                IUIOperationFactory operationFactory,
+                CancellationToken cancellationToken)
+            {
+                throw new NotSupportedException();
+            }
+        }
+
+        private sealed class StubInstanceStrategy : IUIPageInstanceStrategy
+        {
+            public StubInstanceStrategy(string strategyId)
+            {
+                StrategyId = strategyId;
+            }
+
+            public string StrategyId { get; }
+
+            public UIPageInstanceAllocation Create(
+                UIPageInstanceCreationRequest request)
+            {
+                throw new NotSupportedException();
             }
         }
 

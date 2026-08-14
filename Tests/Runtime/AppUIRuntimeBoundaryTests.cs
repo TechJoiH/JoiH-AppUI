@@ -643,11 +643,6 @@ namespace Joi.H.AppUI.Tests
                 ManualUIOperationFactory operationFactory =
                     new ManualUIOperationFactory();
                 fixture.Provider.SetOperationFactory(operationFactory);
-                if (instanceStrategy != null)
-                {
-                    fixture.Manager.RegisterInstanceStrategy(instanceStrategy);
-                }
-
                 fixture.Manager.Initialize(
                     registry,
                     new AppUIRuntimeDependencies(
@@ -656,7 +651,15 @@ namespace Joi.H.AppUI.Tests
                         new ImmediateAppUIExecutionContext()),
                     roots,
                     null,
-                    noticeSettings);
+                    noticeSettings,
+                    instanceStrategy != null
+                        ? new AppUIRuntimeConfiguration(
+                            null,
+                            new IUIPageInstanceStrategy[]
+                            {
+                                instanceStrategy,
+                            })
+                        : AppUIRuntimeConfiguration.Empty);
                 return fixture;
             }
 

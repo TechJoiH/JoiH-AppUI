@@ -96,37 +96,45 @@ namespace Joi.H.AppUI
         /// <summary>
         /// Initializes the manager from the explicit host dependency set.
         /// </summary>
-        public void Initialize(
+        public AppUIInitializationResult Initialize(
             UIPageDefinitionRegistry registry,
             AppUIRuntimeDependencies dependencies,
             UILayerRoot[] roots,
             UILayerSettings settings,
-            AppUINoticeSettings appNoticeSettings)
+            AppUINoticeSettings appNoticeSettings,
+            AppUIRuntimeConfiguration configuration)
         {
             if (dependencies == null)
             {
-                throw new ArgumentNullException(nameof(dependencies));
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingDependencies);
             }
 
             if (dependencies.OperationFactory == null)
             {
-                throw new ArgumentException(
-                    "OperationFactory is required.",
-                    nameof(dependencies));
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingOperationFactory);
             }
 
             if (dependencies.AssetProvider == null)
             {
-                throw new ArgumentException(
-                    "AssetProvider is required.",
-                    nameof(dependencies));
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingAssetProvider);
             }
 
             if (dependencies.ExecutionContext == null)
             {
-                throw new ArgumentException(
-                    "ExecutionContext is required.",
-                    nameof(dependencies));
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingExecutionContext);
+            }
+
+            AppUIRuntimeConfiguration resolvedConfiguration =
+                configuration ?? AppUIRuntimeConfiguration.Empty;
+            AppUIInitializationResult configurationValidation =
+                resolvedConfiguration.Validate(registry);
+            if (!configurationValidation.Success)
+            {
+                return configurationValidation;
             }
 
             operationFactory = dependencies.OperationFactory;
@@ -146,27 +154,8 @@ namespace Joi.H.AppUI
                 noticeSettings = appNoticeSettings;
             }
 
-            InitializeInternal();
-        }
-
-        public void RegisterLoadStrategy(IUILoadStrategy strategy)
-        {
-            if (strategy == null)
-            {
-                return;
-            }
-
-            loadStrategies[strategy.StrategyId ?? string.Empty] = strategy;
-        }
-
-        public void RegisterInstanceStrategy(IUIPageInstanceStrategy strategy)
-        {
-            if (strategy == null)
-            {
-                return;
-            }
-
-            instanceStrategies[strategy.StrategyId ?? string.Empty] = strategy;
+            InitializeInternal(resolvedConfiguration);
+            return AppUIInitializationResult.Ok();
         }
 
         private void Update()
@@ -253,13 +242,32 @@ namespace Joi.H.AppUI
             assetProvider = null;
         }
 
-        private void InitializeInternal()
+        private void InitializeInternal(
+            AppUIRuntimeConfiguration configuration)
         {
             EnsureRuntimeServices();
             defaultLoadStrategy = new DefaultUILoadStrategy();
             defaultInstanceStrategy = new DefaultUIPageInstanceStrategy();
-            RegisterLoadStrategy(defaultLoadStrategy);
-            RegisterInstanceStrategy(defaultInstanceStrategy);
+            loadStrategies.Add(
+                defaultLoadStrategy.StrategyId,
+                defaultLoadStrategy);
+            instanceStrategies.Add(
+                defaultInstanceStrategy.StrategyId,
+                defaultInstanceStrategy);
+            for (int i = 0; i < configuration.LoadStrategies.Count; i++)
+            {
+                IUILoadStrategy strategy = configuration.LoadStrategies[i];
+                loadStrategies.Add(strategy.StrategyId, strategy);
+            }
+
+            for (int i = 0;
+                 i < configuration.InstanceStrategies.Count;
+                 i++)
+            {
+                IUIPageInstanceStrategy strategy =
+                    configuration.InstanceStrategies[i];
+                instanceStrategies.Add(strategy.StrategyId, strategy);
+            }
 
             if (pageRegistry != null)
             {
@@ -683,24 +691,6 @@ namespace Joi.H.AppUI
                     }
                 }
 
-                if (!string.IsNullOrEmpty(page.LoadStrategyId) &&
-                    !loadStrategies.ContainsKey(page.LoadStrategyId))
-                {
-                    ReportConfigurationError(
-                        page,
-                        "<Joi.H.AppUI> LoadStrategy is not registered for page " + page.PageId + ": " + page.LoadStrategyId,
-                        ref criticalErrors);
-                }
-
-                if (!string.IsNullOrEmpty(page.InstanceStrategyId) &&
-                    !instanceStrategies.ContainsKey(page.InstanceStrategyId))
-                {
-                    ReportConfigurationError(
-                        page,
-                        "<Joi.H.AppUI> InstanceStrategy is not registered for page " + page.PageId + ": " + page.InstanceStrategyId,
-                        ref criticalErrors);
-                }
-
                 if (page.IsHighFrequency &&
                     (page.LayerId != UILayerId.HudLayer || page.CanvasDomain != UICanvasDomain.Hud))
                 {
@@ -766,26 +756,41 @@ namespace Joi.H.AppUI
 
         private IUILoadStrategy ResolveLoadStrategy(string strategyId)
         {
-            IUILoadStrategy strategy;
-            if (!string.IsNullOrEmpty(strategyId) && loadStrategies.TryGetValue(strategyId, out strategy))
+            if (string.IsNullOrEmpty(strategyId))
+            {
+                return defaultLoadStrategy;
+            }
+
+            if (loadStrategies.TryGetValue(
+                    strategyId,
+                    out IUILoadStrategy strategy))
             {
                 return strategy;
             }
 
-            return defaultLoadStrategy;
+            throw new InvalidOperationException(
+                "<Joi.H.AppUI> Unknown load StrategyId after initialization: " +
+                strategyId);
         }
 
         private IUIPageInstanceStrategy ResolveInstanceStrategy(
             string strategyId)
         {
-            IUIPageInstanceStrategy strategy;
-            if (!string.IsNullOrEmpty(strategyId) &&
-                instanceStrategies.TryGetValue(strategyId, out strategy))
+            if (string.IsNullOrEmpty(strategyId))
+            {
+                return defaultInstanceStrategy;
+            }
+
+            if (instanceStrategies.TryGetValue(
+                    strategyId,
+                    out IUIPageInstanceStrategy strategy))
             {
                 return strategy;
             }
 
-            return defaultInstanceStrategy;
+            throw new InvalidOperationException(
+                "<Joi.H.AppUI> Unknown instance StrategyId after initialization: " +
+                strategyId);
         }
 
         private static void ApplyDataAndRefresh(PanelBaseController controller, bool hasData, object data)

@@ -15,6 +15,13 @@ namespace Joi.H.AppUI
         InvalidLayerConfiguration = 8,
         AlreadyInitializedWithDifferentDependencies = 9,
         DependencyContractFailed = 10,
+        InvalidLoadStrategy = 11,
+        InvalidInstanceStrategy = 12,
+        DuplicateLoadStrategyId = 13,
+        DuplicateInstanceStrategyId = 14,
+        UnknownDefinitionLoadStrategy = 15,
+        UnknownDefinitionInstanceStrategy = 16,
+        AlreadyInitializedWithDifferentConfiguration = 17,
     }
 
     /// <summary>

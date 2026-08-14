@@ -225,7 +225,7 @@ parent, and the lease transfer. A valid result must claim ownership.
 - Produces: `Initialize(dependencies, configuration)` and structured duplicate /
   unknown strategy failures before runtime readiness.
 
-- [ ] **Step 1: Write failing initialization tests**
+- [x] **Step 1: Write failing initialization tests**
 
 ```csharp
 Initialize_ConfigurationInstallsStrategiesBeforeDefinitionValidation
@@ -234,12 +234,12 @@ Initialize_UnknownDefinitionStrategy_ReturnsStructuredFailureInReleasePolicy
 ShutdownThenInitialize_ReappliesNewConfiguration
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
-- [ ] **Step 3: Implement immutable configuration snapshot**
-- [ ] **Step 4: Add the two-argument Initialize overload**
-- [ ] **Step 5: Make manager validation return structured failures**
-- [ ] **Step 6: Run focused and complete tests**
-- [ ] **Step 7: Commit the configuration change**
+- [x] **Step 2: Run tests and verify RED**
+- [x] **Step 3: Implement immutable configuration snapshot**
+- [x] **Step 4: Add the two-argument Initialize overload**
+- [x] **Step 5: Make manager validation return structured failures**
+- [x] **Step 6: Run focused and complete tests**
+- [x] **Step 7: Commit the configuration change**
 
 ### Task 6: Make Editor AssetId authoring explicit and deterministic
 
