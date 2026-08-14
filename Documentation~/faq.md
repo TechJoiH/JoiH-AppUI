@@ -16,6 +16,21 @@
 
 Resources 是具体资源策略。AppUI 只使用 `IUIAssetProvider`；项目可适配 Addressables、AssetBundle、远端缓存、Resources 或测试内存表。Basic Integration 使用显式对象引用，不调用 Resources。
 
+## 为什么 Binding 现在提示缺少 AssetId Resolver？
+
+0.3 不再用初始化顺序隐式选择 Resolver。项目必须实现带 `ResolverId` 的
+`IUIEditorAssetIdResolver`、显式注册，并在
+`UIBindingSettings.SelectedAssetIdResolverId` 选择。可在
+`Project Settings > App UI 绑定` 查看诊断。Basic 与 Custom Host Sample 都提供
+GUID 示例，但导入 Sample 也不会替你修改 Settings。
+
+## 如何注册自定义 Load 或实例池 Strategy？
+
+在创建 Runtime 时把它们放进 `AppUIRuntimeConfiguration`，再调用
+`runtimeHost.Initialize(dependencies, configuration)`。不要依赖 Awake 顺序调用
+Manager 注册方法；0.3 已移除 last-write-wins 的公开注册入口。重复/空 ID 或
+Definition 引用未知 ID 会直接阻止初始化。
+
 ## Operation Succeeded，为什么页面仍然打开失败？
 
 Succeeded 表示框架正常产出了 `UIOpenResult`。继续检查 `UIOpenResult.Success` 和 `Error`。DefinitionNotFound、LayerNotFound、打开策略拒绝等是领域失败，不是异常。
@@ -44,6 +59,18 @@ Focus、业务 Selection 和 Hover 应分离。默认移动只改变 Focus；业
 
 Provider 在成功结果中返回 `UIAssetLease`。AppUI 在页面/Notice 释放或晚到结果被丢弃时 Dispose Lease；项目实现 Lease 回调并保持可重复调用安全。
 
+## 池化页面为什么还要保留 Asset Lease？
+
+活的池对象仍依赖其 Prefab/Bundle 资源。`IUIPageInstanceStrategy` 返回的
+Allocation 只有同时保留对象和 Lease 才能选择 `RetainLease`，并必须在 pool
+eviction 或 shutdown 时销毁对象并 Dispose Lease。只保留对象却释放唯一 Lease
+属于所有权错误。
+
+## 同一个 SceneScopeId 重新进入时，旧加载会不会打开到新场景？
+
+不会。每次 Bind 都有独立 generation；Unbind/Release 同步使旧 generation
+失效。旧加载成功晚到时只执行清理，不能向同名的新 SceneScope 提交。
+
 ## Unity 2022.3 能使用吗？
 
 可以尝试移植，但当前状态是 `Community Port`，不是官方支持。请 Fork 一个固定的 AppUI Tag/Commit，修改你自己 Fork 的包清单，在干净 Unity 2022.3 Consumer 中完成编译、Binding、测试、Mono 和 IL2CPP。步骤见[社区 Unity 移植指南](community-unity-porting.md)。
@@ -58,7 +85,14 @@ Unity 6.0 / `6000.0` 是 AppUI 当前主要开发、真实项目使用和完整�
 
 ## Official Target 和 Officially Supported 有什么区别？
 
-Official Target 是官方投入开发和验证的目标环境。Officially Supported 是某个精确 AppUI Tag 在精确 Unity 版本中完成全部门禁后的发布状态。当前目标是 Unity 6.0；`v0.2.0-pre.4` 已在 `6000.0.25f1` 完成全部门禁，是 Officially Supported Pre-release。`pre.2` 与 `pre.3` 是没有 GitHub Release 的失败尝试。
+Official Target 是官方投入开发和验证的目标环境。Officially Supported 是某个精确 AppUI Tag 在精确 Unity 版本中完成全部门禁后的发布状态。当前目标是 Unity 6.0；`v0.2.0-pre.4` 已在 `6000.0.25f1` 完成全部门禁，是 Officially Supported Pre-release。`0.3.0-pre.1` 在 Tag 与正式证据完成前只是源码候选。`pre.2` 与 `pre.3` 是没有 GitHub Release 的失败尝试。
+
+## 如何验证我的宿主 Adapter？
+
+把 AppUI 加入消费项目 `testables`，在测试 asmdef 引用
+`Joi.H.AppUI.Tests.HostIntegration`，继承 Operation、Asset、Execution、Lifecycle
+和 Instance 五类契约夹具。然后再用真实页面完成 SceneScope、晚到加载、Binding、
+Mono 和 IL2CPP。Custom Host Integration Sample 提供完整示例。
 
 ## Community Port 和 Community Verified 有什么区别？
 

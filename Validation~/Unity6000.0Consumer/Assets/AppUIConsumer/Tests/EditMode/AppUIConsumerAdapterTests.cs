@@ -1,10 +1,40 @@
 using NUnit.Framework;
 using System;
 using System.Threading;
+using Joi.H.AppUI.TestKit;
 using UnityEngine;
 
 namespace Joi.H.AppUI.Validation.Consumer.Tests
 {
+    public sealed class ConsumerOperationContractTests :
+        AppUIOperationFactoryContractFixture
+    {
+        protected override IUIOperationFactory CreateOperationFactory()
+        {
+            return new ConsumerOperationFactory();
+        }
+    }
+
+    public sealed class ConsumerAssetProviderContractTests :
+        AppUIAssetProviderContractFixture
+    {
+        protected override AppUIAssetProviderContractContext
+            CreateAssetContext()
+        {
+            GameObject asset = new GameObject("ConsumerContractAsset");
+            ConsumerOperationFactory factory =
+                new ConsumerOperationFactory();
+            ConsumerAssetProvider provider =
+                new ConsumerAssetProvider(factory);
+            provider.Register("contract/page", asset);
+            return new AppUIAssetProviderContractContext(
+                provider,
+                "contract/page",
+                asset,
+                () => UnityEngine.Object.DestroyImmediate(asset));
+        }
+    }
+
     public sealed class AppUIConsumerAdapterTests
     {
         [Test]

@@ -326,6 +326,8 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
             UIBindingSettings binding =
                 ScriptableObject.CreateInstance<UIBindingSettings>();
             binding.EnableBuildPreprocess = false;
+            binding.SelectedAssetIdResolverId =
+                ConsumerEditorAssetIdResolver.Id;
             binding.PageDefinitionRegistry = registry;
             AssetDatabase.CreateAsset(
                 binding, AppUIConsumerFixturePaths.BindingSettings);

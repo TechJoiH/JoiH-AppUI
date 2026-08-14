@@ -30,6 +30,19 @@ SceneScopeId 是所有权标签，不是 Unity Scene 对象引用。
 
 `IUIAssetProvider` 把项目资源系统适配为 AppUI 可理解的加载结果。成功结果可附带 `UIAssetLease`，AppUI 在页面释放或晚到结果被丢弃时调用它。Lease 的 `Dispose` 是幂等的。
 
+## Runtime Configuration
+
+`AppUIRuntimeDependencies` 只保存三项必需端口。可选
+`IUILoadStrategy` / `IUIPageInstanceStrategy` 通过不可变
+`AppUIRuntimeConfiguration` 在初始化时交付。StrategyId 是 Definition 与宿主
+配置之间的稳定键，不通过初始化顺序覆盖。
+
+## Instance Allocation
+
+`IUIPageInstanceStrategy` 同时定义创建和释放，返回
+`UIPageInstanceAllocation`。`UIAssetLeaseTransfer` 在 Controller 验证成功后才把
+Lease 所有权交给 Allocation；池化 Strategy 必须让对象和 Lease 同生共灭。
+
 ## Operation
 
 `IUIOperation<T>` 是中立的完成协议，不是 Task、Awaitable、协程或任何第三方类型。项目通过 `IUIOperationFactory` 决定其实现。

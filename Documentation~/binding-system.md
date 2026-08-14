@@ -20,7 +20,13 @@ Binding 将 Prefab 层级中的运行时引用变成可生成、可审查、可�
 
 ## 资产 ID
 
-运行时 AssetId 由项目 Provider 定义。若不是普通 Unity AssetDatabase 路径，项目可在 Editor 程序集中实现 `IUIEditorAssetIdResolver` 并注册到 `UIEditorAssetIdResolverRegistry`，使创建 Definition 与验证工具使用相同规则。
+运行时 AssetId 由项目 Provider 定义。项目在 Editor 程序集中实现
+`IUIEditorAssetIdResolver`，为它提供稳定 `ResolverId` 并显式注册，然后在
+`UIBindingSettings.SelectedAssetIdResolverId` 选择。Definition 创建、同步、
+Validate All 与 Focus Prefab 验证都使用同一选择。没有隐式 Resources Resolver，
+也不会在失败后按路径或文件名猜测。
+
+可在 `Project Settings > App UI 绑定` 查看当前选择、已注册 ID 和集中错误。
 
 ## 常见失败
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.3.0-pre.1] - Unreleased
+
+### Breaking
+
+- Replaced `DestroyStrategyId` and destroy-only strategies with
+  `InstanceStrategyId`, `IUIPageInstanceStrategy`, and symmetric
+  `UIPageInstanceAllocation` ownership.
+- Removed public last-write-wins strategy registration. Optional load and
+  instance strategies now enter through immutable `AppUIRuntimeConfiguration`.
+- Replaced the implicit Editor resolver singleton with keyed registration and
+  `UIBindingSettings.SelectedAssetIdResolverId`.
+
+### Added
+
+- Added SceneScope generation stamps so late work from an old binding cannot
+  commit into a rebound scope with the same ID.
+- Added cancellation propagation and one-terminal semantics for composite
+  Bind/Unbind/Release operations.
+- Added two-phase `UIAssetLeaseTransfer` claims and symmetric allocation
+  cleanup for rejected, failed, pooled, and evicted instances.
+- Added structured initialization failures for invalid, duplicate, and unknown
+  strategy identifiers in every build configuration.
+- Added the optional Host Integration Contract Test Kit and the complete Custom
+  Host Integration Sample.
+- Added host integration and 0.3 migration documentation.
+
+### Release policy
+
+- This entry remains `Unreleased` until the exact candidate passes Binding,
+  EditMode, PlayMode, Mono, IL2CPP, Commit SHA and immutable Tag URL gates and a
+  GitHub Pre-release is created.
+- Technical samples and tests do not open third-party adapter distribution;
+  LICENSE selection remains a separate P2 ecosystem gate.
+
 ## [0.2.0-pre.4] - 2026-08-13
 
 ### Fixed

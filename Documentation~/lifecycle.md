@@ -7,8 +7,9 @@
 首次打开：
 
 ```text
-Load Asset
--> Instantiate
+Load Asset + AppUI owns Lease
+-> Instance Strategy Claim
+-> Allocation validation + atomic accept
 -> OnCreateEx
 -> OnBindGeneratedFields
 -> OnInitEx
@@ -34,7 +35,8 @@ CanCloseEx -> OnBeforeHideEx -> BeginHideTransition -> OnHideEx
 释放关闭：
 
 ```text
-Hide 流程 -> OnDisposeEx -> 解绑 -> Destroy -> UIAssetLease.Dispose
+Hide 流程 -> OnDisposeEx -> 解绑 -> Allocation.Dispose
+-> Destroy/Pool -> UIAssetLease.Dispose 或 RetainLease
 ```
 
 被上层全屏/阻挡页面影响时，PauseDepth 从 0 变为非 0 调用 `OnPauseEx`，回到 0 调用 `OnResumeEx`。
@@ -62,9 +64,17 @@ UIOpenResult.Success = 页面是否真正打开
 
 新操作替代旧 pending intent、Runtime Shutdown 或场景所有权变化时，旧操作可能 Expired。调用方应将其视为“结果不再适用”，而不是重试错误。
 
+Bind/Unbind/Release 是组合 Operation。外层取消会传给当前子操作，停止启动后续
+页面规则，并只写入一个终态。每次 SceneScope 绑定都有 generation；旧场景晚到
+结果即使遇到相同 SceneScopeId 已重新绑定，也不能提交到新 generation。
+
 ## 晚到结果与 Lease
 
 Provider 可能在页面取消后才返回资源。AppUI 不实例化晚到页面，但仍会 Dispose 结果中的 `UIAssetLease`。Provider 必须让 Release 回调安全且幂等；AppUI 的 Lease 本身保证最多调用一次。
+
+实例 Strategy 抛异常、遗弃 Claim、返回无效对象或 Controller 验证失败时，
+`UIAssetLeaseTransfer` 仍把 Lease 归还 Provider。池化只有在保留活对象时才能保留
+Lease，并必须在 eviction 或 Runtime shutdown 后显式释放。
 
 ## 订阅生命周期
 

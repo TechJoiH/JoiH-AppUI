@@ -14,6 +14,20 @@ AppUIInitializationResult result = runtimeHost.Initialize(
 
 缺少任一项会返回结构化失败，不存在 fallback。
 
+可选 Load/Instance Strategy 不放进三项必需端口，也不通过 Manager 按顺序注册：
+
+```csharp
+AppUIRuntimeConfiguration configuration =
+    new AppUIRuntimeConfiguration(loadStrategies, instanceStrategies);
+
+AppUIInitializationResult result = runtimeHost.Initialize(
+    dependencies,
+    configuration);
+```
+
+配置是初始化快照。空白/重复 StrategyId 与 Definition 引用未知 ID 会在
+Manager 接收依赖前返回结构化失败。
+
 ## 自定义 Provider
 
 ```csharp
@@ -43,18 +57,25 @@ Provider 的异步实现只需返回项目 Operation；可以在项目程序集�
 
 ## Editor AssetId
 
-非标准 AssetId 可在 Editor 程序集中实现 `IUIEditorAssetIdResolver` 并注册到 `UIEditorAssetIdResolverRegistry`。Binding 与 Definition 创建工具便能使用与运行时相同的 ID 规则。
+非标准 AssetId 在 Editor 程序集中实现 `IUIEditorAssetIdResolver`，提供稳定
+`ResolverId`，再调用 `UIEditorAssetIdResolverRegistry.Register`。项目必须在
+`UIBindingSettings.SelectedAssetIdResolverId` 显式选择；缺失、未注册和重复 ID
+都会报错。框架不会默认选择 Resources，也不会按文件名降级搜索。
 
 ## Shutdown 顺序
 
 1. 停止新请求；
 2. ReleaseScope/UnbindScene；
 3. `AppUIRuntimeHost.Shutdown()`；
-4. 销毁项目 Provider；
-5. 销毁 UI Root。
+4. 清空自定义实例池并释放其保留 Lease；
+5. 销毁项目 Provider；
+6. 销毁 UI Root。
 
 这个顺序确保 AppUI 归还 Lease 时 Provider 仍然存活。
 
 ## Sample 的定位
 
-Basic Integration 提供 `CallbackUIOperationFactory`、`UnityMainThreadExecutionContext` 和 `InMemoryUIAssetProvider`。它用于学习和冒烟验证，不代表推荐所有项目复制其内部实现。成熟项目通常直接适配已有调度器与资源服务。
+Basic Integration 提供最小三端口实现。Custom Host Integration 进一步展示
+Runtime Configuration、显式 Scene Bridge、世界输入查询、池化 Strategy、Editor
+Resolver 和 Host Contract Test Kit。两者都只随用户主动导入进入项目，不会被
+Runtime 自动注册。完整规则见 [Host Integration](host-integration.md)。

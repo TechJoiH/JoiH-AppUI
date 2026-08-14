@@ -20,6 +20,10 @@
 7. 运行 EditMode/PlayMode；
 8. 发布前完成 Player Build。
 
+Editor AssetId 工具开始前，先在 `UIBindingSettings` 选择一个已注册的
+`SelectedAssetIdResolverId`。`Project Settings > App UI 绑定` 会显示当前 Resolver
+或集中错误；框架不会隐式安装 Resources Resolver。
+
 验证器是只读门禁，不应在 Build 时偷偷生成或修复资产。自动化证明契约，不替代字体、布局、动画、点击面积和视觉层级的人工验收。
 
 ## CI 建议
@@ -29,6 +33,10 @@
 - PlayMode 覆盖打开/刷新/关闭、取消、晚到加载与真实 EventSystem Raycast；
 - 从干净消费项目安装包并完成 Domain Reload；
 - 至少在一个目标平台做 IL2CPP Development Build。
+- 宿主 Adapter 测试 asmdef 引用 `Joi.H.AppUI.Tests.HostIntegration`，继承
+  Operation、Asset、Execution、Lifecycle 与 Instance 契约夹具；
+- 在干净 Consumer 中分别导入 Basic 和 Custom Host Sample，确认它们只在主动
+  导入后编译且不会进入 Runtime 默认路径。
 
 官方仓库通过仓库外 `Validation~/Unity6000.0Consumer/` 执行上述流程。发布工具入口为：
 

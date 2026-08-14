@@ -5,6 +5,7 @@
     "Joi.H.AppUI.Core",
     "Joi.H.AppUI.Runtime",
     "Joi.H.AppUI.Editor",
+    "Joi.H.AppUI.Tests.HostIntegration",
     "Joi.H.AppUI.Validation.Consumer",
     "Unity.TextMeshPro",
     "UnityEngine.UI"

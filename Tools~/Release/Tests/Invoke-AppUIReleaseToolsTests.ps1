@@ -1125,7 +1125,7 @@ set "PATH=$toolRoot;%PATH%"
             $repositoryRoot = [System.IO.Path]::GetFullPath(
                 (Join-Path $PSScriptRoot '..\..\..'))
             $package = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-            Assert-Equal '0.2.0-pre.4' $package.version 'Planned package version drifted.'
+            Assert-Equal '0.3.0-pre.1' $package.version 'Planned package version drifted.'
             Assert-Equal '6000.0' $package.unity 'Official Unity target drifted.'
             Assert-Equal 1 @($package.dependencies.PSObject.Properties).Count 'Package gained an undeclared dependency.'
             Assert-Equal '2.0.0' $package.dependencies.'com.unity.ugui' 'UGUI dependency drifted.'

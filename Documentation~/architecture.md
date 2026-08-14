@@ -7,6 +7,7 @@ flowchart LR
     Business["业务与场景流程"] --> Service["IUIService"]
     Composition["项目组合根"] --> Host["AppUIRuntimeHost"]
     Adapters["项目实现：Operation / Asset / Execution"] --> Host
+    Config["AppUIRuntimeConfiguration：可选 Strategy"] --> Host
     Host --> Runtime["Joi.H.AppUI.Runtime"]
     Runtime --> Core["Joi.H.AppUI.Core 契约"]
     Runtime --> UGUI["Unity UGUI / TextMeshPro"]
@@ -19,6 +20,7 @@ Core 不引用具体异步后端或资源框架；Runtime 不引用接入项目�
 ## 模块职责
 
 - `Bootstrap`：显式组合三项宿主能力并初始化 Runtime；
+- `Instance` / `Strategy`：两阶段 Lease 转移与对称实例创建/释放；
 - `Definition`：页面/Group 配置和 Registry；
 - `Operation`：页面并发、版本、pending intent 与过期保护；
 - `Layer` / `Stack`：显示顺序、暂停深度、输入权和焦点恢复；
@@ -41,17 +43,17 @@ sequenceDiagram
     UI->>Op: Create<UIOpenResult>()
     UI->>Provider: TryLoad 或 Load
     Provider-->>UI: UIAssetLoadResult + Lease
-    UI->>Controller: Create / Init / Data / Refresh
+    UI->>Controller: Instance Allocation / Init / Data / Refresh
     UI->>Controller: BeginShowTransition
     Controller-->>UI: Immediate 或 Operation
     UI-->>App: completion + UIOpenResult
 ```
 
-每次操作同时携带运行时代次与页面版本。晚到回调在提交状态前校验；`ReleaseScope` 也会失效同 Scope 中尚未形成实例的 Open。失效结果不会重新显示页面，但其 Lease 仍会归还且只归还一次。
+每次操作同时携带运行时代次、页面版本与 SceneScope generation。晚到回调在提交状态前校验；`UnbindScene` 与 `ReleaseScope` 会同步失效旧 generation 和尚未形成实例的 Open。同名 SceneScopeId 重新绑定也不会接收旧场景结果；失效 Lease 仍归还一次。
 
 ## 框架与业务边界
 
-宿主负责 EventSystem、场景切换、Root 是否跨场景、业务服务、三项依赖实现和最终视觉验收。AppUI 负责页面状态机、栈、Scope、焦点/输入协议、Binding 契约和 Lease 归还。
+宿主负责 EventSystem、场景切换、Root 是否跨场景、业务服务、三项依赖实现、可选 Strategy 配置和最终视觉验收。AppUI 负责页面状态机、栈、Scope、焦点/输入协议、Binding 契约，以及接受后的 Allocation/Lease 归还。
 
 AppUI 不自动扫描业务程序集、不创建 Addressables 或 Resources fallback，也不把 Sample 实现注册到 Runtime。
 
@@ -74,4 +76,8 @@ Unity 2022.3 / 2021.3      → Community Port
 - `Joi.H.AppUI.Runtime`：Player 可用的页面与交互实现；
 - `Joi.H.AppUI.Editor`：生成和验证工具；
 - `Joi.H.AppUI.Tests.*`：包测试，不进入 Player；
-- `Joi.H.AppUI.Samples.Basic`：用户主动导入的示例实现。
+- `Joi.H.AppUI.Tests.HostIntegration`：消费项目按需引用的契约测试夹具，不进入 Player；
+- `Joi.H.AppUI.Samples.Basic`：最小三端口示例；
+- `Joi.H.AppUI.Samples.CustomHost`：完整宿主组合、场景、输入、池化与 Shutdown 示例。
+
+完整宿主边界见 [Host Integration](host-integration.md)。

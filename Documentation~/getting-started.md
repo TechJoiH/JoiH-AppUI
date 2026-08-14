@@ -14,6 +14,10 @@ https://github.com/TechJoiH/JoiH-AppUI.git#v0.2.0-pre.4
 
 `v0.2.0-pre.4` 已完成全部发布门禁并作为 [GitHub Pre-release](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.2.0-pre.4) 发布，可按此地址安装。`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 虽然已有不可变 Tag，但发布门禁未完成且没有 GitHub Release，不属于 Officially Supported Releases。真实项目应使用[官方发布清单](supported-unity-versions.md#officially-supported-releases)中的不可变 Tag，不要使用无版本 URL或 `main`。
 
+仓库当前源码版本正在迁移到 `0.3.0-pre.1`；在它完成不可变 Tag、Tag URL
+安装和正式 Release 证据前，请把它视为未发布候选，并先阅读
+[0.3 迁移指南](migration-0.3.md)。
+
 AppUI 只依赖 UGUI，不要求安装第三方异步包。
 
 ## 2. 选择三项项目实现
@@ -63,7 +67,14 @@ public sealed partial class SettingsPanelController : PanelBaseController
 
 将 Controller 挂在页面 Prefab 根节点。一个页面实例必须能解析到一个主要 `PanelBaseController`。
 
-## 5. 创建 Definition、Registry、Profile
+## 5. 选择 Editor AssetId Resolver
+
+创建 `UIBindingSettings`，并在
+`SelectedAssetIdResolverId` 选择接入项目显式注册的 Resolver ID。使用 Basic
+Integration 时填写 `sample.basic.asset-guid`；使用 Custom Host Integration 时
+填写 `sample.custom-host.asset-guid`。框架不会自动选择 Resources 或其他实现。
+
+## 6. 创建 Definition、Registry、Profile
 
 通过 `Create > Joi.H AppUI` 创建：
 
@@ -84,9 +95,11 @@ OpenPolicy = RejectIfOpeningOrOpen
 
 把 Definition 加入 Registry，再把 Registry 配到 Runtime Profile，最后将 Profile 分配给 `AppUIRuntimeHost`。
 
-如果使用 Basic Integration Sample，在 `SampleAppUIInstaller.assets` 中把 `ui/settings` 指向该 Prefab。若使用自己的 Provider，则 AssetId 的含义完全由项目决定。
+如果使用 Basic Integration Sample，建议把 Prefab GUID 同时写入 Definition 和
+`SampleAppUIInstaller.assets`。若使用自己的 Provider，则 AssetId 的含义完全由
+项目决定，但 Runtime Provider 与 Editor Resolver 必须一致。
 
-## 6. 显式初始化
+## 7. 显式初始化
 
 Sample Installer 的核心逻辑等价于：
 
@@ -106,7 +119,20 @@ if (!result.Success)
 
 框架不会在 Awake 中猜测依赖，也没有 Resources fallback。
 
-## 7. 打开、刷新、关闭
+若项目提供可选 Load/Instance Strategy：
+
+```csharp
+AppUIRuntimeConfiguration configuration =
+    new AppUIRuntimeConfiguration(loadStrategies, instanceStrategies);
+
+AppUIInitializationResult result = runtimeHost.Initialize(
+    new AppUIRuntimeDependencies(operations, assets, execution),
+    configuration);
+```
+
+重复或未知 StrategyId 会在 Runtime 进入 ready 状态前失败。
+
+## 8. 打开、刷新、关闭
 
 ```csharp
 IUIService ui = runtimeHost.Manager.Service;
@@ -140,13 +166,14 @@ ui.Close("settings");
 
 `Register` 返回 `IDisposable`。长生命周期对象应保存并在销毁/解绑时释放订阅。Controller 内部可用 `RegisterDisposeAction(subscription.Dispose)`。
 
-## 8. 退出 Runtime
+## 9. 退出 Runtime
 
 推荐顺序：
 
 1. 停止产生新的 UI 请求；
 2. 调用 `ReleaseScope` 或 `UnbindScene`；
 3. 调用 `AppUIRuntimeHost.Shutdown()`；
-4. 再销毁项目自有 Provider 和 UI Root。
+4. 清空自定义实例池并归还保留的 Lease；
+5. 再销毁项目自有 Provider 和 UI Root。
 
 下一步阅读[核心概念](core-concepts.md)和[生命周期](lifecycle.md)。
