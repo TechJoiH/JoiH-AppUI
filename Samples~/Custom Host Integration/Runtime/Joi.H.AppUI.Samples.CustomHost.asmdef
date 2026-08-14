@@ -1,0 +1,17 @@
+{
+  "name": "Joi.H.AppUI.Samples.CustomHost",
+  "rootNamespace": "Joi.H.AppUI.Samples.CustomHost",
+  "references": [
+    "Joi.H.AppUI.Core",
+    "Joi.H.AppUI.Runtime"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

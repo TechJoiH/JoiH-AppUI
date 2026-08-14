@@ -24,6 +24,11 @@
       "displayName": "Basic Integration",
       "description": "Inject project-owned operation, execution, and asset adapters into AppUIRuntimeHost.",
       "path": "Samples~/Basic Integration"
+    },
+    {
+      "displayName": "Custom Host Integration",
+      "description": "Complete host composition, lifecycle, input, pooling, Editor AssetId, and contract-test example.",
+      "path": "Samples~/Custom Host Integration"
     }
   ]
 }

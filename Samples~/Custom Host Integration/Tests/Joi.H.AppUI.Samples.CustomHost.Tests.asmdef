@@ -1,0 +1,22 @@
+{
+  "name": "Joi.H.AppUI.Samples.CustomHost.Tests",
+  "rootNamespace": "Joi.H.AppUI.Samples.CustomHost.Tests",
+  "references": [
+    "Joi.H.AppUI.Core",
+    "Joi.H.AppUI.Runtime",
+    "Joi.H.AppUI.Samples.CustomHost",
+    "Joi.H.AppUI.Tests.HostIntegration"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

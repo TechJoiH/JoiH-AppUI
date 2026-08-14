@@ -306,12 +306,12 @@ Registry_DoesNotInstallResourcesImplicitly
 - Produces: complete installer, scene bridge, shutdown flow, optional instance
   strategy, Editor resolver, and test driver without third-party names.
 
-- [ ] **Step 1: Add sample tests that fail because the sample is absent**
-- [ ] **Step 2: Implement the sample composition root and lifecycle bridge**
-- [ ] **Step 3: Implement explicit sample Editor resolver registration**
-- [ ] **Step 4: Implement sample contract-test drivers**
-- [ ] **Step 5: Import the sample into a clean Consumer and run tests**
-- [ ] **Step 6: Commit the custom-host sample**
+- [x] **Step 1: Add sample tests that fail because the sample is absent**
+- [x] **Step 2: Implement the sample composition root and lifecycle bridge**
+- [x] **Step 3: Implement explicit sample Editor resolver registration**
+- [x] **Step 4: Implement sample contract-test drivers**
+- [x] **Step 5: Import the sample into a clean Consumer and run tests**
+- [x] **Step 6: Commit the custom-host sample**
 
 ### Task 9: Synchronize public docs and migrate to 0.3
 
