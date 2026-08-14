@@ -15,7 +15,9 @@
     "ugui",
     "focus",
     "navigation",
-    "binding"
+    "binding",
+    "adapter",
+    "contract-tests"
   ],
   "samples": [
     {

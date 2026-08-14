@@ -285,13 +285,13 @@ Registry_DoesNotInstallResourcesImplicitly
 - Produces: public abstract NUnit fixtures for Operation, Asset, Execution,
   Lifecycle, and Instance conformance.
 
-- [ ] **Step 1: Write the abstract fixture API and adapt one official Consumer test**
-- [ ] **Step 2: Verify the adapted test fails before fixture implementation**
-- [ ] **Step 3: Implement Operation/Asset/Execution fixtures**
-- [ ] **Step 4: Implement Lifecycle/Instance drivers and fixtures**
-- [ ] **Step 5: Confirm the test assembly is excluded from Player builds**
-- [ ] **Step 6: Run official Consumer contract tests**
-- [ ] **Step 7: Commit the conformance test kit**
+- [x] **Step 1: Write the abstract fixture API and adapt one official Consumer test**
+- [x] **Step 2: Verify the adapted test fails before fixture implementation**
+- [x] **Step 3: Implement Operation/Asset/Execution fixtures**
+- [x] **Step 4: Implement Lifecycle/Instance drivers and fixtures**
+- [x] **Step 5: Confirm the test assembly is excluded from Player builds**
+- [x] **Step 6: Run official Consumer contract tests**
+- [x] **Step 7: Commit the conformance test kit**
 
 ### Task 8: Add Custom Host Integration Sample
 

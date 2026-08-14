@@ -1,11 +1,9 @@
 {
-  "name": "Joi.H.AppUI.Samples.Basic.Tests",
-  "rootNamespace": "Joi.H.AppUI.Samples.Basic.Tests",
+  "name": "Joi.H.AppUI.Tests.HostIntegration",
+  "rootNamespace": "Joi.H.AppUI.TestKit",
   "references": [
     "Joi.H.AppUI.Core",
-    "Joi.H.AppUI.Runtime",
-    "Joi.H.AppUI.Samples.Basic",
-    "Joi.H.AppUI.Tests.HostIntegration"
+    "Joi.H.AppUI.Runtime"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"
@@ -16,7 +14,9 @@
   "overrideReferences": false,
   "precompiledReferences": [],
   "autoReferenced": false,
-  "defineConstraints": [],
+  "defineConstraints": [
+    "UNITY_INCLUDE_TESTS"
+  ],
   "versionDefines": [],
   "noEngineReferences": false
 }

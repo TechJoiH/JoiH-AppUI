@@ -108,7 +108,8 @@ namespace Joi.H.AppUI.Samples.Basic.Tests
                         UnityMainThreadExecutionContext.CaptureCurrent()),
                     layers,
                     null,
-                    AppUINoticeSettings.CreateDefault());
+                    AppUINoticeSettings.CreateDefault(),
+                    AppUIRuntimeConfiguration.Empty);
 
                 IUIOperation<UIOpenResult> open = manager.Open(
                     "sample-page",
