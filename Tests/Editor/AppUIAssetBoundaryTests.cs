@@ -21,6 +21,115 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
+        public void LeaseTransfer_Claim_MovesOwnershipExactlyOnce()
+        {
+            int releaseCount = 0;
+            UIAssetLease lease = new UIAssetLease(() => releaseCount++);
+            UIAssetLeaseTransfer transfer =
+                new UIAssetLeaseTransfer(lease);
+
+            UIAssetLeaseClaim claim = transfer.Claim();
+
+            Assert.That(claim.AssetLease, Is.SameAs(lease));
+            Assert.Throws<InvalidOperationException>(() => transfer.Claim());
+            Assert.That(claim.TryCommit(transfer), Is.True);
+
+            transfer.Dispose();
+            Assert.That(releaseCount, Is.Zero);
+            claim.AssetLease.Dispose();
+            claim.AssetLease.Dispose();
+            Assert.That(releaseCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DefaultInstanceAllocation_Release_DestroysAndDisposesLeaseOnce()
+        {
+            int releaseCount = 0;
+            GameObject prefab = new GameObject(
+                "InstanceStrategyPrefab",
+                typeof(RectTransform));
+            GameObject parent = new GameObject(
+                "InstanceStrategyParent",
+                typeof(RectTransform));
+            UIPageDefinition definition =
+                ScriptableObject.CreateInstance<UIPageDefinition>();
+            UIAssetLeaseTransfer transfer = new UIAssetLeaseTransfer(
+                new UIAssetLease(() => releaseCount++));
+            UIPageInstanceAllocation allocation = null;
+            try
+            {
+                allocation = new DefaultUIPageInstanceStrategy().Create(
+                    new UIPageInstanceCreationRequest(
+                        definition,
+                        prefab,
+                        (RectTransform)parent.transform,
+                        transfer));
+                Assert.That(allocation, Is.Not.Null);
+                Assert.That(allocation.GameObject, Is.Not.Null);
+                Assert.That(allocation.TryAccept(transfer), Is.True);
+
+                allocation.Dispose();
+                allocation.Dispose();
+
+                Assert.That(releaseCount, Is.EqualTo(1));
+            }
+            finally
+            {
+                allocation?.Dispose();
+                transfer.Dispose();
+                UnityEngine.Object.DestroyImmediate(definition);
+                UnityEngine.Object.DestroyImmediate(prefab);
+                UnityEngine.Object.DestroyImmediate(parent);
+            }
+        }
+
+        [Test]
+        public void CreateFailure_UnclaimedLeaseReturnsToAppUI()
+        {
+            int releaseCount = 0;
+            UIAssetLeaseTransfer transfer = new UIAssetLeaseTransfer(
+                new UIAssetLease(() => releaseCount++));
+
+            UIAssetLeaseClaim abandonedClaim = transfer.Claim();
+            transfer.Dispose();
+
+            Assert.That(releaseCount, Is.EqualTo(1));
+            Assert.That(abandonedClaim.TryCommit(transfer), Is.False);
+        }
+
+        [Test]
+        public void PoolingStrategy_ReturnKeepsLeaseUntilPoolEviction()
+        {
+            int releaseCount = 0;
+            GameObject instance = new GameObject("PooledInstance");
+            UIAssetLeaseTransfer transfer = new UIAssetLeaseTransfer(
+                new UIAssetLease(() => releaseCount++));
+            UIAssetLeaseClaim claim = transfer.Claim();
+            UIAssetLease retainedLease = null;
+            UIPageInstanceAllocation allocation =
+                new UIPageInstanceAllocation(
+                    instance,
+                    claim,
+                    context =>
+                    {
+                        retainedLease = context.AssetLease;
+                        context.GameObject.SetActive(false);
+                        return UIPageInstanceReleaseDisposition.RetainLease;
+                    });
+
+            Assert.That(allocation.TryAccept(transfer), Is.True);
+            allocation.Dispose();
+            transfer.Dispose();
+
+            Assert.That(releaseCount, Is.Zero);
+            Assert.That(instance.activeSelf, Is.False);
+
+            retainedLease.Dispose();
+            Assert.That(releaseCount, Is.EqualTo(1));
+            UnityEngine.Object.DestroyImmediate(instance);
+        }
+
+        [Test]
         public void Provider_UnsupportedSyncLoad_IsExplicit()
         {
             ContractProvider provider = new ContractProvider(

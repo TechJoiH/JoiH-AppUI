@@ -11,6 +11,7 @@ namespace Joi.H.AppUI
         InvalidDefinition,
         LayerNotFound,
         ResourceLoadFailed,
+        InstanceCreationFailed,
         ControllerMissing,
         ControllerInvalid,
         Cancelled,

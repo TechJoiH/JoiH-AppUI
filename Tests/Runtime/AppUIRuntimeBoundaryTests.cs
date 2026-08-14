@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
@@ -324,6 +325,60 @@ namespace Joi.H.AppUI.Tests
         }
 
         [UnityTest]
+        public IEnumerator CreateFailure_UnclaimedLeaseReturnsToAppUI()
+        {
+            ClaimThenThrowInstanceStrategy strategy =
+                new ClaimThenThrowInstanceStrategy();
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                true,
+                instanceStrategy: strategy);
+            LogAssert.Expect(
+                LogType.Error,
+                new Regex("intentional instance creation failure"));
+
+            IUIOperation<UIOpenResult> operation =
+                fixture.Manager.Open(PageId);
+            yield return WaitFor(operation);
+
+            Assert.That(operation.Status,
+                Is.EqualTo(AppUIOperationStatus.Failed));
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
+        public IEnumerator PoolingStrategy_ReturnKeepsLeaseUntilPoolEviction()
+        {
+            RetainingPoolInstanceStrategy strategy =
+                new RetainingPoolInstanceStrategy();
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                true,
+                instanceStrategy: strategy);
+
+            IUIOperation<UIOpenResult> open =
+                fixture.Manager.Open(PageId);
+            yield return WaitFor(open);
+            AssertSucceeded(open, out UIOpenResult openResult);
+            Assert.That(openResult.Success, Is.True);
+
+            IUIOperation<UICloseResult> close =
+                fixture.Manager.Close(PageId);
+            yield return WaitFor(close);
+            AssertSucceeded(close, out UICloseResult closeResult);
+
+            Assert.That(closeResult.Success, Is.True);
+            Assert.That(strategy.HasRetainedInstance, Is.True);
+            Assert.That(fixture.Provider.ReleaseCount, Is.Zero);
+
+            strategy.Evict();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
         public IEnumerator DelayedShow_OperationCompletesOnlyAfterTransition()
         {
             RuntimeFixture fixture = RuntimeFixture.Create(false, true);
@@ -501,7 +556,8 @@ namespace Joi.H.AppUI.Tests
                 bool delayPageLoad,
                 bool includePage,
                 bool closeOnCancel = false,
-                bool includeProviderNotice = false)
+                bool includeProviderNotice = false,
+                IUIPageInstanceStrategy instanceStrategy = null)
             {
                 TestPanelController.ResetState();
                 RuntimeFixture fixture = new RuntimeFixture();
@@ -548,6 +604,10 @@ namespace Joi.H.AppUI.Tests
                     definition.OpenPolicy = UIOpenPolicy.RejectIfOpeningOrOpen;
                     definition.CloseOnCancel = closeOnCancel;
                     definition.RequiresRaycaster = false;
+                    definition.InstanceStrategyId =
+                        instanceStrategy != null
+                            ? instanceStrategy.StrategyId
+                            : string.Empty;
                     SetDefinitionIdentity(definition, PageId, PageAssetId);
                     fixture.ownedObjects.Add(definition);
 
@@ -583,6 +643,11 @@ namespace Joi.H.AppUI.Tests
                 ManualUIOperationFactory operationFactory =
                     new ManualUIOperationFactory();
                 fixture.Provider.SetOperationFactory(operationFactory);
+                if (instanceStrategy != null)
+                {
+                    fixture.Manager.RegisterInstanceStrategy(instanceStrategy);
+                }
+
                 fixture.Manager.Initialize(
                     registry,
                     new AppUIRuntimeDependencies(
@@ -832,6 +897,65 @@ namespace Joi.H.AppUI.Tests
 
         private sealed class ProviderNoticeMarker : MonoBehaviour
         {
+        }
+
+        private sealed class ClaimThenThrowInstanceStrategy :
+            IUIPageInstanceStrategy
+        {
+            public string StrategyId => "claim-then-throw";
+
+            public UIPageInstanceAllocation Create(
+                UIPageInstanceCreationRequest request)
+            {
+                request.AssetLeaseTransfer.Claim();
+                throw new InvalidOperationException(
+                    "intentional instance creation failure");
+            }
+        }
+
+        private sealed class RetainingPoolInstanceStrategy :
+            IUIPageInstanceStrategy
+        {
+            private GameObject retainedInstance;
+            private UIAssetLease retainedLease;
+
+            public string StrategyId => "retaining-pool";
+            public bool HasRetainedInstance => retainedInstance != null;
+
+            public UIPageInstanceAllocation Create(
+                UIPageInstanceCreationRequest request)
+            {
+                UIAssetLeaseClaim claim =
+                    request.AssetLeaseTransfer.Claim();
+                GameObject instance = Object.Instantiate(
+                    request.Prefab,
+                    request.Parent,
+                    false);
+                instance.name = request.Prefab.name;
+                instance.SetActive(false);
+                return new UIPageInstanceAllocation(
+                    instance,
+                    claim,
+                    context =>
+                    {
+                        retainedInstance = context.GameObject;
+                        retainedLease = context.AssetLease;
+                        retainedInstance.SetActive(false);
+                        return UIPageInstanceReleaseDisposition.RetainLease;
+                    });
+            }
+
+            public void Evict()
+            {
+                if (retainedInstance != null)
+                {
+                    Object.Destroy(retainedInstance);
+                    retainedInstance = null;
+                }
+
+                retainedLease?.Dispose();
+                retainedLease = null;
+            }
         }
 
         private sealed class TestPanelController : PanelBaseController

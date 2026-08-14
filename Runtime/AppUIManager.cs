@@ -32,15 +32,16 @@ namespace Joi.H.AppUI
             new UISceneScopeGenerationRegistry();
         private readonly Dictionary<string, IUILoadStrategy> loadStrategies =
             new Dictionary<string, IUILoadStrategy>(4);
-        private readonly Dictionary<string, IUIDestroyStrategy> destroyStrategies =
-            new Dictionary<string, IUIDestroyStrategy>(4);
+        private readonly Dictionary<string, IUIPageInstanceStrategy>
+            instanceStrategies =
+                new Dictionary<string, IUIPageInstanceStrategy>(4);
 
         private IUIAssetProvider assetProvider;
         private IUIOperationFactory operationFactory;
         private IAppUIExecutionContext executionContext;
         private int runtimeEpoch;
         private IUILoadStrategy defaultLoadStrategy;
-        private IUIDestroyStrategy defaultDestroyStrategy;
+        private IUIPageInstanceStrategy defaultInstanceStrategy;
         private bool initialized;
         private UIOperationCoordinator operationCoordinator;
         private UISceneScopeCoordinator sceneScopeCoordinator;
@@ -158,14 +159,14 @@ namespace Joi.H.AppUI
             loadStrategies[strategy.StrategyId ?? string.Empty] = strategy;
         }
 
-        public void RegisterDestroyStrategy(IUIDestroyStrategy strategy)
+        public void RegisterInstanceStrategy(IUIPageInstanceStrategy strategy)
         {
             if (strategy == null)
             {
                 return;
             }
 
-            destroyStrategies[strategy.StrategyId ?? string.Empty] = strategy;
+            instanceStrategies[strategy.StrategyId ?? string.Empty] = strategy;
         }
 
         private void Update()
@@ -234,9 +235,9 @@ namespace Joi.H.AppUI
             noticeService.Dispose();
             initialized = false;
             loadStrategies.Clear();
-            destroyStrategies.Clear();
+            instanceStrategies.Clear();
             defaultLoadStrategy = null;
-            defaultDestroyStrategy = null;
+            defaultInstanceStrategy = null;
             sceneScopeCoordinator = null;
             presentationCoordinator = null;
             layerRuntimeConfigurator = null;
@@ -256,9 +257,9 @@ namespace Joi.H.AppUI
         {
             EnsureRuntimeServices();
             defaultLoadStrategy = new DefaultUILoadStrategy();
-            defaultDestroyStrategy = new DefaultUIDestroyStrategy();
+            defaultInstanceStrategy = new DefaultUIPageInstanceStrategy();
             RegisterLoadStrategy(defaultLoadStrategy);
-            RegisterDestroyStrategy(defaultDestroyStrategy);
+            RegisterInstanceStrategy(defaultInstanceStrategy);
 
             if (pageRegistry != null)
             {
@@ -509,7 +510,6 @@ namespace Joi.H.AppUI
             {
                 pageInstanceReleaser = new UIPageInstanceReleaser(
                     instanceRegistry,
-                    ResolveDestroyStrategy,
                     presentationCoordinator.ResetInstancePresentationState);
             }
         }
@@ -692,12 +692,12 @@ namespace Joi.H.AppUI
                         ref criticalErrors);
                 }
 
-                if (!string.IsNullOrEmpty(page.DestroyStrategyId) &&
-                    !destroyStrategies.ContainsKey(page.DestroyStrategyId))
+                if (!string.IsNullOrEmpty(page.InstanceStrategyId) &&
+                    !instanceStrategies.ContainsKey(page.InstanceStrategyId))
                 {
                     ReportConfigurationError(
                         page,
-                        "<Joi.H.AppUI> DestroyStrategy is not registered for page " + page.PageId + ": " + page.DestroyStrategyId,
+                        "<Joi.H.AppUI> InstanceStrategy is not registered for page " + page.PageId + ": " + page.InstanceStrategyId,
                         ref criticalErrors);
                 }
 
@@ -775,15 +775,17 @@ namespace Joi.H.AppUI
             return defaultLoadStrategy;
         }
 
-        private IUIDestroyStrategy ResolveDestroyStrategy(string strategyId)
+        private IUIPageInstanceStrategy ResolveInstanceStrategy(
+            string strategyId)
         {
-            IUIDestroyStrategy strategy;
-            if (!string.IsNullOrEmpty(strategyId) && destroyStrategies.TryGetValue(strategyId, out strategy))
+            IUIPageInstanceStrategy strategy;
+            if (!string.IsNullOrEmpty(strategyId) &&
+                instanceStrategies.TryGetValue(strategyId, out strategy))
             {
                 return strategy;
             }
 
-            return defaultDestroyStrategy;
+            return defaultInstanceStrategy;
         }
 
         private static void ApplyDataAndRefresh(PanelBaseController controller, bool hasData, object data)

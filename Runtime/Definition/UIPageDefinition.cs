@@ -1,10 +1,12 @@
 ﻿using UnityEngine;
 
+using UnityEngine.Serialization;
+
 namespace Joi.H.AppUI
 {
     /// <summary>
     /// 页面定义资产。
-    /// 记录页面的层级、作用域、打开策略、输入阻断、生命周期行为和加载/销毁策略，是运行时打开页面的主要配置来源。
+    /// 记录页面的层级、作用域、打开策略、输入阻断、生命周期行为和加载/实例策略，是运行时打开页面的主要配置来源。
     /// </summary>
     [CreateAssetMenu(fileName = "UIPageDefinition", menuName = "Joi.H AppUI/Page Definition")]
     public sealed class UIPageDefinition : UIDefinitionAssetBase
@@ -51,8 +53,9 @@ namespace Joi.H.AppUI
         /// <summary>加载策略 ID；为空时使用默认加载策略。</summary>
         public string LoadStrategyId;
 
-        /// <summary>销毁策略 ID；为空时使用默认销毁策略。</summary>
-        public string DestroyStrategyId;
+        /// <summary>实例创建与释放策略 ID；为空时使用默认对称实例策略。</summary>
+        [FormerlySerializedAs("DestroyStrategyId")]
+        public string InstanceStrategyId;
 
         /// <summary>是否高频 UI，高频页面限制在 HudLayer + Hud CanvasDomain。</summary>
         public bool IsHighFrequency;

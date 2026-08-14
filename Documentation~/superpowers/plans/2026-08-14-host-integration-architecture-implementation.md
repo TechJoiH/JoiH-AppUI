@@ -185,7 +185,7 @@ registrations exactly once.
 - Produces: `IUIPageInstanceStrategy`, one-shot lease transfer, and allocation
   release as the only instance/asset release boundary.
 
-- [ ] **Step 1: Write failing transfer/allocation tests**
+- [x] **Step 1: Write failing transfer/allocation tests**
 
 ```csharp
 LeaseTransfer_Claim_MovesOwnershipExactlyOnce
@@ -194,21 +194,21 @@ CreateFailure_UnclaimedLeaseReturnsToAppUI
 PoolingStrategy_ReturnKeepsLeaseUntilPoolEviction
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
-- [ ] **Step 3: Implement one-shot transfer and allocation**
+- [x] **Step 2: Run tests and verify RED**
+- [x] **Step 3: Implement one-shot transfer and allocation**
 
 The allocation exposes the GameObject and owns an idempotent release callback.
 The transfer releases an unclaimed lease on dispose; claiming is atomic.
 
-- [ ] **Step 4: Introduce `IUIPageInstanceStrategy`**
+- [x] **Step 4: Introduce `IUIPageInstanceStrategy`**
 
 Do not expose AppUI internals. The creation request contains definition, prefab,
 parent, and the lease transfer. A valid result must claim ownership.
 
-- [ ] **Step 5: Replace `DestroyStrategyId` with `InstanceStrategyId`**
-- [ ] **Step 6: Make all open-failure and normal-release paths dispose allocation**
-- [ ] **Step 7: Run focused and complete tests**
-- [ ] **Step 8: Commit the instance ownership change**
+- [x] **Step 5: Replace `DestroyStrategyId` with `InstanceStrategyId`**
+- [x] **Step 6: Make all open-failure and normal-release paths dispose allocation**
+- [x] **Step 7: Run focused and complete tests**
+- [x] **Step 8: Commit the instance ownership change**
 
 ### Task 5: Add deterministic optional Runtime Configuration
 

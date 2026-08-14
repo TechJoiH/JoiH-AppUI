@@ -40,8 +40,8 @@ namespace Joi.H.AppUI
         /// <summary>页面 Controller。</summary>
         public PanelBaseController Controller;
 
-        /// <summary>Optional asset lease disposed when the page is released.</summary>
-        public UIAssetLease AssetLease;
+        /// <summary>Owns the symmetric instance and asset release boundary.</summary>
+        internal UIPageInstanceAllocation Allocation;
 
         /// <summary>页面生命周期状态。</summary>
         public UIPageState State;

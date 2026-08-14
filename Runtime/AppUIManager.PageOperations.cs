@@ -440,77 +440,168 @@ namespace Joi.H.AppUI
 
         private bool CreateOpenInstance(OpenContext context)
         {
-            GameObject pageObject = Instantiate(
-                context.LoadResult.Prefab,
-                context.LayerRoot.ContentRoot,
-                false);
-            pageObject.name = context.LoadResult.Prefab.name;
-            pageObject.SetActive(false);
-
-            PanelBaseController[] controllers =
-                pageObject.GetComponents<PanelBaseController>();
-            if (controllers == null || controllers.Length == 0)
-            {
-                pageInstanceReleaser.DestroyLoadedObject(
-                    pageObject,
-                    context.LoadResult.AssetLease);
-                context.LoadResult = default;
-                CompleteOpenDomain(
-                    context,
-                    UIOpenResult.Fail(UIPageOpenError.ControllerMissing));
-                return false;
-            }
-
-            if (controllers.Length > 1)
-            {
-                pageInstanceReleaser.DestroyLoadedObject(
-                    pageObject,
-                    context.LoadResult.AssetLease);
-                context.LoadResult = default;
-                CompleteOpenDomain(
-                    context,
-                    UIOpenResult.Fail(UIPageOpenError.ControllerInvalid));
-                return false;
-            }
-
-            PanelBaseController controller = controllers[0];
-            UIPageInstance instance = new UIPageInstance
-            {
-                PageId = context.Operation.PageId,
-                Definition = context.Definition,
-                LayerId = context.Definition.LayerId,
-                SceneScopeId = sceneScopeCoordinator.ResolveInstanceSceneScopeId(
-                    context.Definition,
-                    context.Operation.SceneScopeId),
-                SceneScopeStamp =
-                    sceneScopeCoordinator.ResolveInstanceSceneScopeStamp(
-                        context.Definition,
-                        context.Operation.Args.SceneScopeStamp),
-                OperationVersion = context.Operation.Version.Value,
-                GameObject = pageObject,
-                RectTransform = pageObject.transform as RectTransform,
-                Controller = controller,
-                AssetLease = context.LoadResult.AssetLease,
-                State = UIPageState.Initializing,
-            };
+            GameObject prefab = context.LoadResult.Prefab;
+            UIAssetLeaseTransfer transfer = new UIAssetLeaseTransfer(
+                context.LoadResult.AssetLease);
             context.LoadResult = default;
-            context.Instance = instance;
-            instanceRegistry.Register(instance);
+            UIPageInstanceAllocation allocation = null;
+            try
+            {
+                IUIPageInstanceStrategy strategy = ResolveInstanceStrategy(
+                    context.Definition.InstanceStrategyId);
+                if (strategy == null)
+                {
+                    throw new InvalidOperationException(
+                        "No UI page instance strategy is available.");
+                }
 
-            UIPanelContext panelContext = new UIPanelContext(
-                this,
-                noticeService,
-                context.Operation.PageId,
-                context.Definition);
-            controller.SetContext(panelContext);
-            controller.OnCreate(panelContext);
-            controller.OnInit();
-            AttachFocusScope(instance, controller, pageObject, panelContext);
-            ApplyDataAndRefresh(
-                controller,
-                context.Operation.Args.HasData,
-                context.Operation.Args.Data);
-            return true;
+                allocation = strategy.Create(
+                    new UIPageInstanceCreationRequest(
+                        context.Definition,
+                        prefab,
+                        context.LayerRoot.ContentRoot,
+                        transfer));
+                if (allocation == null || allocation.GameObject == null)
+                {
+                    RejectAllocationSafe(allocation);
+                    allocation = null;
+                    transfer.Dispose();
+                    CompleteOpenDomain(
+                        context,
+                        UIOpenResult.Fail(
+                            UIPageOpenError.InstanceCreationFailed));
+                    return false;
+                }
+
+                GameObject pageObject = allocation.GameObject;
+                PanelBaseController[] controllers =
+                    pageObject.GetComponents<PanelBaseController>();
+                if (controllers == null || controllers.Length == 0)
+                {
+                    RejectAllocationSafe(allocation);
+                    allocation = null;
+                    transfer.Dispose();
+                    CompleteOpenDomain(
+                        context,
+                        UIOpenResult.Fail(UIPageOpenError.ControllerMissing));
+                    return false;
+                }
+
+                if (controllers.Length > 1)
+                {
+                    RejectAllocationSafe(allocation);
+                    allocation = null;
+                    transfer.Dispose();
+                    CompleteOpenDomain(
+                        context,
+                        UIOpenResult.Fail(UIPageOpenError.ControllerInvalid));
+                    return false;
+                }
+
+                if (!allocation.TryAccept(transfer))
+                {
+                    RejectAllocationSafe(allocation);
+                    allocation = null;
+                    transfer.Dispose();
+                    CompleteOpenDomain(
+                        context,
+                        UIOpenResult.Fail(
+                            UIPageOpenError.InstanceCreationFailed));
+                    return false;
+                }
+
+                transfer.Dispose();
+                context.Allocation = allocation;
+                PanelBaseController controller = controllers[0];
+                UIPageInstance instance = new UIPageInstance
+                {
+                    PageId = context.Operation.PageId,
+                    Definition = context.Definition,
+                    LayerId = context.Definition.LayerId,
+                    SceneScopeId =
+                        sceneScopeCoordinator.ResolveInstanceSceneScopeId(
+                            context.Definition,
+                            context.Operation.SceneScopeId),
+                    SceneScopeStamp =
+                        sceneScopeCoordinator.ResolveInstanceSceneScopeStamp(
+                            context.Definition,
+                            context.Operation.Args.SceneScopeStamp),
+                    OperationVersion = context.Operation.Version.Value,
+                    GameObject = pageObject,
+                    RectTransform = pageObject.transform as RectTransform,
+                    Controller = controller,
+                    Allocation = allocation,
+                    State = UIPageState.Initializing,
+                };
+                context.Instance = instance;
+                instanceRegistry.Register(instance);
+
+                UIPanelContext panelContext = new UIPanelContext(
+                    this,
+                    noticeService,
+                    context.Operation.PageId,
+                    context.Definition);
+                controller.SetContext(panelContext);
+                controller.OnCreate(panelContext);
+                controller.OnInit();
+                AttachFocusScope(
+                    instance,
+                    controller,
+                    pageObject,
+                    panelContext);
+                ApplyDataAndRefresh(
+                    controller,
+                    context.Operation.Args.HasData,
+                    context.Operation.Args.Data);
+                return true;
+            }
+            catch
+            {
+                if (context.Instance == null)
+                {
+                    ReleaseAllocationSafe(allocation);
+                    context.Allocation = null;
+                    transfer.Dispose();
+                }
+
+                throw;
+            }
+        }
+
+        private static void RejectAllocationSafe(
+            UIPageInstanceAllocation allocation)
+        {
+            if (allocation == null)
+            {
+                return;
+            }
+
+            try
+            {
+                allocation.Reject();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(exception);
+            }
+        }
+
+        private static void ReleaseAllocationSafe(
+            UIPageInstanceAllocation allocation)
+        {
+            if (allocation == null)
+            {
+                return;
+            }
+
+            try
+            {
+                allocation.Dispose();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(exception);
+            }
         }
 
         private void AttachFocusScope(
@@ -1207,7 +1298,13 @@ namespace Joi.H.AppUI
                     CleanupFailedInstance(context.Instance);
                 }
 
+                context.Allocation = null;
                 context.Instance = null;
+            }
+            else if (context.Allocation != null)
+            {
+                ReleaseAllocationSafe(context.Allocation);
+                context.Allocation = null;
             }
             else if (context.LoadResult.AssetLease != null)
             {
@@ -1357,6 +1454,7 @@ namespace Joi.H.AppUI
             public readonly int Epoch;
             public UILayerRoot LayerRoot;
             public UIPageInstance Instance;
+            public UIPageInstanceAllocation Allocation;
             public UILoadResult LoadResult;
             public bool IsReopen;
         }

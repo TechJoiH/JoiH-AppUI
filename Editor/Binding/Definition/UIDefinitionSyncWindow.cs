@@ -238,7 +238,9 @@ namespace Joi.H.AppUI.Editor.Binding
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField("策略", EditorStyles.boldLabel);
             draft.PageLoadStrategyId = EditorGUILayout.TextField("LoadStrategyId", draft.PageLoadStrategyId);
-            draft.PageDestroyStrategyId = EditorGUILayout.TextField("DestroyStrategyId", draft.PageDestroyStrategyId);
+            draft.PageInstanceStrategyId = EditorGUILayout.TextField(
+                "InstanceStrategyId",
+                draft.PageInstanceStrategyId);
         }
 
         /// <summary>

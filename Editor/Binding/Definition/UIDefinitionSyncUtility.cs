@@ -118,7 +118,7 @@ namespace Joi.H.AppUI.Editor.Binding
         public bool PageCloseOnCancel;
         public bool PageCloseOnBackgroundClick;
         public string PageLoadStrategyId = string.Empty;
-        public string PageDestroyStrategyId = string.Empty;
+        public string PageInstanceStrategyId = string.Empty;
         public bool PageIsHighFrequency;
         public bool PageRequiresRaycaster;
         public bool PageEnableUpdate;
@@ -440,7 +440,7 @@ namespace Joi.H.AppUI.Editor.Binding
                     draft.PageCloseOnCancel = existing.CloseOnCancel;
                     draft.PageCloseOnBackgroundClick = existing.CloseOnBackgroundClick;
                     draft.PageLoadStrategyId = existing.LoadStrategyId ?? string.Empty;
-                    draft.PageDestroyStrategyId = existing.DestroyStrategyId ?? string.Empty;
+                    draft.PageInstanceStrategyId = existing.InstanceStrategyId ?? string.Empty;
                     draft.PageIsHighFrequency = existing.IsHighFrequency;
                     draft.PageRequiresRaycaster = existing.RequiresRaycaster;
                     draft.PageEnableUpdate = existing.EnableUpdate;
@@ -454,7 +454,7 @@ namespace Joi.H.AppUI.Editor.Binding
                 draft.PageScope = settings != null ? settings.DefaultPageScope : UIPageScope.SceneScope;
                 draft.PageOpenPolicy = settings != null ? settings.DefaultPageOpenPolicy : UIOpenPolicy.RefreshExisting;
                 draft.PageLoadStrategyId = string.Empty;
-                draft.PageDestroyStrategyId = string.Empty;
+                draft.PageInstanceStrategyId = string.Empty;
                 return;
             }
 
@@ -499,7 +499,7 @@ namespace Joi.H.AppUI.Editor.Binding
             definition.CloseOnCancel = draft.PageCloseOnCancel;
             definition.CloseOnBackgroundClick = draft.PageCloseOnBackgroundClick;
             definition.LoadStrategyId = draft.PageLoadStrategyId ?? string.Empty;
-            definition.DestroyStrategyId = draft.PageDestroyStrategyId ?? string.Empty;
+            definition.InstanceStrategyId = draft.PageInstanceStrategyId ?? string.Empty;
             definition.IsHighFrequency = draft.PageIsHighFrequency;
             definition.RequiresRaycaster = draft.PageRequiresRaycaster;
             definition.EnableUpdate = draft.PageEnableUpdate;
@@ -825,7 +825,7 @@ namespace Joi.H.AppUI.Editor.Binding
             target.PageCloseOnCancel = source.PageCloseOnCancel;
             target.PageCloseOnBackgroundClick = source.PageCloseOnBackgroundClick;
             target.PageLoadStrategyId = source.PageLoadStrategyId;
-            target.PageDestroyStrategyId = source.PageDestroyStrategyId;
+            target.PageInstanceStrategyId = source.PageInstanceStrategyId;
             target.PageIsHighFrequency = source.PageIsHighFrequency;
             target.PageRequiresRaycaster = source.PageRequiresRaycaster;
             target.PageEnableUpdate = source.PageEnableUpdate;
