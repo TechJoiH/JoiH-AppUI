@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace Joi.H.AppUI.Tests
 {
@@ -137,6 +138,120 @@ namespace Joi.H.AppUI.Tests
             Assert.That(completion.Status, Is.EqualTo(AppUIOperationStatus.Cancelled));
         }
 
+        [Test]
+        public void BindScene_OuterCancellation_CancelsCurrentOpenAndSkipsRemainingRules()
+        {
+            ManualUIOperationFactory factory = new ManualUIOperationFactory();
+            RecordingSceneExecutor executor =
+                new RecordingSceneExecutor(factory);
+            UISceneScopeCoordinator coordinator =
+                new UISceneScopeCoordinator(
+                    executor,
+                    new EmptyPageQuery(),
+                    factory,
+                    new ImmediateAppUIExecutionContext());
+
+            IUIOperation<UISceneBindResult> operation =
+                coordinator.BindScene(CreateOpenBinding("first", "second"));
+            Assert.That(operation.RequestCancellation(), Is.True);
+
+            Assert.That(operation.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+            Assert.That(
+                executor.CurrentOpen.CancellationToken.IsCancellationRequested,
+                Is.True);
+            CollectionAssert.AreEqual(new[] { "first" }, executor.OpenOrder);
+
+            executor.CompleteNextOpen(UIOpenResult.Ok(
+                new UIPageHandle(
+                    "first",
+                    UIPageState.Open,
+                    UILayerId.PopupLayer)));
+            CollectionAssert.AreEqual(new[] { "first" }, executor.OpenOrder);
+            Assert.That(operation.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+        }
+
+        [Test]
+        public void UnbindScene_OuterCancellation_CancelsCurrentCloseAndSkipsRemainingRules()
+        {
+            ManualUIOperationFactory factory = new ManualUIOperationFactory();
+            RecordingSceneExecutor executor =
+                new RecordingSceneExecutor(factory);
+            UISceneScopeCoordinator coordinator =
+                new UISceneScopeCoordinator(
+                    executor,
+                    new EmptyPageQuery(),
+                    factory,
+                    new ImmediateAppUIExecutionContext());
+
+            IUIOperation<UISceneExitResult> operation =
+                coordinator.UnbindScene(CreateBinding("first", "second"));
+            Assert.That(operation.RequestCancellation(), Is.True);
+
+            Assert.That(operation.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+            Assert.That(
+                executor.CurrentClose.CancellationToken.IsCancellationRequested,
+                Is.True);
+            CollectionAssert.AreEqual(new[] { "first" }, executor.CloseOrder);
+
+            executor.CompleteNextClose(
+                UICloseResult.Ok("first", UIPageState.Released));
+            CollectionAssert.AreEqual(new[] { "first" }, executor.CloseOrder);
+            Assert.That(operation.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+        }
+
+        [Test]
+        public void ReleaseScope_LateChildCompletionAfterCancellation_DoesNotChangeOuterTerminal()
+        {
+            ManualUIOperationFactory factory = new ManualUIOperationFactory();
+            RecordingSceneExecutor executor =
+                new RecordingSceneExecutor(factory);
+            UIPageDefinition definition =
+                ScriptableObject.CreateInstance<UIPageDefinition>();
+            definition.Scope = UIPageScope.SceneScope;
+            try
+            {
+                UISceneScopeCoordinator coordinator =
+                    new UISceneScopeCoordinator(
+                        executor,
+                        new StaticPageQuery(
+                            definition,
+                            "test-scope",
+                            "first",
+                            "second"),
+                        factory,
+                        new ImmediateAppUIExecutionContext());
+
+                IUIOperation<UIScopeReleaseResult> operation =
+                    coordinator.ReleaseScope(
+                        UIPageScope.SceneScope,
+                        "test-scope");
+                Assert.That(operation.RequestCancellation(), Is.True);
+
+                Assert.That(operation.Status,
+                    Is.EqualTo(AppUIOperationStatus.Cancelled));
+                Assert.That(
+                    executor.CurrentClose.CancellationToken
+                        .IsCancellationRequested,
+                    Is.True);
+
+                executor.CompleteNextClose(
+                    UICloseResult.Ok("first", UIPageState.Released));
+                CollectionAssert.AreEqual(
+                    new[] { "first" },
+                    executor.CloseOrder);
+                Assert.That(operation.Status,
+                    Is.EqualTo(AppUIOperationStatus.Cancelled));
+            }
+            finally
+            {
+                Object.DestroyImmediate(definition);
+            }
+        }
+
         private static SceneUIBindingData CreateBinding(
             string first,
             string second)
@@ -161,11 +276,29 @@ namespace Joi.H.AppUI.Tests
             };
         }
 
+        private static SceneUIBindingData CreateOpenBinding(
+            string first,
+            string second)
+        {
+            return new SceneUIBindingData
+            {
+                SceneId = "TestScene",
+                SceneScopeId = "test-scope",
+                OpenOnSceneReady = new List<SceneUIOpenRule>
+                {
+                    new SceneUIOpenRule { PageId = first },
+                    new SceneUIOpenRule { PageId = second, Order = 1 },
+                },
+            };
+        }
+
         private sealed class RecordingSceneExecutor : IUISceneCommandExecutor
         {
             private readonly IUIOperationFactory factory;
             private readonly Queue<IUIOperationSource<UICloseResult>> closes =
                 new Queue<IUIOperationSource<UICloseResult>>();
+            private readonly Queue<IUIOperationSource<UIOpenResult>> opens =
+                new Queue<IUIOperationSource<UIOpenResult>>();
 
             public RecordingSceneExecutor(IUIOperationFactory factory)
             {
@@ -173,12 +306,22 @@ namespace Joi.H.AppUI.Tests
             }
 
             public List<string> CloseOrder { get; } = new List<string>();
+            public List<string> OpenOrder { get; } = new List<string>();
+            public IUIOperation<UIOpenResult> CurrentOpen { get; private set; }
+            public IUIOperation<UICloseResult> CurrentClose { get; private set; }
 
             public IUIOperation<UIOpenResult> Open(
                 string pageId,
                 UIOpenArgs args)
             {
-                throw new AssertionException("Open is not expected.");
+                OpenOrder.Add(pageId);
+                IUIOperationSource<UIOpenResult> source =
+                    factory.Create<UIOpenResult>(
+                        AppUIOperationDescriptor.Create("Open:" + pageId));
+                source.TrySetRunning();
+                opens.Enqueue(source);
+                CurrentOpen = source.Operation;
+                return source.Operation;
             }
 
             public IUIOperation<UICloseResult> Close(
@@ -191,7 +334,13 @@ namespace Joi.H.AppUI.Tests
                         AppUIOperationDescriptor.Create("Close:" + pageId));
                 source.TrySetRunning();
                 closes.Enqueue(source);
+                CurrentClose = source.Operation;
                 return source.Operation;
+            }
+
+            public void CompleteNextOpen(UIOpenResult result)
+            {
+                opens.Dequeue().TrySetSucceeded(result);
             }
 
             public void CompleteNextClose(UICloseResult result)
@@ -214,6 +363,48 @@ namespace Joi.H.AppUI.Tests
 
             public bool TryGet(string pageId, out UIPageInstance instance)
             {
+                instance = null;
+                return false;
+            }
+        }
+
+        private sealed class StaticPageQuery : IUIPageInstanceQuery
+        {
+            private readonly List<UIPageInstance> instances;
+
+            public StaticPageQuery(
+                UIPageDefinition definition,
+                string sceneScopeId,
+                params string[] pageIds)
+            {
+                instances = new List<UIPageInstance>(pageIds.Length);
+                for (int i = 0; i < pageIds.Length; i++)
+                {
+                    instances.Add(new UIPageInstance
+                    {
+                        PageId = pageIds[i],
+                        Definition = definition,
+                        SceneScopeId = sceneScopeId,
+                    });
+                }
+            }
+
+            public List<UIPageInstance> GetSnapshot()
+            {
+                return new List<UIPageInstance>(instances);
+            }
+
+            public bool TryGet(string pageId, out UIPageInstance instance)
+            {
+                for (int i = 0; i < instances.Count; i++)
+                {
+                    if (instances[i].PageId == pageId)
+                    {
+                        instance = instances[i];
+                        return true;
+                    }
+                }
+
                 instance = null;
                 return false;
             }

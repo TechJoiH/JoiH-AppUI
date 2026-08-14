@@ -133,7 +133,7 @@ generation. Global pages ignore the stamp.
 ### Task 3: Add composite-operation cancellation
 
 **Files:**
-- Create: `Runtime/Operation/UICompositeOperation.cs`
+- Create: `Runtime/Operation/UICompositeOperationState.cs`
 - Modify: `Runtime/SceneBinding/UISceneScopeCoordinator.cs`
 - Test: `Tests/Editor/AppUISceneOperationTests.cs`
 
@@ -143,7 +143,7 @@ generation. Global pages ignore the stamp.
 - Produces: a testable internal composite state that owns one child subscription
   and propagates outer cancellation.
 
-- [ ] **Step 1: Write failing cancellation tests**
+- [x] **Step 1: Write failing cancellation tests**
 
 ```csharp
 BindScene_OuterCancellation_CancelsCurrentOpenAndSkipsRemainingRules
@@ -151,17 +151,17 @@ UnbindScene_OuterCancellation_CancelsCurrentCloseAndSkipsRemainingRules
 ReleaseScope_LateChildCompletionAfterCancellation_DoesNotChangeOuterTerminal
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
-- [ ] **Step 3: Implement the minimal composite state**
+- [x] **Step 2: Run focused tests and verify RED**
+- [x] **Step 3: Implement the minimal composite state**
 
 The state registers the outer token, tracks the current child operation and
 subscription, calls `RequestCancellation`, prevents later work, and disposes all
 registrations exactly once.
 
-- [ ] **Step 4: Route scene bind/unbind/release sequences through the state**
-- [ ] **Step 5: Run focused tests and verify GREEN**
-- [ ] **Step 6: Run the complete package test suites**
-- [ ] **Step 7: Commit the composite cancellation change**
+- [x] **Step 4: Route scene bind/unbind/release sequences through the state**
+- [x] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 6: Run the complete package test suites**
+- [x] **Step 7: Commit the composite cancellation change**
 
 ### Task 4: Replace asymmetric destroy strategy with instance ownership
 

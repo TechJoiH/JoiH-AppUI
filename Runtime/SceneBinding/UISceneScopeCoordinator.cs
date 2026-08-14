@@ -50,8 +50,8 @@ namespace Joi.H.AppUI
         public IUIOperation<UISceneBindResult> BindScene(
             SceneUIBindingData bindingData)
         {
-            IUIOperationSource<UISceneBindResult> source =
-                CreateSource<UISceneBindResult>("BindScene");
+            UICompositeOperationState<UISceneBindResult> composite =
+                CreateComposite<UISceneBindResult>("BindScene");
             string sceneId = bindingData != null
                 ? bindingData.SceneId
                 : string.Empty;
@@ -69,8 +69,8 @@ namespace Joi.H.AppUI
                 sceneId,
                 sceneScopeStamp,
                 new List<UIOpenResult>(rules.Count),
-                source);
-            return source.Operation;
+                composite);
+            return composite.Operation;
         }
 
         public IUIOperation<UISceneExitResult> UnbindScene(
@@ -84,8 +84,8 @@ namespace Joi.H.AppUI
             SceneUIBindingData bindingData,
             UISceneScopeStamp retired)
         {
-            IUIOperationSource<UISceneExitResult> source =
-                CreateSource<UISceneExitResult>("UnbindScene");
+            UICompositeOperationState<UISceneExitResult> composite =
+                CreateComposite<UISceneExitResult>("UnbindScene");
             string sceneId = bindingData != null
                 ? bindingData.SceneId
                 : string.Empty;
@@ -97,12 +97,12 @@ namespace Joi.H.AppUI
                 work,
                 0,
                 new List<UICloseResult>(work.Count),
-                source,
+                composite,
                 results => UISceneExitResult.FromResults(
                     sceneId,
                     sceneScopeId,
                     results));
-            return source.Operation;
+            return composite.Operation;
         }
 
         public IUIOperation<UIScopeReleaseResult> ReleaseScope(
@@ -122,8 +122,8 @@ namespace Joi.H.AppUI
             string sceneScopeId,
             UISceneScopeStamp sceneScopeStamp)
         {
-            IUIOperationSource<UIScopeReleaseResult> source =
-                CreateSource<UIScopeReleaseResult>("ReleaseScope");
+            UICompositeOperationState<UIScopeReleaseResult> composite =
+                CreateComposite<UIScopeReleaseResult>("ReleaseScope");
             string normalized = NormalizeSceneScopeId(sceneScopeId);
             if (scope == UIPageScope.GlobalScope)
             {
@@ -139,12 +139,12 @@ namespace Joi.H.AppUI
                 work,
                 0,
                 new List<UICloseResult>(work.Count),
-                source,
+                composite,
                 results => UIScopeReleaseResult.FromResults(
                     scope,
                     normalized,
                     results));
-            return source.Operation;
+            return composite.Operation;
         }
 
         public string ResolveInstanceSceneScopeId(
@@ -244,7 +244,7 @@ namespace Joi.H.AppUI
             string sceneId,
             UISceneScopeStamp sceneScopeStamp,
             List<UIOpenResult> results,
-            IUIOperationSource<UISceneBindResult> source)
+            UICompositeOperationState<UISceneBindResult> composite)
         {
             while (index < rules.Count &&
                    (rules[index] == null ||
@@ -255,7 +255,7 @@ namespace Joi.H.AppUI
 
             if (index >= rules.Count)
             {
-                source.TrySetSucceeded(UISceneBindResult.FromResults(
+                composite.TrySetSucceeded(UISceneBindResult.FromResults(
                     sceneId,
                     sceneScopeStamp.SceneScopeId,
                     results));
@@ -267,7 +267,7 @@ namespace Joi.H.AppUI
                 rule.PageId,
                 rule.OpenArgs.WithSceneScopeStamp(sceneScopeStamp));
             int nextIndex = index + 1;
-            Observe(operation, source, completion =>
+            composite.ObserveChild(operation, completion =>
             {
                 results.Add(completion.Result);
                 ContinueBind(
@@ -276,7 +276,7 @@ namespace Joi.H.AppUI
                     sceneId,
                     sceneScopeStamp,
                     results,
-                    source);
+                    composite);
             });
         }
 
@@ -284,12 +284,12 @@ namespace Joi.H.AppUI
             List<SceneCloseWork> work,
             int index,
             List<UICloseResult> results,
-            IUIOperationSource<TResult> source,
+            UICompositeOperationState<TResult> composite,
             Func<List<UICloseResult>, TResult> createResult)
         {
             if (index >= work.Count)
             {
-                source.TrySetSucceeded(createResult.Invoke(results));
+                composite.TrySetSucceeded(createResult.Invoke(results));
                 return;
             }
 
@@ -302,54 +302,16 @@ namespace Joi.H.AppUI
                     : UISceneScopeStamp.Unstamped(string.Empty));
             IUIOperation<UICloseResult> operation =
                 commandExecutor.Close(item.PageId, request);
-            Observe(operation, source, completion =>
+            composite.ObserveChild(operation, completion =>
             {
                 results.Add(completion.Result);
                 ContinueCloseWork(
                     work,
                     index + 1,
                     results,
-                    source,
+                    composite,
                     createResult);
             });
-        }
-
-        private void Observe<TExternal, TResult>(
-            IUIOperation<TExternal> operation,
-            IUIOperationSource<TResult> source,
-            Action<AppUIOperationCompletion<TExternal>> onSucceeded)
-        {
-            if (operation == null)
-            {
-                source.TrySetFailed(new InvalidOperationException(
-                    "Scene command returned a null operation."));
-                return;
-            }
-
-            UIOperationObserver.Observe(
-                operation,
-                executionContext,
-                completion =>
-                {
-                    switch (completion.Status)
-                    {
-                        case AppUIOperationStatus.Succeeded:
-                            onSucceeded.Invoke(completion);
-                            break;
-                        case AppUIOperationStatus.Cancelled:
-                            source.TrySetCancelled();
-                            break;
-                        case AppUIOperationStatus.Expired:
-                            source.TrySetExpired();
-                            break;
-                        case AppUIOperationStatus.Failed:
-                            source.TrySetFailed(
-                                completion.Exception ??
-                                new InvalidOperationException(
-                                    "Failed scene command has no exception."));
-                            break;
-                    }
-                });
         }
 
         private List<SceneCloseWork> BuildUnbindWork(
@@ -443,7 +405,7 @@ namespace Joi.H.AppUI
                    instance.Definition.Scope != UIPageScope.GlobalScope;
         }
 
-        private IUIOperationSource<TResult> CreateSource<TResult>(
+        private UICompositeOperationState<TResult> CreateComposite<TResult>(
             string name)
         {
             IUIOperationSource<TResult> source =
@@ -456,7 +418,9 @@ namespace Joi.H.AppUI
             }
 
             source.TrySetRunning();
-            return source;
+            return new UICompositeOperationState<TResult>(
+                source,
+                executionContext);
         }
 
         private static int CompareSceneOpenRule(
