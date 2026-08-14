@@ -67,12 +67,34 @@ namespace Joi.H.AppUI
                 return result;
             }
 
+            UISceneScopeStamp requestedStamp =
+                operation is UIOpenOperation openOperation
+                    ? openOperation.Args.SceneScopeStamp
+                    : operation is UICloseOperation closeOperation
+                        ? ResolveCloseSceneScopeStamp(
+                            closeOperation.Request)
+                        : UISceneScopeStamp.Unstamped(
+                            operation.SceneScopeId);
             return instance != null &&
                    !sceneScopeCoordinator.IsSceneScopeCompatible(
-                       operation.SceneScopeId,
+                       requestedStamp,
                        instance)
                 ? UIOperationCheckResult.SceneScopeInvalid
                 : UIOperationCheckResult.Valid;
+        }
+
+        private static UISceneScopeStamp ResolveCloseSceneScopeStamp(
+            UICloseRequest request)
+        {
+            string sceneScopeId =
+                UISceneScopeCoordinator.NormalizeSceneScopeId(
+                    request.SceneScopeId);
+            return string.Equals(
+                request.SceneScopeStamp.SceneScopeId,
+                sceneScopeId,
+                StringComparison.Ordinal)
+                ? request.SceneScopeStamp
+                : UISceneScopeStamp.Unstamped(sceneScopeId);
         }
 
         public IUIOperation<UIOpenResult> Open(string pageId, object data)
@@ -460,6 +482,10 @@ namespace Joi.H.AppUI
                 SceneScopeId = sceneScopeCoordinator.ResolveInstanceSceneScopeId(
                     context.Definition,
                     context.Operation.SceneScopeId),
+                SceneScopeStamp =
+                    sceneScopeCoordinator.ResolveInstanceSceneScopeStamp(
+                        context.Definition,
+                        context.Operation.Args.SceneScopeStamp),
                 OperationVersion = context.Operation.Version.Value,
                 GameObject = pageObject,
                 RectTransform = pageObject.transform as RectTransform,
@@ -867,6 +893,7 @@ namespace Joi.H.AppUI
                 }
 
                 context.Request = request;
+                context.Operation.Request = request;
                 instance.OperationVersion = operation.Version.Value;
                 presentationCoordinator.RemoveFromStack(instance);
                 presentationCoordinator.ClearFocusIfOwned(instance);
@@ -1030,6 +1057,12 @@ namespace Joi.H.AppUI
             if (!initialized || context.Epoch != runtimeEpoch)
             {
                 return UIOperationCheckResult.Expired;
+            }
+
+            if (!sceneScopeCoordinator.IsSceneScopeCurrent(
+                    context.Operation.Args.SceneScopeStamp))
+            {
+                return UIOperationCheckResult.SceneScopeInvalid;
             }
 
             return CheckOperation(

@@ -24,34 +24,74 @@ namespace Joi.H.AppUI
         /// <summary>请求所属场景作用域；空字符串表示兼容旧调用，不做严格 scope 校验。</summary>
         public string SceneScopeId { get; }
 
+        internal UISceneScopeStamp SceneScopeStamp { get; }
+
         /// <summary>默认打开参数，不携带数据、回调、取消 token 或 SceneScopeId。</summary>
         public static UIOpenArgs None
         {
-            get { return new UIOpenArgs(null, false, null, System.Threading.CancellationToken.None, string.Empty); }
+            get
+            {
+                return new UIOpenArgs(
+                    null,
+                    false,
+                    null,
+                    System.Threading.CancellationToken.None,
+                    UISceneScopeStamp.Unstamped(string.Empty));
+            }
         }
 
         /// <summary>创建一个显式携带数据的打开参数，即使 data 为 null 也会标记 HasData=true。</summary>
         public static UIOpenArgs FromExplicit(object data)
         {
-            return new UIOpenArgs(data, true, null, System.Threading.CancellationToken.None, string.Empty);
+            return new UIOpenArgs(
+                data,
+                true,
+                null,
+                System.Threading.CancellationToken.None,
+                UISceneScopeStamp.Unstamped(string.Empty));
         }
 
         /// <summary>返回带打开完成回调的新参数。</summary>
         public UIOpenArgs WithOnOpened(Action<UIOpenResult> onOpened)
         {
-            return new UIOpenArgs(Data, HasData, onOpened, CancellationToken, SceneScopeId);
+            return new UIOpenArgs(
+                Data,
+                HasData,
+                onOpened,
+                CancellationToken,
+                SceneScopeStamp);
         }
 
         /// <summary>返回带取消 token 的新参数。</summary>
         public UIOpenArgs WithCancellationToken(CancellationToken cancellationToken)
         {
-            return new UIOpenArgs(Data, HasData, OnOpened, cancellationToken, SceneScopeId);
+            return new UIOpenArgs(
+                Data,
+                HasData,
+                OnOpened,
+                cancellationToken,
+                SceneScopeStamp);
         }
 
         /// <summary>返回带 SceneScopeId 的新参数。</summary>
         public UIOpenArgs WithSceneScopeId(string sceneScopeId)
         {
-            return new UIOpenArgs(Data, HasData, OnOpened, CancellationToken, sceneScopeId);
+            return new UIOpenArgs(
+                Data,
+                HasData,
+                OnOpened,
+                CancellationToken,
+                UISceneScopeStamp.Unstamped(sceneScopeId));
+        }
+
+        internal UIOpenArgs WithSceneScopeStamp(UISceneScopeStamp stamp)
+        {
+            return new UIOpenArgs(
+                Data,
+                HasData,
+                OnOpened,
+                CancellationToken,
+                stamp);
         }
 
         private UIOpenArgs(
@@ -59,13 +99,14 @@ namespace Joi.H.AppUI
             bool hasData,
             Action<UIOpenResult> onOpened,
             CancellationToken cancellationToken,
-            string sceneScopeId)
+            UISceneScopeStamp sceneScopeStamp)
         {
             Data = data;
             HasData = hasData;
             OnOpened = onOpened;
             CancellationToken = cancellationToken;
-            SceneScopeId = sceneScopeId ?? string.Empty;
+            SceneScopeStamp = sceneScopeStamp;
+            SceneScopeId = sceneScopeStamp.SceneScopeId ?? string.Empty;
         }
     }
 }

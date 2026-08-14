@@ -17,6 +17,8 @@ namespace Joi.H.AppUI
         /// <summary>请求所属场景作用域；非空时必须与实例 SceneScopeId 匹配。</summary>
         public string SceneScopeId;
 
+        internal UISceneScopeStamp SceneScopeStamp;
+
         /// <summary>默认关闭请求：释放页面，不携带取消 token 和 SceneScopeId。</summary>
         public static UICloseRequest Default
         {
@@ -27,6 +29,7 @@ namespace Joi.H.AppUI
                     ReleaseOnClose = true,
                     CancellationToken = System.Threading.CancellationToken.None,
                     SceneScopeId = string.Empty,
+                    SceneScopeStamp = UISceneScopeStamp.Unstamped(string.Empty),
                 };
             }
         }
@@ -42,6 +45,14 @@ namespace Joi.H.AppUI
         public UICloseRequest WithSceneScopeId(string sceneScopeId)
         {
             SceneScopeId = sceneScopeId ?? string.Empty;
+            SceneScopeStamp = UISceneScopeStamp.Unstamped(SceneScopeId);
+            return this;
+        }
+
+        internal UICloseRequest WithSceneScopeStamp(UISceneScopeStamp stamp)
+        {
+            SceneScopeStamp = stamp;
+            SceneScopeId = stamp.SceneScopeId ?? string.Empty;
             return this;
         }
     }

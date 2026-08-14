@@ -219,6 +219,111 @@ namespace Joi.H.AppUI.Tests
         }
 
         [UnityTest]
+        public IEnumerator UnbindThenRebindSameScope_OldLateLoadCannotCommit()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(true, true);
+            SceneUIBindingData binding = new SceneUIBindingData
+            {
+                SceneId = "SharedScene",
+                SceneScopeId = "shared-scope",
+                OpenOnSceneReady = new List<SceneUIOpenRule>
+                {
+                    new SceneUIOpenRule
+                    {
+                        PageId = PageId,
+                        OpenArgs = UIOpenArgs.FromExplicit("scene-generation"),
+                    },
+                },
+            };
+
+            IUIOperation<UISceneBindResult> firstBind =
+                fixture.Manager.BindScene(binding);
+            Assert.That(firstBind.IsTerminal, Is.False);
+            Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(1));
+
+            IUIOperation<UISceneExitResult> unbind =
+                fixture.Manager.UnbindScene(binding);
+            yield return WaitFor(unbind);
+            Assert.That(
+                firstBind.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+
+            IUIOperation<UISceneBindResult> secondBind =
+                fixture.Manager.BindScene(binding);
+            Assert.That(secondBind.IsTerminal, Is.False);
+            Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(2));
+
+            fixture.Provider.CompleteNextPendingLoad();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.False);
+            Assert.That(secondBind.IsTerminal, Is.False);
+
+            fixture.Provider.CompleteNextPendingLoad();
+            yield return WaitFor(secondBind);
+            AssertSucceeded(secondBind, out UISceneBindResult secondResult);
+
+            Assert.That(secondResult.Success, Is.True);
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.True);
+            Assert.That(TestPanelController.CreateCount, Is.EqualTo(1));
+            Assert.That(TestPanelController.LastData,
+                Is.EqualTo("scene-generation"));
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
+        public IEnumerator ReleaseScopeThenRebind_OldGenerationCannotCommit()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(true, true);
+            SceneUIBindingData binding = new SceneUIBindingData
+            {
+                SceneId = "ReleasedScene",
+                SceneScopeId = "released-generation",
+                OpenOnSceneReady = new List<SceneUIOpenRule>
+                {
+                    new SceneUIOpenRule { PageId = PageId },
+                },
+            };
+
+            IUIOperation<UISceneBindResult> firstBind =
+                fixture.Manager.BindScene(binding);
+            UISceneScopeGenerationRegistry generations =
+                GetPrivateField<UISceneScopeGenerationRegistry>(
+                    fixture.Manager,
+                    typeof(AppUIManager),
+                    "sceneScopeGenerations");
+            UISceneScopeStamp retired =
+                generations.GetCurrent(binding.SceneScopeId);
+            IUIOperation<UIScopeReleaseResult> release =
+                fixture.Manager.ReleaseScope(
+                    UIPageScope.SceneScope,
+                    binding.SceneScopeId);
+            yield return WaitFor(release);
+            Assert.That(
+                firstBind.Status,
+                Is.EqualTo(AppUIOperationStatus.Cancelled));
+
+            IUIOperation<UISceneBindResult> secondBind =
+                fixture.Manager.BindScene(binding);
+            UISceneScopeStamp rebound =
+                generations.GetCurrent(binding.SceneScopeId);
+            Assert.That(rebound, Is.Not.EqualTo(retired));
+            Assert.That(secondBind.IsTerminal, Is.False);
+            Assert.That(fixture.Provider.AsyncLoadCount, Is.EqualTo(2));
+
+            fixture.Provider.CompleteNextPendingLoad();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            Assert.That(secondBind.IsTerminal, Is.False);
+
+            fixture.Provider.CompleteNextPendingLoad();
+            yield return WaitFor(secondBind);
+            AssertSucceeded(secondBind, out UISceneBindResult result);
+
+            Assert.That(result.Success, Is.True);
+            Assert.That(fixture.Manager.IsOpen(PageId), Is.True);
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
         public IEnumerator DelayedShow_OperationCompletesOnlyAfterTransition()
         {
             RuntimeFixture fixture = RuntimeFixture.Create(false, true);
@@ -353,6 +458,19 @@ namespace Joi.H.AppUI.Tests
             }
 
             return count;
+        }
+
+        private static T GetPrivateField<T>(
+            object target,
+            Type declaringType,
+            string fieldName)
+        {
+            FieldInfo field = declaringType.GetField(
+                fieldName,
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(field, Is.Not.Null,
+                "Missing test field: " + fieldName);
+            return (T)field.GetValue(target);
         }
 
         private static int CountActiveProviderNoticeViews(RectTransform root)
@@ -533,7 +651,8 @@ namespace Joi.H.AppUI.Tests
             private readonly GameObject noticePrefab;
             private readonly bool delayPageLoad;
             private IUIOperationFactory operationFactory;
-            private Action completePendingLoad;
+            private readonly Queue<Action> pendingLoadCompletions =
+                new Queue<Action>();
 
             public CountingAssetProvider(
                 GameObject pagePrefab,
@@ -604,16 +723,20 @@ namespace Joi.H.AppUI.Tests
                     return source.Operation;
                 }
 
-                completePendingLoad = () =>
-                    source.TrySetSucceeded(CreateSuccessResult<T>());
+                pendingLoadCompletions.Enqueue(() =>
+                    source.TrySetSucceeded(CreateSuccessResult<T>()));
                 return source.Operation;
             }
 
             public void CompletePendingLoad()
             {
-                Action completion = completePendingLoad;
-                completePendingLoad = null;
-                completion?.Invoke();
+                CompleteNextPendingLoad();
+            }
+
+            public void CompleteNextPendingLoad()
+            {
+                Assert.That(pendingLoadCompletions.Count, Is.GreaterThan(0));
+                pendingLoadCompletions.Dequeue().Invoke();
             }
 
             private UIAssetLoadResult<T> CreateSuccessResult<T>()

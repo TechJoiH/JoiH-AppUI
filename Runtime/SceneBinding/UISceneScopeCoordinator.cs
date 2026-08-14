@@ -30,17 +30,21 @@ namespace Joi.H.AppUI
         private readonly IUIPageInstanceQuery instanceQuery;
         private readonly IUIOperationFactory operationFactory;
         private readonly IAppUIExecutionContext executionContext;
+        private readonly UISceneScopeGenerationRegistry generationRegistry;
 
         public UISceneScopeCoordinator(
             IUISceneCommandExecutor executor,
             IUIPageInstanceQuery query,
             IUIOperationFactory factory,
-            IAppUIExecutionContext context)
+            IAppUIExecutionContext context,
+            UISceneScopeGenerationRegistry sceneScopeGenerations = null)
         {
             commandExecutor = executor;
             instanceQuery = query;
             operationFactory = factory;
             executionContext = context;
+            generationRegistry = sceneScopeGenerations ??
+                new UISceneScopeGenerationRegistry();
         }
 
         public IUIOperation<UISceneBindResult> BindScene(
@@ -52,6 +56,8 @@ namespace Joi.H.AppUI
                 ? bindingData.SceneId
                 : string.Empty;
             string sceneScopeId = ResolveSceneScopeId(bindingData);
+            UISceneScopeStamp sceneScopeStamp =
+                generationRegistry.Activate(sceneScopeId);
             List<SceneUIOpenRule> rules = bindingData != null &&
                                              bindingData.OpenOnSceneReady != null
                 ? new List<SceneUIOpenRule>(bindingData.OpenOnSceneReady)
@@ -61,7 +67,7 @@ namespace Joi.H.AppUI
                 rules,
                 0,
                 sceneId,
-                sceneScopeId,
+                sceneScopeStamp,
                 new List<UIOpenResult>(rules.Count),
                 source);
             return source.Operation;
@@ -69,6 +75,14 @@ namespace Joi.H.AppUI
 
         public IUIOperation<UISceneExitResult> UnbindScene(
             SceneUIBindingData bindingData)
+        {
+            UISceneScopeStamp retired = InvalidateSceneScope(bindingData);
+            return UnbindScene(bindingData, retired);
+        }
+
+        internal IUIOperation<UISceneExitResult> UnbindScene(
+            SceneUIBindingData bindingData,
+            UISceneScopeStamp retired)
         {
             IUIOperationSource<UISceneExitResult> source =
                 CreateSource<UISceneExitResult>("UnbindScene");
@@ -78,7 +92,7 @@ namespace Joi.H.AppUI
             string sceneScopeId = ResolveSceneScopeId(bindingData);
             List<SceneCloseWork> work = BuildUnbindWork(
                 bindingData,
-                sceneScopeId);
+                retired);
             ContinueCloseWork(
                 work,
                 0,
@@ -95,6 +109,19 @@ namespace Joi.H.AppUI
             UIPageScope scope,
             string sceneScopeId)
         {
+            return ReleaseScope(
+                scope,
+                sceneScopeId,
+                scope == UIPageScope.GlobalScope
+                    ? generationRegistry.GetCurrent(sceneScopeId)
+                    : generationRegistry.Invalidate(sceneScopeId));
+        }
+
+        internal IUIOperation<UIScopeReleaseResult> ReleaseScope(
+            UIPageScope scope,
+            string sceneScopeId,
+            UISceneScopeStamp sceneScopeStamp)
+        {
             IUIOperationSource<UIScopeReleaseResult> source =
                 CreateSource<UIScopeReleaseResult>("ReleaseScope");
             string normalized = NormalizeSceneScopeId(sceneScopeId);
@@ -107,7 +134,7 @@ namespace Joi.H.AppUI
 
             List<SceneCloseWork> work = scope == UIPageScope.GlobalScope
                 ? new List<SceneCloseWork>(0)
-                : BuildScopeReleaseWork(scope, normalized, null);
+                : BuildScopeReleaseWork(scope, sceneScopeStamp, null);
             ContinueCloseWork(
                 work,
                 0,
@@ -130,11 +157,30 @@ namespace Joi.H.AppUI
                 : NormalizeSceneScopeId(requestedSceneScopeId);
         }
 
+        internal UISceneScopeStamp ResolveInstanceSceneScopeStamp(
+            UIPageDefinition definition,
+            UISceneScopeStamp requestedStamp)
+        {
+            return definition != null &&
+                   definition.Scope == UIPageScope.GlobalScope
+                ? UISceneScopeStamp.Unstamped(string.Empty)
+                : requestedStamp;
+        }
+
         public bool IsSceneScopeCompatible(
             string requestedSceneScopeId,
             UIPageInstance instance)
         {
-            if (string.IsNullOrEmpty(requestedSceneScopeId) ||
+            return IsSceneScopeCompatible(
+                UISceneScopeStamp.Unstamped(requestedSceneScopeId),
+                instance);
+        }
+
+        internal bool IsSceneScopeCompatible(
+            UISceneScopeStamp requestedStamp,
+            UIPageInstance instance)
+        {
+            if (string.IsNullOrEmpty(requestedStamp.SceneScopeId) ||
                 instance == null ||
                 instance.Definition != null &&
                 instance.Definition.Scope == UIPageScope.GlobalScope)
@@ -142,10 +188,36 @@ namespace Joi.H.AppUI
                 return true;
             }
 
-            return string.Equals(
-                NormalizeSceneScopeId(requestedSceneScopeId),
-                NormalizeSceneScopeId(instance.SceneScopeId),
-                StringComparison.Ordinal);
+            UISceneScopeStamp instanceStamp = instance.SceneScopeStamp;
+            if (string.IsNullOrEmpty(instanceStamp.SceneScopeId))
+            {
+                instanceStamp = UISceneScopeStamp.Unstamped(
+                    instance.SceneScopeId);
+            }
+
+            return requestedStamp.IsCompatibleWith(instanceStamp);
+        }
+
+        internal bool IsSceneScopeCurrent(UISceneScopeStamp stamp)
+        {
+            return generationRegistry.IsCurrent(stamp);
+        }
+
+        internal UISceneScopeStamp InvalidateSceneScope(
+            SceneUIBindingData bindingData)
+        {
+            return InvalidateSceneScope(ResolveSceneScopeId(bindingData));
+        }
+
+        internal UISceneScopeStamp InvalidateSceneScope(string sceneScopeId)
+        {
+            return generationRegistry.Invalidate(sceneScopeId);
+        }
+
+        internal UISceneScopeStamp GetCurrentSceneScopeStamp(
+            string sceneScopeId)
+        {
+            return generationRegistry.GetCurrent(sceneScopeId);
         }
 
         public static string NormalizeSceneScopeId(string sceneScopeId)
@@ -170,7 +242,7 @@ namespace Joi.H.AppUI
             List<SceneUIOpenRule> rules,
             int index,
             string sceneId,
-            string sceneScopeId,
+            UISceneScopeStamp sceneScopeStamp,
             List<UIOpenResult> results,
             IUIOperationSource<UISceneBindResult> source)
         {
@@ -185,7 +257,7 @@ namespace Joi.H.AppUI
             {
                 source.TrySetSucceeded(UISceneBindResult.FromResults(
                     sceneId,
-                    sceneScopeId,
+                    sceneScopeStamp.SceneScopeId,
                     results));
                 return;
             }
@@ -193,7 +265,7 @@ namespace Joi.H.AppUI
             SceneUIOpenRule rule = rules[index];
             IUIOperation<UIOpenResult> operation = commandExecutor.Open(
                 rule.PageId,
-                rule.OpenArgs.WithSceneScopeId(sceneScopeId));
+                rule.OpenArgs.WithSceneScopeStamp(sceneScopeStamp));
             int nextIndex = index + 1;
             Observe(operation, source, completion =>
             {
@@ -202,7 +274,7 @@ namespace Joi.H.AppUI
                     rules,
                     nextIndex,
                     sceneId,
-                    sceneScopeId,
+                    sceneScopeStamp,
                     results,
                     source);
             });
@@ -224,9 +296,10 @@ namespace Joi.H.AppUI
             SceneCloseWork item = work[index];
             UICloseRequest request = UICloseRequest.Default;
             request.ReleaseOnClose = item.ReleaseOnClose;
-            request.SceneScopeId = ShouldUseScopedCloseRequest(item.PageId)
-                ? item.SceneScopeId
-                : string.Empty;
+            request = request.WithSceneScopeStamp(
+                ShouldUseScopedCloseRequest(item.PageId)
+                    ? item.SceneScopeStamp
+                    : UISceneScopeStamp.Unstamped(string.Empty));
             IUIOperation<UICloseResult> operation =
                 commandExecutor.Close(item.PageId, request);
             Observe(operation, source, completion =>
@@ -281,7 +354,7 @@ namespace Joi.H.AppUI
 
         private List<SceneCloseWork> BuildUnbindWork(
             SceneUIBindingData bindingData,
-            string sceneScopeId)
+            UISceneScopeStamp retired)
         {
             List<SceneCloseWork> work = new List<SceneCloseWork>(8);
             HashSet<string> explicitIds = new HashSet<string>(
@@ -309,24 +382,24 @@ namespace Joi.H.AppUI
                     work.Add(new SceneCloseWork(
                         rule.PageId,
                         rule.ExitAction == UISceneExitAction.Release,
-                        sceneScopeId));
+                        retired));
                 }
             }
 
             work.AddRange(BuildScopeReleaseWork(
                 UIPageScope.SceneScope,
-                sceneScopeId,
+                retired,
                 explicitIds));
             work.AddRange(BuildScopeReleaseWork(
                 UIPageScope.TemporaryScope,
-                sceneScopeId,
+                retired,
                 explicitIds));
             return work;
         }
 
         private List<SceneCloseWork> BuildScopeReleaseWork(
             UIPageScope scope,
-            string sceneScopeId,
+            UISceneScopeStamp sceneScopeStamp,
             HashSet<string> excludedIds)
         {
             List<SceneCloseWork> work = new List<SceneCloseWork>(8);
@@ -344,10 +417,7 @@ namespace Joi.H.AppUI
                     scope == UIPageScope.GlobalScope ||
                     excludedIds != null &&
                     excludedIds.Contains(instance.PageId) ||
-                    !string.Equals(
-                        NormalizeSceneScopeId(instance.SceneScopeId),
-                        sceneScopeId,
-                        StringComparison.Ordinal))
+                    !IsSceneScopeCompatible(sceneScopeStamp, instance))
                 {
                     continue;
                 }
@@ -355,7 +425,7 @@ namespace Joi.H.AppUI
                 work.Add(new SceneCloseWork(
                     instance.PageId,
                     true,
-                    sceneScopeId));
+                    sceneScopeStamp));
             }
 
             return work;
@@ -402,16 +472,16 @@ namespace Joi.H.AppUI
             public SceneCloseWork(
                 string pageId,
                 bool releaseOnClose,
-                string sceneScopeId)
+                UISceneScopeStamp sceneScopeStamp)
             {
                 PageId = pageId;
                 ReleaseOnClose = releaseOnClose;
-                SceneScopeId = sceneScopeId;
+                SceneScopeStamp = sceneScopeStamp;
             }
 
             public string PageId { get; }
             public bool ReleaseOnClose { get; }
-            public string SceneScopeId { get; }
+            public UISceneScopeStamp SceneScopeStamp { get; }
         }
     }
 }

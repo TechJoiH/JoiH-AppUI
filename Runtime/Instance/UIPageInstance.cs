@@ -20,6 +20,8 @@ namespace Joi.H.AppUI
         /// <summary>页面所属 SceneScopeId；GlobalScope 页面固定为空。</summary>
         public string SceneScopeId;
 
+        internal UISceneScopeStamp SceneScopeStamp;
+
         /// <summary>当前修改该实例的 OperationVersion，用于 await 后防止过期操作提交状态。</summary>
         public int OperationVersion;
 

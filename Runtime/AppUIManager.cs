@@ -28,6 +28,8 @@ namespace Joi.H.AppUI
         private readonly UIFocusService focusService = new UIFocusService();
         private readonly UIInputBlocker inputBlocker = new UIInputBlocker();
         private readonly UISelectionInputAuthority selectionAuthority = new UISelectionInputAuthority();
+        private readonly UISceneScopeGenerationRegistry sceneScopeGenerations =
+            new UISceneScopeGenerationRegistry();
         private readonly Dictionary<string, IUILoadStrategy> loadStrategies =
             new Dictionary<string, IUILoadStrategy>(4);
         private readonly Dictionary<string, IUIDestroyStrategy> destroyStrategies =
@@ -227,6 +229,7 @@ namespace Joi.H.AppUI
             }
 
             instanceRegistry.Clear();
+            sceneScopeGenerations.Clear();
             presentationCoordinator.Clear();
             noticeService.Dispose();
             initialized = false;
@@ -288,8 +291,19 @@ namespace Joi.H.AppUI
         {
             RequireInitialized();
             EnsureRuntimeServices();
+            UISceneScopeStamp retired =
+                sceneScopeCoordinator.InvalidateSceneScope(bindingData);
+            operationCoordinator.CancelOpenOperations(
+                operation => IsOpenOperationInSceneLifetime(
+                    operation.PageId,
+                    operation.Args.SceneScopeStamp,
+                    retired),
+                intent => IsOpenOperationInSceneLifetime(
+                    intent.PageId,
+                    intent.OpenArgs.SceneScopeStamp,
+                    retired));
             IUIOperation<UISceneExitResult> operation =
-                sceneScopeCoordinator.UnbindScene(bindingData);
+                sceneScopeCoordinator.UnbindScene(bindingData, retired);
             string sceneScopeId =
                 UISceneScopeCoordinator.ResolveSceneScopeId(bindingData);
             UIOperationObserver.Observe(
@@ -315,6 +329,9 @@ namespace Joi.H.AppUI
             EnsureRuntimeServices();
             string normalized =
                 UISceneScopeCoordinator.NormalizeSceneScopeId(sceneScopeId);
+            UISceneScopeStamp sceneScopeStamp = scope == UIPageScope.GlobalScope
+                ? sceneScopeCoordinator.GetCurrentSceneScopeStamp(normalized)
+                : sceneScopeCoordinator.InvalidateSceneScope(normalized);
             if (scope != UIPageScope.GlobalScope)
             {
                 operationCoordinator.CancelOpenOperations(
@@ -325,17 +342,24 @@ namespace Joi.H.AppUI
                         IsOpenOperationInScope(
                             operation.PageId,
                             operation.SceneScopeId,
+                            operation.Args.SceneScopeStamp,
                             scope,
-                            normalized),
+                            normalized,
+                            sceneScopeStamp),
                     intent => IsOpenOperationInScope(
                         intent.PageId,
                         intent.OpenArgs.SceneScopeId,
+                        intent.OpenArgs.SceneScopeStamp,
                         scope,
-                        normalized));
+                        normalized,
+                        sceneScopeStamp));
             }
 
             IUIOperation<UIScopeReleaseResult> operation =
-                sceneScopeCoordinator.ReleaseScope(scope, sceneScopeId);
+                sceneScopeCoordinator.ReleaseScope(
+                    scope,
+                    sceneScopeId,
+                    sceneScopeStamp);
             if (scope != UIPageScope.GlobalScope)
             {
                 UIOperationObserver.Observe(
@@ -350,8 +374,10 @@ namespace Joi.H.AppUI
         private bool IsOpenOperationInScope(
             string pageId,
             string operationSceneScopeId,
+            UISceneScopeStamp operationStamp,
             UIPageScope scope,
-            string normalizedSceneScopeId)
+            string normalizedSceneScopeId,
+            UISceneScopeStamp targetStamp)
         {
             return pageRegistry != null &&
                    pageRegistry.TryGet(pageId, out UIPageDefinition definition) &&
@@ -359,9 +385,24 @@ namespace Joi.H.AppUI
                    definition.Scope == scope &&
                    string.Equals(
                        UISceneScopeCoordinator.NormalizeSceneScopeId(
-                           operationSceneScopeId),
-                       normalizedSceneScopeId,
-                       StringComparison.Ordinal);
+                            operationSceneScopeId),
+                        normalizedSceneScopeId,
+                        StringComparison.Ordinal) &&
+                   operationStamp.IsCompatibleWith(targetStamp);
+        }
+
+        private bool IsOpenOperationInSceneLifetime(
+            string pageId,
+            UISceneScopeStamp operationStamp,
+            UISceneScopeStamp retired)
+        {
+            return pageRegistry != null &&
+                   pageRegistry.TryGet(
+                       pageId,
+                       out UIPageDefinition definition) &&
+                   definition != null &&
+                   definition.Scope != UIPageScope.GlobalScope &&
+                   operationStamp.IsCompatibleWith(retired);
         }
 
         public IUIOperation<UICancelResult> Cancel()
@@ -438,7 +479,8 @@ namespace Joi.H.AppUI
                     this,
                     this,
                     operationFactory,
-                    executionContext);
+                    executionContext,
+                    sceneScopeGenerations);
             }
 
             if (presentationCoordinator == null)

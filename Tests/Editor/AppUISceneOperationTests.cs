@@ -6,6 +6,71 @@ namespace Joi.H.AppUI.Tests
     public sealed class AppUISceneOperationTests
     {
         [Test]
+        public void SceneScopeGeneration_InvalidateThenActivate_ReturnsNewStamp()
+        {
+            UISceneScopeGenerationRegistry registry =
+                new UISceneScopeGenerationRegistry();
+
+            UISceneScopeStamp first = registry.Activate("shared-scope");
+            UISceneScopeStamp repeated = registry.Activate("shared-scope");
+            UISceneScopeStamp retired = registry.Invalidate("shared-scope");
+            UISceneScopeStamp second = registry.Activate("shared-scope");
+
+            Assert.That(first.HasGeneration, Is.True);
+            Assert.That(repeated, Is.EqualTo(first));
+            Assert.That(retired, Is.EqualTo(first));
+            Assert.That(registry.IsCurrent(first), Is.False);
+            Assert.That(second.HasGeneration, Is.True);
+            Assert.That(second, Is.Not.EqualTo(first));
+            Assert.That(registry.IsCurrent(second), Is.True);
+        }
+
+        [Test]
+        public void SceneScopeGeneration_UnstampedCompatibility_RemainsValid()
+        {
+            UISceneScopeGenerationRegistry registry =
+                new UISceneScopeGenerationRegistry();
+
+            Assert.That(
+                registry.IsCurrent(UISceneScopeStamp.Unstamped("legacy-scope")),
+                Is.True);
+        }
+
+        [Test]
+        public void SceneScopeGeneration_RetiredStampCannotTargetReboundInstance()
+        {
+            UISceneScopeGenerationRegistry registry =
+                new UISceneScopeGenerationRegistry();
+            UISceneScopeStamp retired = registry.Activate("shared-scope");
+            registry.Invalidate("shared-scope");
+            UISceneScopeStamp current = registry.Activate("shared-scope");
+            UISceneScopeCoordinator coordinator =
+                new UISceneScopeCoordinator(
+                    new RecordingSceneExecutor(
+                        new ManualUIOperationFactory()),
+                    new EmptyPageQuery(),
+                    new ManualUIOperationFactory(),
+                    new ImmediateAppUIExecutionContext(),
+                    registry);
+            UIPageInstance rebound = new UIPageInstance
+            {
+                SceneScopeId = "shared-scope",
+                SceneScopeStamp = current,
+            };
+
+            Assert.That(
+                coordinator.IsSceneScopeCompatible(retired, rebound),
+                Is.False);
+            Assert.That(
+                coordinator.IsSceneScopeCompatible(current, rebound),
+                Is.True);
+            Assert.That(
+                coordinator.IsSceneScopeCompatible("shared-scope", rebound),
+                Is.True,
+                "Unstamped direct API calls retain SceneScopeId compatibility.");
+        }
+
+        [Test]
         public void UnbindScene_WaitsForEachRule_AndContinuesAfterDomainFailure()
         {
             ManualUIOperationFactory factory = new ManualUIOperationFactory();
