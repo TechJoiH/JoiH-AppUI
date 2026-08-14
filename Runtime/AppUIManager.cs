@@ -195,6 +195,7 @@ namespace Joi.H.AppUI
             runtimeEpoch++;
             if (!initialized)
             {
+                ClearPartialInitialization();
                 ClearRuntimeDependencies();
                 return;
             }
@@ -233,6 +234,40 @@ namespace Joi.H.AppUI
             pageInstanceReleaser = null;
             noticeService = null;
             ClearRuntimeDependencies();
+        }
+
+        private void ClearPartialInitialization()
+        {
+            try
+            {
+                noticeService?.Dispose();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(exception);
+            }
+
+            try
+            {
+                presentationCoordinator?.Clear();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(exception);
+            }
+
+            instanceRegistry.Clear();
+            sceneScopeGenerations.Clear();
+            loadStrategies.Clear();
+            instanceStrategies.Clear();
+            defaultLoadStrategy = null;
+            defaultInstanceStrategy = null;
+            operationCoordinator = null;
+            sceneScopeCoordinator = null;
+            presentationCoordinator = null;
+            layerRuntimeConfigurator = null;
+            pageInstanceReleaser = null;
+            noticeService = null;
         }
 
         private void ClearRuntimeDependencies()

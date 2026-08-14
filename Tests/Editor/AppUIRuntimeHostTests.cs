@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Joi.H.AppUI.Tests
 {
@@ -315,6 +316,39 @@ namespace Joi.H.AppUI.Tests
                     null));
 
             Assert.That(second.Status,
+                Is.EqualTo(AppUIInitializationStatus.Success));
+            Assert.That(fixture.Host.IsInitialized, Is.True);
+        }
+
+        [Test]
+        public void Initialize_CriticalConfigurationFailure_CanRetryAfterCorrection()
+        {
+            fixture = HostFixture.CreateValid();
+            UIPageDefinition definition =
+                fixture.AddDefinition(string.Empty, string.Empty);
+            definition.IsCritical = true;
+            definition.LayerId = (UILayerId)int.MaxValue;
+            AppUIRuntimeDependencies dependencies =
+                fixture.CreateDependencies();
+            LogAssert.Expect(
+                LogType.Error,
+                "<Joi.H.AppUI> LayerId is invalid for page " +
+                "HostConfigurationPage: " + int.MaxValue);
+
+            AppUIInitializationResult failed =
+                fixture.Host.Initialize(dependencies);
+
+            Assert.That(failed.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus.DependencyContractFailed));
+            Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
+
+            definition.LayerId = UILayerId.SystemLayer;
+            AppUIInitializationResult retried =
+                fixture.Host.Initialize(dependencies);
+
+            Assert.That(retried.Status,
                 Is.EqualTo(AppUIInitializationStatus.Success));
             Assert.That(fixture.Host.IsInitialized, Is.True);
         }
