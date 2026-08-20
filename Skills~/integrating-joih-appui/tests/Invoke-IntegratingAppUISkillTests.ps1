@@ -241,32 +241,27 @@ function Add-ValidationEvidence {
         [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$PageContractStatus = 'Passed',
         [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$BindingStatus = 'Passed',
         [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$RuntimeLifecycleStatus = 'Passed',
-        [string]$SchemaVersion = 'joih-appui-project-validation-evidence.v1',
-        [string]$Producer = 'Joi.H.AppUI.Editor.ProjectValidation'
+        [string]$SchemaVersion = 'joih-appui-project-owned-validation-attestation.v1',
+        [string]$Producer = 'integrating-joih-appui/inspect-appui-project.ps1#create-attestation-v1'
     )
 
-    $name = if ($Kind -eq 'Binding') { 'AppUIBindingValidationEvidence.asset' } else { 'AppUIRuntimeValidationEvidence.asset' }
-    $manifestHash = Get-FileSha256 -Path (Join-Path $Root 'Packages\manifest.json')
-    $lockHash = Get-FileSha256 -Path (Join-Path $Root 'Packages\packages-lock.json')
-    $projectVersionHash = Get-FileSha256 -Path (Join-Path $Root 'ProjectSettings\ProjectVersion.txt')
-    Write-Utf8File -Path (Join-Path $Root (Join-Path 'Assets\AppUI\Validation' $name)) -Content @"
---- !u!114 &11400000
-MonoBehaviour:
-  m_Name: $Kind Validation
-  schemaVersion: $SchemaVersion
-  producer: $Producer
-  validationKind: $Kind
-  status: $Status
-  unityVersion: 6000.0.25f1
-  manifestSha256: $manifestHash
-  packagesLockSha256: $lockHash
-  projectVersionSha256: $projectVersionHash
-  hostBoundariesStatus: $HostBoundariesStatus
-  runtimeRootStatus: $RuntimeRootStatus
-  pageContractStatus: $PageContractStatus
-  bindingStatus: $BindingStatus
-  runtimeLifecycleStatus: $RuntimeLifecycleStatus
-"@
+    $attestation = Invoke-AttestationProducer -ProjectPath $Root -Kind $Kind -Status $Status `
+        -HostBoundariesStatus $HostBoundariesStatus -RuntimeRootStatus $RuntimeRootStatus `
+        -PageContractStatus $PageContractStatus -BindingStatus $BindingStatus `
+        -RuntimeLifecycleStatus $RuntimeLifecycleStatus
+    if ($SchemaVersion -ne 'joih-appui-project-owned-validation-attestation.v1' -or
+        $Producer -ne 'integrating-joih-appui/inspect-appui-project.ps1#create-attestation-v1') {
+        $attestation.schemaVersion = $SchemaVersion
+        $attestation.producer = $Producer
+        $name = if ($Kind -eq 'Binding') {
+            'AppUIBindingValidationAttestation.json'
+        }
+        else {
+            'AppUIRuntimeValidationAttestation.json'
+        }
+        Write-Utf8File -Path (Join-Path $Root (Join-Path 'Assets\AppUI\Validation' $name)) `
+            -Content ($attestation | ConvertTo-Json -Depth 12)
+    }
 }
 
 function Invoke-Inspection {
@@ -287,6 +282,25 @@ function Invoke-Inspection {
     $json = & $script:InspectorPath @arguments
     Assert-True -Condition (-not [string]::IsNullOrWhiteSpace(($json -join ''))) `
         -Message 'Inspector emitted no JSON.'
+    return (($json -join [Environment]::NewLine) | ConvertFrom-Json)
+}
+
+function Invoke-AttestationProducer {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectPath,
+        [Parameter(Mandatory = $true)][ValidateSet('Binding', 'Runtime')][string]$Kind,
+        [Parameter(Mandatory = $true)][ValidateSet('Passed', 'Failed', 'Pending')][string]$Status,
+        [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$HostBoundariesStatus = 'Passed',
+        [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$RuntimeRootStatus = 'Passed',
+        [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$PageContractStatus = 'Passed',
+        [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$BindingStatus = 'Passed',
+        [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$RuntimeLifecycleStatus = 'Passed'
+    )
+
+    $json = & $script:InspectorPath -ProjectPath $ProjectPath -CreateAttestation $Kind `
+        -AttestationStatus $Status -AttestationHostBoundariesStatus $HostBoundariesStatus `
+        -AttestationRuntimeRootStatus $RuntimeRootStatus -AttestationPageContractStatus $PageContractStatus `
+        -AttestationBindingStatus $BindingStatus -AttestationRuntimeLifecycleStatus $RuntimeLifecycleStatus
     return (($json -join [Environment]::NewLine) | ConvertFrom-Json)
 }
 
@@ -369,12 +383,12 @@ public sealed class HostBootstrap {
     Add-RuntimeRoot -Root $runtimeValidationPending
     Add-PageContract -Root $runtimeValidationPending
     Add-GeneratedBinding -Root $runtimeValidationPending
-    Add-ValidationEvidence -Root $runtimeValidationPending -Kind Binding -Status Passed `
-        -RuntimeLifecycleStatus NotRun
     Add-SourceFile -Root $runtimeValidationPending -RelativePath 'Assets\AppUI\Pages\StatusWords.cs' -Content @'
 // These words are not validation evidence: BindingInvalid RuntimeValidationPending Ready Passed.
 public static class StatusWords { }
 '@
+    Add-ValidationEvidence -Root $runtimeValidationPending -Kind Binding -Status Passed `
+        -RuntimeLifecycleStatus NotRun
 
     $completeFixture = New-UnityFixture -RunRoot $runRoot -Name 'complete' -AppUIReference $officialTag `
         -ExtraDependencies @{
@@ -520,6 +534,13 @@ PlayerSettings:
             -Message 'Valid SemVer 2.0 fragment was rejected.'
         Assert-Equal -Expected '1.2.3-0A.0+build.01' -Actual $validComplexResult.packages.appUI.version `
             -Message 'Valid complex SemVer version changed.'
+
+        $unicodeDigit = [char]0x0661
+        $unicodeNumeric = New-UnityFixture -RunRoot $runRoot -Name 'invalid-semver-unicode-digit' `
+            -AppUIReference ("https://github.com/TechJoiH/JoiH-AppUI.git#v1.2.3-1{0}" -f $unicodeDigit)
+        $unicodeNumericResult = Invoke-Inspection -ProjectPath $unicodeNumeric
+        Assert-Equal -Expected 'Branch' -Actual $unicodeNumericResult.packages.appUI.gitRefKind `
+            -Message 'A non-ASCII digit was accepted by the SemVer numeric grammar.'
     }
 
     Invoke-Test -Name 'Package URI facts redact userinfo and sensitive query values' -Body {
@@ -540,6 +561,26 @@ PlayerSettings:
             -Message 'Manifest reference was not safely redacted.'
         Assert-Equal -Expected $sanitized -Actual $result.packages.appUI.lockReference `
             -Message 'Lock reference was not safely redacted.'
+    }
+
+    Invoke-Test -Name 'Percent-encoded sensitive query keys are fully decoded before classification' -Body {
+        $deepEncodedKey = '%74oken'
+        for ($encodePass = 0; $encodePass -lt 12; $encodePass++) {
+            $deepEncodedKey = [System.Uri]::EscapeDataString($deepEncodedKey)
+        }
+        $encodedReference = 'https://github.com/TechJoiH/JoiH-AppUI.git?%74oken=ENCODED_SECRET&%2574oken=DOUBLE_ENCODED_SECRET&' + `
+            $deepEncodedKey + '=DEEPLY_ENCODED_SECRET#main'
+        $encodedFixture = New-UnityFixture -RunRoot $runRoot -Name 'encoded-query-key' `
+            -AppUIReference $encodedReference
+
+        $raw = & $script:InspectorPath -ProjectPath $encodedFixture
+        $json = $raw -join [Environment]::NewLine
+        Assert-True -Condition (-not $json.Contains('ENCODED_SECRET')) `
+            -Message 'A percent-encoded token key leaked its value.'
+        Assert-True -Condition (-not $json.Contains('DOUBLE_ENCODED_SECRET')) `
+            -Message 'A repeatedly encoded token key leaked its value.'
+        Assert-True -Condition (-not $json.Contains('DEEPLY_ENCODED_SECRET')) `
+            -Message 'A deeply encoded token key leaked its value.'
     }
 
     Invoke-Test -Name 'Defines, Samples and likely integration candidates are reported' -Body {
@@ -674,12 +715,17 @@ public sealed class SamplePanelController : PanelBaseController {
 
     Invoke-Test -Name 'Validation evidence is exact produced and bound to current project facts' -Body {
         $ready = Invoke-Inspection -ProjectPath $completeFixture
-        Assert-Equal -Expected 'joih-appui-project-validation-evidence.v1' `
+        Assert-Equal -Expected 'joih-appui-project-owned-validation-attestation.v1' `
             -Actual $ready.integration.validation.contract.schemaVersion `
             -Message 'Validation evidence schema contract was not reported.'
-        Assert-Equal -Expected 'Joi.H.AppUI.Editor.ProjectValidation' `
+        Assert-Equal -Expected 'integrating-joih-appui/inspect-appui-project.ps1#create-attestation-v1' `
             -Actual $ready.integration.validation.contract.producer `
             -Message 'Validation evidence producer contract was not reported.'
+        Assert-Equal -Expected 'Project' -Actual $ready.integration.validation.contract.owner `
+            -Message 'The attestation contract did not identify the project as its owner.'
+        Assert-Equal -Expected 'selected-project-assets-v1' `
+            -Actual $ready.integration.validation.contract.assetsDigestScope `
+            -Message 'The attestation contract did not document its canonical Assets digest scope.'
         Assert-Equal -Expected 'Bound' -Actual $ready.integration.validation.binding.evidence[0].binding `
             -Message 'Valid Binding evidence was not bound to current facts.'
 
@@ -688,9 +734,9 @@ public sealed class SamplePanelController : PanelBaseController {
         Add-RuntimeRoot -Root $handAuthored
         Add-PageContract -Root $handAuthored
         Add-GeneratedBinding -Root $handAuthored
-        Write-Utf8File -Path (Join-Path $handAuthored 'Assets\AppUI\Validation\AppUIBindingValidationEvidence.asset') `
+        Write-Utf8File -Path (Join-Path $handAuthored 'Assets\AppUI\Validation\AppUIBindingValidationAttestation.json') `
             -Content 'status: Passed'
-        Write-Utf8File -Path (Join-Path $handAuthored 'Assets\AppUI\Validation\AppUIRuntimeValidationEvidence.asset') `
+        Write-Utf8File -Path (Join-Path $handAuthored 'Assets\AppUI\Validation\AppUIRuntimeValidationAttestation.json') `
             -Content 'status: Passed'
         $handResult = Invoke-Inspection -ProjectPath $handAuthored
         Assert-True -Condition ($handResult.status -ne 'Ready') `
@@ -730,6 +776,79 @@ public sealed class SamplePanelController : PanelBaseController {
             -Message 'Stale Binding evidence was trusted.'
         Assert-True -Condition ($staleResult.integration.validation.binding.rejectedEvidence.reason -contains 'ProjectFactsMismatch') `
             -Message 'Stale project binding was not rejected explicitly.'
+    }
+
+    Invoke-Test -Name 'Attestation producer never defaults an omitted outcome to Passed' -Body {
+        $implicitPass = New-UnityFixture -RunRoot $runRoot -Name 'implicit-pass-producer' -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $implicitPass
+        Add-RuntimeRoot -Root $implicitPass
+        Add-PageContract -Root $implicitPass
+        Add-GeneratedBinding -Root $implicitPass
+        $blocked = $false
+        try {
+            & $script:InspectorPath -ProjectPath $implicitPass -CreateAttestation Binding | Out-Null
+        }
+        catch {
+            $blocked = $true
+        }
+        Assert-True -Condition $blocked -Message 'Producer silently defaulted an omitted outcome to Passed.'
+        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath `
+            (Join-Path $implicitPass 'Assets\AppUI\Validation\AppUIBindingValidationAttestation.json')) `
+            -Message 'Producer wrote an implicit Passed attestation.'
+    }
+
+    Invoke-Test -Name 'Project-owned attestation producer is deterministic and Runtime remains evidence gated' -Body {
+        $produced = New-UnityFixture -RunRoot $runRoot -Name 'project-owned-producer' -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $produced
+        Add-RuntimeRoot -Root $produced
+        Add-PageContract -Root $produced
+        Add-GeneratedBinding -Root $produced
+
+        $bindingAttestation = Invoke-AttestationProducer -ProjectPath $produced -Kind Binding -Status Passed
+        Assert-Equal -Expected 'joih-appui-project-owned-validation-attestation.v1' `
+            -Actual $bindingAttestation.schemaVersion -Message 'Producer emitted the wrong schema.'
+        Assert-Equal -Expected 'Project' -Actual $bindingAttestation.owner `
+            -Message 'Producer impersonated a package-owned validator.'
+        Assert-Equal -Expected 'integrating-joih-appui/inspect-appui-project.ps1#create-attestation-v1' `
+            -Actual $bindingAttestation.producer -Message 'Producer identity was not the real script flow.'
+        Assert-True -Condition (-not [string]::IsNullOrWhiteSpace([string]$bindingAttestation.assetsDigest)) `
+            -Message 'Producer omitted the canonical Assets digest.'
+        Assert-True -Condition ([int]$bindingAttestation.assetsFileCount -gt 0) `
+            -Message 'Producer did not bind validation-relevant Assets files.'
+
+        $bindingOnly = Invoke-Inspection -ProjectPath $produced
+        Assert-Equal -Expected 'RuntimeValidationPending' -Actual $bindingOnly.status `
+            -Message 'A Binding-only attestation produced Ready.'
+        Assert-Equal -Expected 'Unknown' -Actual $bindingOnly.integration.validation.runtime.status `
+            -Message 'Missing Runtime evidence was treated as trustworthy.'
+
+        $runtimeAttestation = Invoke-AttestationProducer -ProjectPath $produced -Kind Runtime -Status Passed
+        Assert-Equal -Expected $bindingAttestation.assetsDigest -Actual $runtimeAttestation.assetsDigest `
+            -Message 'The same validation-relevant Assets produced a different digest.'
+        $ready = Invoke-Inspection -ProjectPath $produced
+        Assert-Equal -Expected 'Ready' -Actual $ready.status `
+            -Message 'Two current project-owned pass attestations did not produce Ready.'
+    }
+
+    Invoke-Test -Name 'Validation-relevant Assets changes invalidate project-owned attestations' -Body {
+        $staleAssets = New-UnityFixture -RunRoot $runRoot -Name 'stale-assets-attestation' -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $staleAssets
+        Add-RuntimeRoot -Root $staleAssets
+        Add-PageContract -Root $staleAssets
+        Add-GeneratedBinding -Root $staleAssets
+        Add-ValidationEvidence -Root $staleAssets -Kind Binding -Status Passed
+        Add-ValidationEvidence -Root $staleAssets -Kind Runtime -Status Passed
+        $changedSource = Join-Path $staleAssets 'Assets\AppUI\Pages\SettingsPanelController.cs'
+        Write-Utf8File -Path $changedSource -Content @'
+using Joi.H.AppUI;
+public partial class SettingsPanelController : PanelBaseController { public int Revision = 2; }
+'@
+
+        $result = Invoke-Inspection -ProjectPath $staleAssets
+        Assert-True -Condition ($result.status -ne 'Ready') `
+            -Message 'Changed validation-relevant Assets retained Ready.'
+        Assert-True -Condition ($result.integration.validation.binding.rejectedEvidence.reason -contains 'AssetsDigestMismatch') `
+            -Message 'The stale Assets digest was not rejected explicitly.'
     }
 
     Invoke-Test -Name 'Source scan is bounded and reports truncation' -Body {
@@ -777,6 +896,54 @@ public sealed class SamplePanelController : PanelBaseController {
             -Message 'Truncated inspection retained a definitive Runtime pass.'
     }
 
+    Invoke-Test -Name 'Oversized selected files make inspection indeterminate' -Body {
+        $oversized = New-UnityFixture -RunRoot $runRoot -Name 'oversized-selected' -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $oversized
+        Add-RuntimeRoot -Root $oversized
+        Add-PageContract -Root $oversized
+        Add-GeneratedBinding -Root $oversized
+        Add-ValidationEvidence -Root $oversized -Kind Binding -Status Passed
+        Add-ValidationEvidence -Root $oversized -Kind Runtime -Status Passed
+        Add-SourceFile -Root $oversized -RelativePath 'Assets\AppUI\OversizedSelected.cs' `
+            -Content ('x' * 2097153)
+
+        $result = Invoke-Inspection -ProjectPath $oversized
+        Assert-Equal -Expected $true -Actual ([bool]$result.project.scanIndeterminate) `
+            -Message 'Oversized selected input did not mark inspection indeterminate.'
+        Assert-Equal -Expected $false -Actual ([bool]$result.project.scanComplete) `
+            -Message 'Oversized selected input retained a complete scan.'
+        Assert-True -Condition ($result.status -ne 'Ready') -Message 'Indeterminate oversized scan produced Ready.'
+        Assert-True -Condition ($result.integration.validation.binding.status -ne 'Passed') `
+            -Message 'Indeterminate oversized scan retained a definitive pass.'
+    }
+
+    Invoke-Test -Name 'Unreadable selected files make inspection indeterminate' -Body {
+        $unreadable = New-UnityFixture -RunRoot $runRoot -Name 'unreadable-selected' -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $unreadable
+        Add-RuntimeRoot -Root $unreadable
+        Add-PageContract -Root $unreadable
+        Add-GeneratedBinding -Root $unreadable
+        $lockedPath = Join-Path $unreadable 'Assets\AppUI\LockedSelected.cs'
+        Add-SourceFile -Root $unreadable -RelativePath 'Assets\AppUI\LockedSelected.cs' `
+            -Content 'public sealed class LockedSelected { }'
+        Add-ValidationEvidence -Root $unreadable -Kind Binding -Status Passed
+        Add-ValidationEvidence -Root $unreadable -Kind Runtime -Status Passed
+
+        $lockStream = [System.IO.File]::Open($lockedPath, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        try {
+            $result = Invoke-Inspection -ProjectPath $unreadable
+        }
+        finally {
+            $lockStream.Dispose()
+        }
+        Assert-Equal -Expected $true -Actual ([bool]$result.project.scanIndeterminate) `
+            -Message 'Unreadable selected input did not mark inspection indeterminate.'
+        Assert-Equal -Expected $false -Actual ([bool]$result.project.scanComplete) `
+            -Message 'Unreadable selected input retained a complete scan.'
+        Assert-True -Condition ($result.status -ne 'Ready') -Message 'Indeterminate unreadable scan produced Ready.'
+    }
+
     Invoke-Test -Name 'Total file and directory entry enumeration has a hard budget' -Body {
         $entryBounded = New-UnityFixture -RunRoot $runRoot -Name 'entry-bounded' -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $entryBounded
@@ -801,6 +968,23 @@ public sealed class SamplePanelController : PanelBaseController {
         Assert-True -Condition ($result.status -ne 'Ready') -Message 'Entry-truncated inspection produced Ready.'
         Assert-True -Condition ($result.integration.validation.binding.status -ne 'Passed') `
             -Message 'Entry-truncated inspection retained a definitive Binding pass.'
+    }
+
+    Invoke-Test -Name 'Exact entry budget is complete when no additional entry exists' -Body {
+        $exactBudget = New-UnityFixture -RunRoot $runRoot -Name 'exact-entry-budget' -AppUIReference $officialTag
+        for ($index = 0; $index -lt 64; $index++) {
+            Write-Utf8File -Path (Join-Path $exactBudget ("Assets\Entry{0:D2}.txt" -f $index)) -Content 'entry'
+        }
+
+        $result = Invoke-Inspection -ProjectPath $exactBudget -MaxSourceFiles 1
+        Assert-Equal -Expected 64 -Actual ([int]$result.project.maxEnumeratedEntries) `
+            -Message 'Fixture did not exercise the exact entry budget.'
+        Assert-Equal -Expected 64 -Actual ([int]$result.project.enumeratedEntryCount) `
+            -Message 'Inspector did not enumerate the exact-budget fixture.'
+        Assert-Equal -Expected $false -Actual ([bool]$result.project.entryLimitReached) `
+            -Message 'Reaching the exact final entry was misreported as truncation.'
+        Assert-Equal -Expected $true -Actual ([bool]$result.project.scanComplete) `
+            -Message 'An exactly exhausted, fully enumerated directory was marked incomplete.'
     }
 
     Invoke-Test -Name 'Directory traversal budget is reported separately' -Body {
@@ -918,6 +1102,38 @@ public sealed class SamplePanelController : PanelBaseController {
         Assert-True -Condition $blocked -Message 'Inspector allowed OutputPath to target Packages/manifest.json.'
         Assert-Equal -Expected $before -Actual ([System.IO.File]::ReadAllText($manifestPath)) `
             -Message 'Inspector modified Packages/manifest.json.'
+    }
+
+    Invoke-Test -Name 'OutputPath rejects every existing target before writing' -Body {
+        $existingOutput = Join-Path $runRoot 'existing-output.json'
+        $sentinel = 'EXISTING_OUTPUT_SENTINEL_51A77C'
+        Write-Utf8File -Path $existingOutput -Content $sentinel
+        $blocked = $false
+        try {
+            & $script:InspectorPath -ProjectPath $completeFixture -OutputPath $existingOutput | Out-Null
+        }
+        catch {
+            $blocked = $true
+        }
+
+        Assert-True -Condition $blocked -Message 'Inspector overwrote an existing OutputPath target.'
+        Assert-Equal -Expected $sentinel -Actual ([System.IO.File]::ReadAllText($existingOutput)) `
+            -Message 'Existing OutputPath content changed.'
+
+        $protectedManifest = Join-Path $completeFixture 'Packages\manifest.json'
+        $manifestBefore = [System.IO.File]::ReadAllText($protectedManifest)
+        $hardLinkOutput = Join-Path $runRoot 'existing-manifest-hardlink.json'
+        New-Item -ItemType HardLink -Path $hardLinkOutput -Target $protectedManifest | Out-Null
+        $hardLinkBlocked = $false
+        try {
+            & $script:InspectorPath -ProjectPath $completeFixture -OutputPath $hardLinkOutput | Out-Null
+        }
+        catch {
+            $hardLinkBlocked = $true
+        }
+        Assert-True -Condition $hardLinkBlocked -Message 'Inspector wrote through an existing hard-link target.'
+        Assert-Equal -Expected $manifestBefore -Actual ([System.IO.File]::ReadAllText($protectedManifest)) `
+            -Message 'Packages/manifest.json changed through a hard-link OutputPath.'
     }
 
     Invoke-Test -Name 'OutputPath rejects reparse targets and protected aliases' -Body {

@@ -2,15 +2,29 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProjectPath,
     [string]$OutputPath = '',
-    [ValidateRange(1, 10000)][int]$MaxSourceFiles = 2000
+    [ValidateRange(1, 10000)][int]$MaxSourceFiles = 2000,
+    [ValidateSet('None', 'Binding', 'Runtime')][string]$CreateAttestation = 'None',
+    [ValidateSet('Unspecified', 'Passed', 'Failed', 'Pending')][string]$AttestationStatus = 'Unspecified',
+    [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$AttestationHostBoundariesStatus = 'Passed',
+    [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$AttestationRuntimeRootStatus = 'Passed',
+    [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$AttestationPageContractStatus = 'Passed',
+    [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$AttestationBindingStatus = 'Passed',
+    [ValidateSet('Passed', 'Failed', 'Pending', 'NotRun')][string]$AttestationRuntimeLifecycleStatus = 'Passed'
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $issues = New-Object 'System.Collections.Generic.List[object]'
-$validationEvidenceSchemaVersion = 'joih-appui-project-validation-evidence.v1'
-$validationEvidenceProducer = 'Joi.H.AppUI.Editor.ProjectValidation'
+# CreateAttestation records an explicit project-owned validation outcome; it does not claim that Joi.H AppUI
+# performed validation. Its Assets digest covers every successfully read selected project file, excluding
+# imported AppUI Samples and the attestation documents themselves. Incomplete scans cannot produce attestations.
+$validationEvidenceSchemaVersion = 'joih-appui-project-owned-validation-attestation.v1'
+$validationEvidenceProducer = 'integrating-joih-appui/inspect-appui-project.ps1#create-attestation-v1'
+$validationEvidenceOwner = 'Project'
+$validationAssetsDigestAlgorithm = 'SHA-256'
+$validationAssetsDigestScope = 'selected-project-assets-v1'
+$validationAssetsDigestCanonicalization = 'ordinal-portable-path-nul-lower-sha256-lf-v1'
 
 function Add-Issue {
     param(
@@ -87,6 +101,10 @@ function Assert-SafeOutputPath {
         [AllowNull()][string]$UnityRoot
     )
 
+    if (Test-Path -LiteralPath $Path) {
+        throw ("OutputPath must not already exist: {0}" -f $Path)
+    }
+
     if (-not [string]::IsNullOrWhiteSpace($UnityRoot)) {
         foreach ($protectedDirectoryName in @('Assets', 'Packages', 'ProjectSettings')) {
             $protectedDirectory = Join-Path $UnityRoot $protectedDirectoryName
@@ -119,6 +137,46 @@ function Assert-SafeOutputPath {
             break
         }
         $current = $parent
+    }
+}
+
+function Assert-NoReparsePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $current = [System.IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -Force -LiteralPath $current
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw ("Path cannot target or traverse a reparse point: {0}" -f $current)
+            }
+        }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or
+            $parent.Equals($current, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $current = $parent
+    }
+}
+
+function Write-Utf8NoBomNewFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Content
+    )
+
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($Content)
+    $stream = $null
+    try {
+        $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $stream.Write($bytes, 0, $bytes.Length)
+    }
+    finally {
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
     }
 }
 
@@ -263,8 +321,8 @@ function Test-SemVer20 {
     if ([string]::IsNullOrWhiteSpace($Version)) {
         return $false
     }
-    $numeric = '(?:0|[1-9]\d*)'
-    $prereleaseIdentifier = '(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+    $numeric = '(?:0|[1-9][0-9]*)'
+    $prereleaseIdentifier = '(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
     $pattern = '\A{0}\.{0}\.{0}(?:-{1}(?:\.{1})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z' -f `
         $numeric, $prereleaseIdentifier
     return [regex]::IsMatch($Version, $pattern, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
@@ -301,7 +359,21 @@ function Protect-PackageReference {
         foreach ($part in ($query -split '&')) {
             $separator = $part.IndexOf('=')
             $key = if ($separator -ge 0) { $part.Substring(0, $separator) } else { $part }
-            $normalizedKey = $key.Replace('%5F', '_').Replace('%5f', '_').Replace('%2D', '-').Replace('%2d', '-')
+            $normalizedKey = $key.Replace('+', ' ')
+            $remainingDecodePasses = $normalizedKey.Length + 1
+            while ($remainingDecodePasses -gt 0) {
+                $remainingDecodePasses--
+                try {
+                    $decodedKey = [System.Uri]::UnescapeDataString($normalizedKey)
+                }
+                catch {
+                    break
+                }
+                if ($decodedKey -eq $normalizedKey) {
+                    break
+                }
+                $normalizedKey = $decodedKey
+            }
             if ($normalizedKey -match '(?i)(?:token|secret|password|passwd|credential|signature|api[_-]?key|access[_-]?key|authorization|(?:^|[_-])(?:auth|sig|code|key)(?:$|[_-]))') {
                 $protectedParts.Add($key + '=<redacted>') | Out-Null
             }
@@ -559,6 +631,11 @@ function Test-SelectedInspectionFile {
         return $false
     }
 
+    if ($File.Name -ceq 'AppUIBindingValidationAttestation.json' -or
+        $File.Name -ceq 'AppUIRuntimeValidationAttestation.json') {
+        return $true
+    }
+
     $extension = $File.Extension.ToLowerInvariant()
     if ($extension -eq '.cs' -or $extension -eq '.asmdef') {
         return $true
@@ -710,6 +787,104 @@ function Get-BindingEvidenceAggregateStatus {
     return 'Pending'
 }
 
+function Get-ExactObjectPropertyValue {
+    param(
+        [AllowNull()]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+    foreach ($property in $Object.PSObject.Properties) {
+        if ($property.Name -ceq $Name) {
+            return $property.Value
+        }
+    }
+    return $null
+}
+
+function Get-CanonicalValidationAssetsBinding {
+    param([Parameter(Mandatory = $true)]$Entries)
+
+    $records = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($entry in $Entries) {
+        $records.Add(([string]$entry.path + [char]0 + [string]$entry.sha256)) | Out-Null
+    }
+    $records.Sort([System.StringComparer]::Ordinal)
+    $canonical = if ($records.Count -eq 0) {
+        ''
+    }
+    else {
+        [string]::Join("`n", $records.ToArray()) + "`n"
+    }
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($canonical)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digestBytes = $sha256.ComputeHash($bytes)
+        $digest = [System.BitConverter]::ToString($digestBytes).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+    return [pscustomobject][ordered]@{
+        digest = $digest
+        fileCount = $records.Count
+    }
+}
+
+function New-ProjectOwnedValidationAttestation {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('Binding', 'Runtime')][string]$Kind,
+        [Parameter(Mandatory = $true)][ValidateSet('Passed', 'Failed', 'Pending')][string]$Status,
+        [Parameter(Mandatory = $true)]$ProjectBinding,
+        [Parameter(Mandatory = $true)][string]$HostBoundariesStatus,
+        [Parameter(Mandatory = $true)][string]$RuntimeRootStatus,
+        [Parameter(Mandatory = $true)][string]$PageContractStatus,
+        [Parameter(Mandatory = $true)][string]$BindingStatus,
+        [Parameter(Mandatory = $true)][string]$RuntimeLifecycleStatus
+    )
+
+    $fields = @{
+        hostBoundariesStatus = $HostBoundariesStatus
+        runtimeRootStatus = $RuntimeRootStatus
+        pageContractStatus = $PageContractStatus
+        bindingStatus = $BindingStatus
+        runtimeLifecycleStatus = $RuntimeLifecycleStatus
+    }
+    $expectedStatus = if ($Kind -eq 'Binding') {
+        Get-BindingEvidenceAggregateStatus -Fields $fields
+    }
+    else {
+        $RuntimeLifecycleStatus
+    }
+    if ($expectedStatus -eq 'NotRun' -or $Status -ne $expectedStatus) {
+        throw 'AttestationStatus is inconsistent with the supplied validation check statuses.'
+    }
+
+    return [pscustomobject][ordered]@{
+        schemaVersion = $validationEvidenceSchemaVersion
+        producer = $validationEvidenceProducer
+        owner = $validationEvidenceOwner
+        validationKind = $Kind
+        status = $Status
+        unityVersion = $ProjectBinding.unityVersion
+        manifestSha256 = $ProjectBinding.manifestSha256
+        packagesLockSha256 = $ProjectBinding.packagesLockSha256
+        projectVersionSha256 = $ProjectBinding.projectVersionSha256
+        assetsDigestAlgorithm = $validationAssetsDigestAlgorithm
+        assetsDigestScope = $validationAssetsDigestScope
+        assetsDigestCanonicalization = $validationAssetsDigestCanonicalization
+        assetsDigest = $ProjectBinding.assetsDigest
+        assetsFileCount = $ProjectBinding.assetsFileCount
+        hostBoundariesStatus = $HostBoundariesStatus
+        runtimeRootStatus = $RuntimeRootStatus
+        pageContractStatus = $PageContractStatus
+        bindingStatus = $BindingStatus
+        runtimeLifecycleStatus = $RuntimeLifecycleStatus
+    }
+}
+
 function Test-ValidationEvidence {
     param(
         [Parameter(Mandatory = $true)][string]$Content,
@@ -718,82 +893,61 @@ function Test-ValidationEvidence {
         [Parameter(Mandatory = $true)]$ProjectBinding
     )
 
-    $fieldNames = @(
-        'schemaVersion', 'producer', 'validationKind', 'status', 'unityVersion',
-        'manifestSha256', 'packagesLockSha256', 'projectVersionSha256',
-        'hostBoundariesStatus', 'runtimeRootStatus', 'pageContractStatus',
-        'bindingStatus', 'runtimeLifecycleStatus'
-    )
-    $expectedNames = New-Object 'System.Collections.Generic.HashSet[string]' `
-        ([System.StringComparer]::Ordinal)
-    foreach ($name in $fieldNames) {
-        $expectedNames.Add($name) | Out-Null
+    $document = $null
+    try {
+        $document = $Content | ConvertFrom-Json
     }
-    $fields = New-Object 'System.Collections.Generic.Dictionary[string,string]' `
-        ([System.StringComparer]::Ordinal)
-    $duplicate = $false
-    foreach ($match in [regex]::Matches($Content,
-        '(?m)^[ \t]+(?<key>[A-Za-z][A-Za-z0-9]*):[ \t]*(?<value>[^\r\n]*?)[ \t]*$')) {
-        $key = $match.Groups['key'].Value
-        if (-not $expectedNames.Contains($key)) {
-            continue
-        }
-        $value = $match.Groups['value'].Value.Trim()
-        if ($value.Length -ge 2 -and
-            (($value[0] -eq '"' -and $value[$value.Length - 1] -eq '"') -or
-            ($value[0] -eq "'" -and $value[$value.Length - 1] -eq "'"))) {
-            $value = $value.Substring(1, $value.Length - 2)
-        }
-        if ($fields.ContainsKey($key)) {
-            $duplicate = $true
-        }
-        else {
-            $fields.Add($key, $value)
-        }
+    catch {
+        $document = $null
     }
-
     $reason = $null
-    if (-not $fields.ContainsKey('schemaVersion') -or
-        $fields['schemaVersion'] -ne $validationEvidenceSchemaVersion) {
+    if ((Get-ExactObjectPropertyValue -Object $document -Name 'schemaVersion') -cne
+        $validationEvidenceSchemaVersion) {
         $reason = 'SchemaMismatch'
     }
-    elseif (-not $fields.ContainsKey('producer') -or
-        $fields['producer'] -ne $validationEvidenceProducer) {
+    elseif ((Get-ExactObjectPropertyValue -Object $document -Name 'producer') -cne
+        $validationEvidenceProducer) {
         $reason = 'ProducerMismatch'
     }
-    elseif (-not $fields.ContainsKey('validationKind') -or $fields['validationKind'] -ne $Kind) {
+    elseif ((Get-ExactObjectPropertyValue -Object $document -Name 'owner') -cne $validationEvidenceOwner) {
+        $reason = 'OwnerMismatch'
+    }
+    elseif ((Get-ExactObjectPropertyValue -Object $document -Name 'validationKind') -cne $Kind) {
         $reason = 'KindMismatch'
     }
-    elseif (-not $fields.ContainsKey('unityVersion') -or
-        -not $fields.ContainsKey('manifestSha256') -or
-        -not $fields.ContainsKey('packagesLockSha256') -or
-        -not $fields.ContainsKey('projectVersionSha256') -or
-        $fields['unityVersion'] -ne $ProjectBinding.unityVersion -or
-        $fields['manifestSha256'] -ne $ProjectBinding.manifestSha256 -or
-        $fields['packagesLockSha256'] -ne $ProjectBinding.packagesLockSha256 -or
-        $fields['projectVersionSha256'] -ne $ProjectBinding.projectVersionSha256) {
+    elseif ((Get-ExactObjectPropertyValue -Object $document -Name 'unityVersion') -cne $ProjectBinding.unityVersion -or
+        (Get-ExactObjectPropertyValue -Object $document -Name 'manifestSha256') -cne $ProjectBinding.manifestSha256 -or
+        (Get-ExactObjectPropertyValue -Object $document -Name 'packagesLockSha256') -cne $ProjectBinding.packagesLockSha256 -or
+        (Get-ExactObjectPropertyValue -Object $document -Name 'projectVersionSha256') -cne $ProjectBinding.projectVersionSha256) {
         $reason = 'ProjectFactsMismatch'
     }
+    elseif ($ProjectBinding.scanComplete -and
+        ((Get-ExactObjectPropertyValue -Object $document -Name 'assetsDigestAlgorithm') -cne
+            $validationAssetsDigestAlgorithm -or
+        (Get-ExactObjectPropertyValue -Object $document -Name 'assetsDigestScope') -cne
+            $validationAssetsDigestScope -or
+        (Get-ExactObjectPropertyValue -Object $document -Name 'assetsDigestCanonicalization') -cne
+            $validationAssetsDigestCanonicalization -or
+        (Get-ExactObjectPropertyValue -Object $document -Name 'assetsDigest') -cne $ProjectBinding.assetsDigest -or
+        [string](Get-ExactObjectPropertyValue -Object $document -Name 'assetsFileCount') -cne
+            [string]$ProjectBinding.assetsFileCount)) {
+        $reason = 'AssetsDigestMismatch'
+    }
     else {
-        foreach ($name in $fieldNames) {
-            if (-not $fields.ContainsKey($name)) {
-                $reason = 'ContractInvalid'
-                break
-            }
-        }
-        if ($null -eq $reason -and $duplicate) {
+        $status = [string](Get-ExactObjectPropertyValue -Object $document -Name 'status')
+        if ($status -notmatch '^(?:Passed|Failed|Pending)$') {
             $reason = 'ContractInvalid'
         }
-        if ($null -eq $reason -and $fields['status'] -notmatch '^(?:Passed|Failed|Pending)$') {
-            $reason = 'ContractInvalid'
-        }
+        $fields = @{}
         if ($null -eq $reason) {
             foreach ($name in @('hostBoundariesStatus', 'runtimeRootStatus', 'pageContractStatus',
                 'bindingStatus', 'runtimeLifecycleStatus')) {
-                if ($fields[$name] -notmatch '^(?:Passed|Failed|Pending|NotRun)$') {
+                $value = [string](Get-ExactObjectPropertyValue -Object $document -Name $name)
+                if ($value -notmatch '^(?:Passed|Failed|Pending|NotRun)$') {
                     $reason = 'ContractInvalid'
                     break
                 }
+                $fields[$name] = $value
             }
         }
         if ($null -eq $reason) {
@@ -803,7 +957,7 @@ function Test-ValidationEvidence {
             else {
                 $fields['runtimeLifecycleStatus']
             }
-            if ($expectedStatus -eq 'NotRun' -or $fields['status'] -ne $expectedStatus) {
+            if ($expectedStatus -eq 'NotRun' -or $status -ne $expectedStatus) {
                 $reason = 'ContractInvalid'
             }
         }
@@ -823,11 +977,14 @@ function Test-ValidationEvidence {
         accepted = $true
         evidence = [pscustomobject][ordered]@{
             path = $RelativePath
-            status = $fields['status']
-            binding = 'Bound'
-            schemaVersion = $fields['schemaVersion']
-            producer = $fields['producer']
-            validationKind = $fields['validationKind']
+            status = $status
+            binding = if ($ProjectBinding.scanComplete) { 'Bound' } else { 'Indeterminate' }
+            schemaVersion = Get-ExactObjectPropertyValue -Object $document -Name 'schemaVersion'
+            producer = Get-ExactObjectPropertyValue -Object $document -Name 'producer'
+            owner = Get-ExactObjectPropertyValue -Object $document -Name 'owner'
+            validationKind = Get-ExactObjectPropertyValue -Object $document -Name 'validationKind'
+            assetsDigest = Get-ExactObjectPropertyValue -Object $document -Name 'assetsDigest'
+            assetsFileCount = Get-ExactObjectPropertyValue -Object $document -Name 'assetsFileCount'
             checks = [pscustomobject][ordered]@{
                 hostBoundariesStatus = $fields['hostBoundariesStatus']
                 runtimeRootStatus = $fields['runtimeRootStatus']
@@ -890,6 +1047,10 @@ $projectFacts = [ordered]@{
     enumeratedDirectoryEntryCount = 0
     entryLimitReached = $false
     scanLimitReached = $false
+    scanIndeterminate = $false
+    scanComplete = $false
+    validationRelevantAssetsDigest = $null
+    validationRelevantAssetCount = 0
 }
 $emptyAppUIFacts = [pscustomobject][ordered]@{
     installed = $false
@@ -948,7 +1109,11 @@ $integrationFacts = [ordered]@{
         contract = [ordered]@{
             schemaVersion = $validationEvidenceSchemaVersion
             producer = $validationEvidenceProducer
-            binding = 'UnityVersion+ManifestSha256+PackagesLockSha256+ProjectVersionSha256'
+            owner = $validationEvidenceOwner
+            binding = 'UnityVersion+ManifestSha256+PackagesLockSha256+ProjectVersionSha256+AssetsDigest'
+            assetsDigestAlgorithm = $validationAssetsDigestAlgorithm
+            assetsDigestScope = $validationAssetsDigestScope
+            assetsDigestCanonicalization = $validationAssetsDigestCanonicalization
         }
         binding = [ordered]@{ status = 'Unknown'; evidence = @(); rejectedEvidence = @() }
         runtime = [ordered]@{ status = 'Unknown'; evidence = @(); rejectedEvidence = @() }
@@ -1012,6 +1177,9 @@ else {
         manifestSha256 = if ($packageInputsSafe) { Get-FileSha256 -Path $manifestPath } else { $null }
         packagesLockSha256 = if ($packageInputsSafe) { Get-FileSha256 -Path $lockPath } else { $null }
         projectVersionSha256 = Get-FileSha256 -Path $projectVersionPath
+        assetsDigest = $null
+        assetsFileCount = 0
+        scanComplete = $false
     }
 
     $appUIManifestReference = if ($manifestDependencies.ContainsKey('com.joih.appui')) {
@@ -1081,6 +1249,9 @@ else {
     $runtimeValidationEvidence = New-Object 'System.Collections.Generic.List[object]'
     $bindingRejectedEvidence = New-Object 'System.Collections.Generic.List[object]'
     $runtimeRejectedEvidence = New-Object 'System.Collections.Generic.List[object]'
+    $bindingAttestationInputs = New-Object 'System.Collections.Generic.List[object]'
+    $runtimeAttestationInputs = New-Object 'System.Collections.Generic.List[object]'
+    $validationAssetEntries = New-Object 'System.Collections.Generic.List[object]'
     $basicSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $customSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $tmpSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -1130,12 +1301,12 @@ else {
         try {
             $entryEnumerator = [System.IO.Directory]::EnumerateFileSystemEntries($directory).GetEnumerator()
             while (-not $stopScan) {
+                if (-not $entryEnumerator.MoveNext()) {
+                    break
+                }
                 if ($projectFacts.enumeratedEntryCount -ge $projectFacts.maxEnumeratedEntries) {
                     $projectFacts.entryLimitReached = $true
                     $stopScan = $true
-                    break
-                }
-                if (-not $entryEnumerator.MoveNext()) {
                     break
                 }
                 $entryPath = $entryEnumerator.Current
@@ -1193,6 +1364,7 @@ else {
                 continue
             }
             if ($fileInfo.Length -gt 2097152) {
+                $projectFacts.scanIndeterminate = $true
                 Add-Issue -Code 'SOURCE_FILE_TOO_LARGE' -Severity 'Warning' `
                     -Message 'A selected inspection file exceeded the 2 MiB read limit.' -Path $relativePath
                 continue
@@ -1202,9 +1374,45 @@ else {
                 $content = [System.IO.File]::ReadAllText($fileInfo.FullName)
             }
             catch {
+                $projectFacts.scanIndeterminate = $true
                 Add-Issue -Code 'SOURCE_FILE_UNREADABLE' -Severity 'Warning' `
                     -Message 'A selected inspection file could not be read.' -Path $relativePath
                 continue
+            }
+
+            $isImportedAppUISample = $relativePath -match `
+                '^Assets/Samples/[^/]+/[^/]+/(?:Basic Integration|Custom Host Integration|TextMeshPro Integration)(?:/|$)'
+            $isBindingAttestation = $fileInfo.Name -ceq 'AppUIBindingValidationAttestation.json'
+            $isRuntimeAttestation = $fileInfo.Name -ceq 'AppUIRuntimeValidationAttestation.json'
+            $isAttestationMetadata = ($isBindingAttestation -or $isRuntimeAttestation -or
+                $fileInfo.Name -ceq 'AppUIBindingValidationEvidence.asset' -or
+                $fileInfo.Name -ceq 'AppUIRuntimeValidationEvidence.asset')
+            if (-not $isImportedAppUISample -and -not $isAttestationMetadata) {
+                $assetSha256 = Get-FileSha256 -Path $fileInfo.FullName
+                if ([string]::IsNullOrWhiteSpace([string]$assetSha256)) {
+                    $projectFacts.scanIndeterminate = $true
+                    Add-Issue -Code 'SOURCE_FILE_HASH_UNAVAILABLE' -Severity 'Warning' `
+                        -Message 'A selected inspection file could not be bound into the canonical Assets digest.' `
+                        -Path $relativePath
+                }
+                else {
+                    $validationAssetEntries.Add([pscustomobject][ordered]@{
+                        path = $relativePath
+                        sha256 = $assetSha256
+                    }) | Out-Null
+                }
+            }
+            if ($isBindingAttestation) {
+                $bindingAttestationInputs.Add([pscustomobject][ordered]@{
+                    path = $relativePath
+                    content = $content
+                }) | Out-Null
+            }
+            elseif ($isRuntimeAttestation) {
+                $runtimeAttestationInputs.Add([pscustomobject][ordered]@{
+                    path = $relativePath
+                    content = $content
+                }) | Out-Null
             }
 
             if ($fileInfo.Extension -eq '.asmdef') {
@@ -1224,8 +1432,6 @@ else {
                 }
             }
 
-            $isImportedAppUISample = $relativePath -match `
-                '^Assets/Samples/[^/]+/[^/]+/(?:Basic Integration|Custom Host Integration|TextMeshPro Integration)(?:/|$)'
             if ($isImportedAppUISample) {
                 continue
             }
@@ -1302,31 +1508,11 @@ else {
                         -Key $relativePath `
                         -Candidate (New-Candidate -Path $relativePath -Evidence 'matches UIBindingSettings asset')
                 }
-
-                if ($fileInfo.Name -ceq 'AppUIBindingValidationEvidence.asset') {
-                    $validationResult = Test-ValidationEvidence -Content $content -Kind Binding `
-                        -RelativePath $relativePath -ProjectBinding $projectBinding
-                    if ($validationResult.accepted) {
-                        $bindingValidationEvidence.Add($validationResult.evidence) | Out-Null
-                    }
-                    else {
-                        $bindingRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
-                    }
-                }
-                elseif ($fileInfo.Name -ceq 'AppUIRuntimeValidationEvidence.asset') {
-                    $validationResult = Test-ValidationEvidence -Content $content -Kind Runtime `
-                        -RelativePath $relativePath -ProjectBinding $projectBinding
-                    if ($validationResult.accepted) {
-                        $runtimeValidationEvidence.Add($validationResult.evidence) | Out-Null
-                    }
-                    else {
-                        $runtimeRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
-                    }
-                }
             }
             }
         }
         catch {
+            $projectFacts.scanIndeterminate = $true
             Add-Issue -Code 'SOURCE_DIRECTORY_UNREADABLE' -Severity 'Warning' `
                 -Message 'An Assets directory entry could not be enumerated.' -Path $relativeDirectory
         }
@@ -1339,6 +1525,8 @@ else {
 
     $projectFacts.scanLimitReached = ($projectFacts.sourceFileLimitReached -or
         $projectFacts.directoryLimitReached -or $projectFacts.entryLimitReached)
+    $projectFacts.scanComplete = (-not $projectFacts.scanLimitReached -and
+        -not $projectFacts.scanIndeterminate)
     if ($projectFacts.sourceFileLimitReached) {
         Add-Issue -Code 'SOURCE_SCAN_LIMIT_REACHED' -Severity 'Warning' `
             -Message ("Assets inspection stopped at MaxSourceFiles={0}." -f $MaxSourceFiles)
@@ -1350,6 +1538,86 @@ else {
     if ($projectFacts.entryLimitReached) {
         Add-Issue -Code 'SOURCE_ENTRY_LIMIT_REACHED' -Severity 'Warning' `
             -Message ("Assets traversal stopped at MaxEnumeratedEntries={0}." -f $projectFacts.maxEnumeratedEntries)
+    }
+    if ($projectFacts.scanIndeterminate) {
+        Add-Issue -Code 'SOURCE_SCAN_INDETERMINATE' -Severity 'Warning' `
+            -Message 'One or more selected inputs or directory enumerations could not be inspected completely.'
+    }
+
+    $assetsBinding = Get-CanonicalValidationAssetsBinding -Entries $validationAssetEntries
+    $projectFacts.validationRelevantAssetsDigest = $assetsBinding.digest
+    $projectFacts.validationRelevantAssetCount = $assetsBinding.fileCount
+    $projectBinding.assetsDigest = $assetsBinding.digest
+    $projectBinding.assetsFileCount = $assetsBinding.fileCount
+    $projectBinding.scanComplete = $projectFacts.scanComplete
+
+    if ($CreateAttestation -ne 'None') {
+        if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
+            throw 'OutputPath cannot be combined with CreateAttestation.'
+        }
+        if (-not $packageFacts.appUI.installed) {
+            throw 'CreateAttestation requires an installed com.joih.appui package.'
+        }
+        if ($AttestationStatus -eq 'Unspecified') {
+            throw 'CreateAttestation requires an explicit AttestationStatus outcome.'
+        }
+        if (-not $projectFacts.scanComplete) {
+            throw 'CreateAttestation requires a complete, determinate Assets scan.'
+        }
+        foreach ($bindingValue in @($projectBinding.unityVersion, $projectBinding.manifestSha256,
+            $projectBinding.packagesLockSha256, $projectBinding.projectVersionSha256,
+            $projectBinding.assetsDigest)) {
+            if ([string]::IsNullOrWhiteSpace([string]$bindingValue)) {
+                throw 'CreateAttestation could not bind all required Unity, package, and Assets facts.'
+            }
+        }
+
+        $attestation = New-ProjectOwnedValidationAttestation -Kind $CreateAttestation `
+            -Status $AttestationStatus -ProjectBinding $projectBinding `
+            -HostBoundariesStatus $AttestationHostBoundariesStatus `
+            -RuntimeRootStatus $AttestationRuntimeRootStatus `
+            -PageContractStatus $AttestationPageContractStatus `
+            -BindingStatus $AttestationBindingStatus `
+            -RuntimeLifecycleStatus $AttestationRuntimeLifecycleStatus
+        $attestationName = if ($CreateAttestation -eq 'Binding') {
+            'AppUIBindingValidationAttestation.json'
+        }
+        else {
+            'AppUIRuntimeValidationAttestation.json'
+        }
+        $attestationPath = Join-Path $unityRoot (Join-Path 'Assets\AppUI\Validation' $attestationName)
+        if (Test-Path -LiteralPath $attestationPath) {
+            throw ("Attestation target already exists: {0}" -f $attestationPath)
+        }
+        Assert-NoReparsePath -Path $attestationPath
+        $attestationDirectory = Split-Path -Parent $attestationPath
+        [System.IO.Directory]::CreateDirectory($attestationDirectory) | Out-Null
+        Assert-NoReparsePath -Path $attestationPath
+        $attestationJson = $attestation | ConvertTo-Json -Depth 12
+        Write-Utf8NoBomNewFile -Path $attestationPath -Content $attestationJson
+        Write-Output $attestationJson
+        return
+    }
+
+    foreach ($input in $bindingAttestationInputs) {
+        $validationResult = Test-ValidationEvidence -Content $input.content -Kind Binding `
+            -RelativePath $input.path -ProjectBinding $projectBinding
+        if ($validationResult.accepted) {
+            $bindingValidationEvidence.Add($validationResult.evidence) | Out-Null
+        }
+        else {
+            $bindingRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
+        }
+    }
+    foreach ($input in $runtimeAttestationInputs) {
+        $validationResult = Test-ValidationEvidence -Content $input.content -Kind Runtime `
+            -RelativePath $input.path -ProjectBinding $projectBinding
+        if ($validationResult.accepted) {
+            $runtimeValidationEvidence.Add($validationResult.evidence) | Out-Null
+        }
+        else {
+            $runtimeRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
+        }
     }
 
     $integrationFacts.defines = @($defines | Sort-Object)
@@ -1405,7 +1673,7 @@ else {
     $bindingGenerationValidationStatus = Get-ValidationCheckState -Evidence $bindingValidationEvidence `
         -CheckName 'bindingStatus'
 
-    $inspectionComplete = -not $projectFacts.scanLimitReached
+    $inspectionComplete = $projectFacts.scanComplete
     $integrationFacts.hostBoundaries.complete = ($inspectionComplete -and $hostBoundariesCandidateCoverage -and
         $hostBoundariesValidationStatus -eq 'Passed')
     $integrationFacts.runtimeRoot.complete = ($inspectionComplete -and $runtimeRootCandidateCoverage -and
@@ -1417,7 +1685,7 @@ else {
 
     $displayBindingValidationStatus = $bindingValidationStatus
     $displayRuntimeValidationStatus = $runtimeValidationStatus
-    if ($projectFacts.scanLimitReached) {
+    if (-not $projectFacts.scanComplete) {
         if ($displayBindingValidationStatus -eq 'Passed') {
             $displayBindingValidationStatus = 'Indeterminate'
         }
@@ -1491,7 +1759,7 @@ else {
         }
     }
     else {
-        if ($projectFacts.scanLimitReached) {
+        if (-not $projectFacts.scanComplete) {
             $status = 'RuntimeValidationPending'
             Add-Issue -Code 'INSPECTION_TRUNCATED' -Severity 'Warning' `
                 -Message 'Truncated project inspection cannot produce a definitive Ready status.'
@@ -1521,8 +1789,7 @@ if ($null -ne $resolvedOutputPath) {
         [System.IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
     }
     Assert-SafeOutputPath -Path $resolvedOutputPath -UnityRoot $unityRoot
-    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($resolvedOutputPath, $json, $utf8NoBom)
+    Write-Utf8NoBomNewFile -Path $resolvedOutputPath -Content $json
 }
 
 Write-Output $json
