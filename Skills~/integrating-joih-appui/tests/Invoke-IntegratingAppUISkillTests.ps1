@@ -32,6 +32,40 @@ function Assert-Equal {
     }
 }
 
+function Assert-TextContainsAll {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][string[]]$Needles,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    foreach ($needle in $Needles) {
+        if ($Content.IndexOf($needle, [System.StringComparison]::Ordinal) -lt 0) {
+            throw ("{0} Missing <{1}>." -f $Message, $needle)
+        }
+    }
+}
+
+function Assert-TextSequence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][string[]]$Tokens,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    $offset = 0
+    foreach ($token in $Tokens) {
+        $index = $Content.IndexOf(
+            $token,
+            $offset,
+            [System.StringComparison]::Ordinal)
+        if ($index -lt 0) {
+            throw ("{0} Missing or out of order <{1}>." -f $Message, $token)
+        }
+        $offset = $index + $token.Length
+    }
+}
+
 function Invoke-Test {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -570,6 +604,8 @@ function Assert-Status {
 }
 
 $skillRoot = Split-Path -Parent $PSScriptRoot
+$script:SkillPath = Join-Path $skillRoot 'SKILL.md'
+$script:ReferencesRoot = Join-Path $skillRoot 'references'
 $script:InspectorPath = Join-Path $skillRoot 'scripts\inspect-appui-project.ps1'
 $script:AttestationProducerPath = Join-Path $skillRoot 'scripts\new-appui-validation-attestation.ps1'
 
@@ -588,6 +624,131 @@ New-FakeUnityExecutable -Path $script:FakeUnityPath
 
 try {
     $officialTag = 'https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1'
+
+    Invoke-Test -Name 'Skill routes only to existing Task 5 references' -Body {
+        Assert-True -Condition (Test-Path -LiteralPath $script:SkillPath -PathType Leaf) `
+            -Message ("Missing skill entrypoint: {0}" -f $script:SkillPath)
+        $skillText = [System.IO.File]::ReadAllText($script:SkillPath)
+        $linkMatches = [regex]::Matches(
+            $skillText,
+            '(?<!\!)\[[^\]]+\]\((?<target>[^)\s]+)(?:\s+"[^"]*")?\)')
+        $localTargets = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($match in $linkMatches) {
+            $rawTarget = $match.Groups['target'].Value.Trim('<', '>')
+            if ($rawTarget.StartsWith('#') -or
+                $rawTarget -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') {
+                continue
+            }
+
+            $target = ($rawTarget -split '[?#]', 2)[0].Replace('\', '/')
+            $localTargets.Add($target) | Out-Null
+            $platformTarget = $target.Replace(
+                '/',
+                [System.IO.Path]::DirectorySeparatorChar)
+            $resolved = [System.IO.Path]::GetFullPath(
+                (Join-Path $skillRoot $platformTarget))
+            $rootPrefix = [System.IO.Path]::GetFullPath($skillRoot).TrimEnd('\', '/') +
+                [System.IO.Path]::DirectorySeparatorChar
+            Assert-True -Condition $resolved.StartsWith(
+                $rootPrefix,
+                [System.StringComparison]::OrdinalIgnoreCase) `
+                -Message ("Skill link escapes the skill root: {0}" -f $rawTarget)
+            Assert-True -Condition (Test-Path -LiteralPath $resolved -PathType Leaf) `
+                -Message ("Skill link target does not exist: {0}" -f $rawTarget)
+        }
+
+        foreach ($expected in @(
+                'references/installation.md',
+                'references/host-boundaries.md',
+                'references/runtime-root.md')) {
+            Assert-True -Condition ($localTargets -contains $expected) `
+                -Message ("Task 5 route is missing from SKILL.md: {0}" -f $expected)
+        }
+    }
+
+    Invoke-Test -Name 'Installation reference preserves immutable release and support policy' -Body {
+        $path = Join-Path $script:ReferencesRoot 'installation.md'
+        Assert-True -Condition (Test-Path -LiteralPath $path -PathType Leaf) `
+            -Message ("Missing installation reference: {0}" -f $path)
+        $content = [System.IO.File]::ReadAllText($path)
+        Assert-TextSequence -Content $content -Tokens @(
+            'immutable GitHub Tag/Release',
+            'supported-unity-versions.md',
+            'package.json and migration guide at that Tag',
+            'installed package and Samples',
+            'tutorials') -Message 'Installation source-of-truth order changed.'
+        Assert-TextContainsAll -Content $content -Needles @(
+            '$officialTag',
+            'v0.4.0-pre.1',
+            'https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1',
+            'Packages/manifest.json',
+            'Officially Supported',
+            'Community Verified',
+            'Community Port',
+            'Unsupported',
+            'Known Incompatible') -Message 'Installation contract is incomplete.'
+        Assert-True -Condition (-not $content.Contains('JoiH-AppUI.git#main')) `
+            -Message 'Installation reference recommends main.'
+    }
+
+    Invoke-Test -Name 'Host-boundary reference covers ownership cleanup and neutral choices' -Body {
+        $path = Join-Path $script:ReferencesRoot 'host-boundaries.md'
+        Assert-True -Condition (Test-Path -LiteralPath $path -PathType Leaf) `
+            -Message ("Missing host-boundary reference: {0}" -f $path)
+        $content = [System.IO.File]::ReadAllText($path)
+        Assert-TextContainsAll -Content $content -Needles @(
+            'IUIOperationFactory',
+            'IUIAssetProvider',
+            'IAppUIExecutionContext',
+            'AppUIRuntimeDependencies',
+            'callback',
+            'Task',
+            'Awaitable',
+            'coroutine',
+            'Addressables',
+            'AssetBundle',
+            'main-thread dispatcher',
+            'UIAssetLease',
+            'idempotent',
+            'late result',
+            'IsCurrent',
+            'Post',
+            'Register',
+            'IDisposable',
+            'Basic Integration',
+            'Custom Host Integration') -Message 'Host-boundary contract is incomplete.'
+    }
+
+    Invoke-Test -Name 'Runtime-root reference requires explicit initialization scene release and shutdown order' -Body {
+        $path = Join-Path $script:ReferencesRoot 'runtime-root.md'
+        Assert-True -Condition (Test-Path -LiteralPath $path -PathType Leaf) `
+            -Message ("Missing runtime-root reference: {0}" -f $path)
+        $content = [System.IO.File]::ReadAllText($path)
+        Assert-TextContainsAll -Content $content -Needles @(
+            'EventSystem',
+            'AppUIManager',
+            'AppUIRuntimeHost',
+            'UILayerRoot',
+            'UICanvasDomain',
+            'UIPageDefinitionRegistry',
+            'AppUIRuntimeProfile',
+            'AppUIInitializationResult result',
+            'if (!result.Success)',
+            'result.Status',
+            'BindScene',
+            'UnbindScene',
+            'ReleaseScope',
+            'SceneScopeId',
+            'generation',
+            'rebind') -Message 'Runtime-root contract is incomplete.'
+        Assert-TextSequence -Content $content -Tokens @(
+            'stop new UI requests',
+            'ReleaseScope or UnbindScene',
+            'AppUIRuntimeHost.Shutdown',
+            'evict project pools and return Leases',
+            'stop asset provider',
+            'destroy project-owned UI root') -Message 'Runtime shutdown order changed.'
+    }
 
     Invoke-Test -Name 'Inspector is a pure read-only command with only explicit report output' -Body {
         $tokens = $null
