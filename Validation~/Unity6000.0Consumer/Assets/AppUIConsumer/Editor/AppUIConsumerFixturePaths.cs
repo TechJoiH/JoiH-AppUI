@@ -16,6 +16,7 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
         public const string PopupPrefab = Prefabs + "/Popup.prefab";
         public const string BindingPrefab = Prefabs + "/BindingPage.prefab";
         public const string FocusPrefab = Prefabs + "/FocusList.prefab";
+        public const string NoticePrefab = Prefabs + "/Notice.prefab";
         public const string Registry =
             Definitions + "/ConsumerPageRegistry.asset";
         public const string LayerSettings =
@@ -26,6 +27,18 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
             Settings + "/ConsumerBindingSettings.asset";
         public const string Scene =
             Scenes + "/AppUIConsumerValidation.unity";
+
+        public static string GetTextMeshProSampleRoot(string packageVersion)
+        {
+            if (string.IsNullOrWhiteSpace(packageVersion))
+                throw new ArgumentException("Package version is required.", nameof(packageVersion));
+            return "Assets/Samples/Joi.H AppUI/" + packageVersion +
+                "/TextMeshPro Integration";
+        }
+
+        public static string GetTextMeshProSampleScene(string packageVersion) =>
+            GetTextMeshProSampleRoot(packageVersion) +
+            "/Scenes/TextMeshProIntegration.unity";
 
         public static string GetValidationOutputDirectory()
         {

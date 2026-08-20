@@ -1,0 +1,22 @@
+{
+  "name": "Joi.H.AppUI.Samples.TextMeshPro.Editor",
+  "rootNamespace": "Joi.H.AppUI.Samples.TextMeshPro.Editor",
+  "references": [
+    "Joi.H.AppUI.Runtime",
+    "Joi.H.AppUI.Editor",
+    "Joi.H.AppUI.Integrations.TextMeshPro.Runtime",
+    "Joi.H.AppUI.Integrations.TextMeshPro.Editor",
+    "Joi.H.AppUI.Samples.TextMeshPro",
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": ["JOIH_APPUI_TMP"],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

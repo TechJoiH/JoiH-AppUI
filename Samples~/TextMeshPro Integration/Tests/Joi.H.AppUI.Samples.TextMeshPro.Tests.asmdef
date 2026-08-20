@@ -1,0 +1,25 @@
+{
+  "name": "Joi.H.AppUI.Samples.TextMeshPro.Tests",
+  "rootNamespace": "Joi.H.AppUI.Samples.TextMeshPro.Tests",
+  "references": [
+    "Joi.H.AppUI.Core",
+    "Joi.H.AppUI.Runtime",
+    "Joi.H.AppUI.Editor",
+    "Joi.H.AppUI.Integrations.TextMeshPro.Runtime",
+    "Joi.H.AppUI.Integrations.TextMeshPro.Editor",
+    "Joi.H.AppUI.Samples.TextMeshPro",
+    "Joi.H.AppUI.Samples.TextMeshPro.Editor",
+    "Unity.TextMeshPro",
+    "UnityEngine.UI"
+  ],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS", "JOIH_APPUI_TMP"],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

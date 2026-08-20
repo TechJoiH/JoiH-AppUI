@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using Joi.H.AppUI.Editor.Binding;
-using TMPro;
 using UnityEditor;
 using UnityEditor.Events;
 using UnityEditor.PackageManager;
@@ -150,6 +149,7 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
                 false,
                 true);
             GameObject focus = CreateFocusPrefab();
+            CreateNoticePrefab();
 
             UIPageDefinition[] pages =
             {
@@ -226,9 +226,9 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
             if (addBindingNodes)
             {
                 GameObject title = CreateRectObject(
-                    "B_TitleText", typeof(TextMeshProUGUI));
+                    "B_TitleText", typeof(Text));
                 title.transform.SetParent(root.transform, false);
-                title.GetComponent<TextMeshProUGUI>().text = "Binding";
+                title.GetComponent<Text>().text = "Binding";
                 GameObject confirm = CreateRectObject(
                     "B_ConfirmButton", typeof(Image), typeof(Button));
                 confirm.transform.SetParent(root.transform, false);
@@ -319,6 +319,12 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
                 .objectReferenceValue = registry;
             profileSerialized.FindProperty("layerSettings")
                 .objectReferenceValue = layers;
+            SerializedProperty toast = profileSerialized
+                .FindProperty("noticeSettings")
+                .FindPropertyRelative("toast");
+            toast.FindPropertyRelative("enabled").boolValue = true;
+            toast.FindPropertyRelative("prefabAssetId").stringValue =
+                ConsumerRuntimeInstaller.NoticeAssetId;
             profileSerialized.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.CreateAsset(
                 profile, AppUIConsumerFixturePaths.RuntimeProfile);
@@ -408,7 +414,9 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
                 AssetDatabase.LoadAssetAtPath<GameObject>(
                     AppUIConsumerFixturePaths.BindingPrefab),
                 AssetDatabase.LoadAssetAtPath<GameObject>(
-                    AppUIConsumerFixturePaths.FocusPrefab));
+                    AppUIConsumerFixturePaths.FocusPrefab),
+                AssetDatabase.LoadAssetAtPath<GameObject>(
+                    AppUIConsumerFixturePaths.NoticePrefab));
 
             EnsureAssetFolderForPath(AppUIConsumerFixturePaths.Scene);
             if (!EditorSceneManager.SaveScene(
@@ -518,6 +526,24 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
             rect.sizeDelta = new Vector2(240f, 72f);
             rect.anchoredPosition = new Vector2(0f, y);
             return button;
+        }
+
+        private static void CreateNoticePrefab()
+        {
+            GameObject root = CreateRectObject(
+                "ConsumerNotice",
+                typeof(CanvasGroup),
+                typeof(Text),
+                typeof(ConsumerNoticeView));
+            Text label = root.GetComponent<Text>();
+            label.text = "Notice";
+            SerializedObject view = new SerializedObject(
+                root.GetComponent<ConsumerNoticeView>());
+            view.FindProperty("label").objectReferenceValue = label;
+            view.ApplyModifiedPropertiesWithoutUndo();
+            EnsureAssetFolderForPath(AppUIConsumerFixturePaths.NoticePrefab);
+            PrefabUtility.SaveAsPrefabAsset(root, AppUIConsumerFixturePaths.NoticePrefab);
+            Object.DestroyImmediate(root);
         }
 
         private static GameObject CreateRectObject(

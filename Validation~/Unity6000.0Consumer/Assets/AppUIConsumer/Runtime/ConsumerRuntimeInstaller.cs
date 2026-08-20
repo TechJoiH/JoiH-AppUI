@@ -18,6 +18,8 @@ namespace Joi.H.AppUI.Validation.Consumer
             "Assets/AppUIConsumerGenerated/Prefabs/BindingPage.prefab";
         public const string FocusAssetId =
             "Assets/AppUIConsumerGenerated/Prefabs/FocusList.prefab";
+        public const string NoticeAssetId =
+            "Assets/AppUIConsumerGenerated/Prefabs/Notice.prefab";
 
         [SerializeField]
         private AppUIRuntimeHost runtimeHost;
@@ -33,6 +35,9 @@ namespace Joi.H.AppUI.Validation.Consumer
 
         [SerializeField]
         private GameObject focusPagePrefab;
+
+        [SerializeField]
+        private GameObject noticePrefab;
 
         private ConsumerAssetProvider assetProvider;
 
@@ -61,13 +66,15 @@ namespace Joi.H.AppUI.Validation.Consumer
             GameObject basicPrefab,
             GameObject popupPrefab,
             GameObject bindingPrefab,
-            GameObject focusPrefab)
+            GameObject focusPrefab,
+            GameObject authoredNoticePrefab)
         {
             runtimeHost = host;
             basicPagePrefab = basicPrefab;
             popupPagePrefab = popupPrefab;
             bindingPagePrefab = bindingPrefab;
             focusPagePrefab = focusPrefab;
+            noticePrefab = authoredNoticePrefab;
         }
 
         public AppUIInitializationResult InitializeForValidation()
@@ -95,6 +102,7 @@ namespace Joi.H.AppUI.Validation.Consumer
             RegisterRequiredAsset(PopupAssetId, popupPagePrefab);
             RegisterRequiredAsset(BindingAssetId, bindingPagePrefab);
             RegisterRequiredAsset(FocusAssetId, focusPagePrefab);
+            RegisterRequiredAsset(NoticeAssetId, noticePrefab);
             AppUIInitializationResult result = runtimeHost.Initialize(
                 new AppUIRuntimeDependencies(
                     operationFactory,

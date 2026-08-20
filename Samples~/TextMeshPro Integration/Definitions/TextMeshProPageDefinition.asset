@@ -1,0 +1,36 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a1cfecc659eb40848a1b22666e8eca41, type: 3}
+  m_Name: TextMeshProPageDefinition
+  m_EditorClassIdentifier: 
+  m_DefinitionId: sample.textmeshpro
+  m_PrefabAssetId: 07df8275b4ea61f4c9232284bf9ccfd3
+  m_ControllerScript: {fileID: 0}
+  m_ControllerTypeName: 
+  LayerId: 2
+  CanvasDomain: 2
+  Scope: 1
+  OpenPolicy: 0
+  DefaultPriorityOffset: 0
+  IsCritical: 0
+  IsFullScreen: 0
+  BlockLowerLayerInput: 0
+  RefreshLanguageOnOpen: 0
+  CloseOnCancel: 0
+  CloseOnBackgroundClick: 0
+  LoadStrategyId: 
+  InstanceStrategyId: 
+  IsHighFrequency: 0
+  RequiresRaycaster: 0
+  EnableUpdate: 0
+  EnableLateUpdate: 0
+  UpdateWhenPaused: 0

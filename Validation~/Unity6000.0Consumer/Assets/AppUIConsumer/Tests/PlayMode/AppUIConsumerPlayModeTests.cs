@@ -164,6 +164,14 @@ namespace Joi.H.AppUI.Validation.Consumer.Tests
                 Is.SameAs(controller.SecondButton.gameObject));
         }
 
+        [UnityTest]
+        public IEnumerator AuthoredUGUINotice_IsLoadedAndShown()
+        {
+            ToastHandle handle = installer.Manager.Notices.Toast("Consumer notice");
+            Assert.That(handle.IsValid, Is.True);
+            yield return null;
+        }
+
         private static TResult Complete<TResult>(
             IUIOperation<TResult> operation)
         {

@@ -1,22 +1,22 @@
 {
-  "name": "Joi.H.AppUI.Validation.Consumer.Editor",
-  "rootNamespace": "Joi.H.AppUI.Validation.Consumer.Editor",
+  "name": "Joi.H.AppUI.Samples.TextMeshPro",
+  "rootNamespace": "Joi.H.AppUI.Samples.TextMeshPro",
   "references": [
     "Joi.H.AppUI.Core",
     "Joi.H.AppUI.Runtime",
-    "Joi.H.AppUI.Editor",
-    "Joi.H.AppUI.Validation.Consumer",
+    "Joi.H.AppUI.Integrations.TextMeshPro.Runtime",
+    "Unity.TextMeshPro",
     "UnityEngine.UI"
   ],
-  "includePlatforms": [
-    "Editor"
-  ],
+  "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,
   "overrideReferences": false,
   "precompiledReferences": [],
   "autoReferenced": true,
-  "defineConstraints": [],
+  "defineConstraints": [
+    "JOIH_APPUI_TMP"
+  ],
   "versionDefines": [],
   "noEngineReferences": false
 }

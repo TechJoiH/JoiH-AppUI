@@ -1,0 +1,57 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 44b1a7d7b96c443fa89e81374303acd5, type: 3}
+  m_Name: TextMeshProRuntimeProfile
+  m_EditorClassIdentifier: 
+  pageRegistry: {fileID: 11400000, guid: f7812b4355c0f554faff63825534bf74, type: 2}
+  layerSettings: {fileID: 11400000, guid: 097c8365c874991489229b6b56133786, type: 2}
+  noticeSettings:
+    toast:
+      enabled: 1
+      prefabAssetId: a623e4dccd5001c48b664b56cdd2d459
+      defaultDuration: 1.8
+      fadeDuration: 0.25
+      riseDistance: 36
+      prewarmCount: 2
+      maxActiveCount: 8
+      fontSize: 28
+      textColor: {r: 1, g: 1, b: 1, a: 1}
+    tooltip:
+      enabled: 0
+      prefabAssetId: 
+      defaultDuration: 0.1
+      fadeDuration: 0.1
+      riseDistance: 0
+      prewarmCount: 1
+      maxActiveCount: 4
+      fontSize: 24
+      textColor: {r: 1, g: 1, b: 1, a: 1}
+    floatingText:
+      enabled: 0
+      prefabAssetId: 
+      defaultDuration: 1
+      fadeDuration: 0.35
+      riseDistance: 72
+      prewarmCount: 4
+      maxActiveCount: 32
+      fontSize: 26
+      textColor: {r: 1, g: 1, b: 1, a: 1}
+    damageNumber:
+      enabled: 0
+      prefabAssetId: 
+      defaultDuration: 0.9
+      fadeDuration: 0.25
+      riseDistance: 88
+      prewarmCount: 8
+      maxActiveCount: 64
+      fontSize: 34
+      textColor: {r: 1, g: 0.25, b: 0.18, a: 1}

@@ -98,6 +98,16 @@ namespace Joi.H.AppUI.Validation.Consumer.Tests
         }
 
         [Test]
+        public void BaseConsumer_UsesAuthoredUGUINoticeWithoutOptionalTextPackage()
+        {
+            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
+                "Assets/AppUIConsumerGenerated/Prefabs/Notice.prefab");
+            Assert.That(prefab, Is.Not.Null);
+            Assert.That(prefab.GetComponent<ConsumerNoticeView>(), Is.Not.Null);
+            Assert.That(prefab.GetComponent<Text>(), Is.Not.Null);
+        }
+
+        [Test]
         public void FocusNavigator_DefaultAndVerticalMove_UsePublicApi()
         {
             GameObject eventObject = new GameObject(

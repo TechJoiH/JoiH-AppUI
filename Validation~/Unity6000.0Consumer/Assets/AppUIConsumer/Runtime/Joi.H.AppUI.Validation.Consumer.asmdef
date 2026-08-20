@@ -4,7 +4,6 @@
   "references": [
     "Joi.H.AppUI.Core",
     "Joi.H.AppUI.Runtime",
-    "Unity.TextMeshPro",
     "UnityEngine.UI"
   ],
   "includePlatforms": [],

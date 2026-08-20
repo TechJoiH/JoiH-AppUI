@@ -12,6 +12,6 @@
 
 模板刻意不提交有效 `manifest.json`、`packages-lock.json`、Library、缓存、Build、生成 Fixture 或本机绝对路径。`Assets/AppUIConsumerGenerated/` 只由验证命令在仓库外工作区创建。
 
-`Assets/AppUIConsumer/Runtime/Adapters` 是消费项目自己的 Operation、Execution Context 和 Asset Provider 实现，不属于 AppUI Core 默认后端，也不使用 UniTask、Task、Awaitable、Coroutine 或 Resources。
+`Assets/AppUIConsumer/Runtime/Adapters` 是消费项目自己的 Operation、Execution Context 和 Asset Provider 实现，不属于 AppUI Core 默认后端，也不使用 UniTask、Task、Awaitable、Coroutine 或 Resources。基础 Consumer 仅使用 UGUI `Text` 和自己的 `ConsumerNoticeView`，不含 TMP 类型或程序集依赖。
 
 需要移植到其他 Unity 版本时，请建立自己的 Fork 和 Consumer，并阅读仓库的 `Documentation~/community-unity-porting.md`。这个模板不代表 Unity 2022/2021 或后续 Unity 6 技术线获得官方支持。

@@ -26,6 +26,7 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
         {
             AppUIConsumerBatchCommand.Run(
                 () => Build(
+                    AppUIConsumerFixturePaths.Scene,
                     ScriptingImplementation.Mono2x,
                     "WindowsMono"));
         }
@@ -34,11 +35,33 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
         {
             AppUIConsumerBatchCommand.Run(
                 () => Build(
+                    AppUIConsumerFixturePaths.Scene,
+                    ScriptingImplementation.IL2CPP,
+                    "WindowsIL2CPP"));
+        }
+
+        public static void BuildTextMeshProMono()
+        {
+            AppUIConsumerBatchCommand.Run(
+                () => Build(
+                    AppUIConsumerFixturePaths.GetTextMeshProSampleScene(
+                        AppUIConsumerTextMeshProCommand.GetInstalledPackageVersion()),
+                    ScriptingImplementation.Mono2x,
+                    "WindowsMono"));
+        }
+
+        public static void BuildTextMeshProIl2Cpp()
+        {
+            AppUIConsumerBatchCommand.Run(
+                () => Build(
+                    AppUIConsumerFixturePaths.GetTextMeshProSampleScene(
+                        AppUIConsumerTextMeshProCommand.GetInstalledPackageVersion()),
                     ScriptingImplementation.IL2CPP,
                     "WindowsIL2CPP"));
         }
 
         private static void Build(
+            string scenePath,
             ScriptingImplementation backend,
             string label)
         {
@@ -59,7 +82,7 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
                     backend);
                 BuildPlayerOptions options = new BuildPlayerOptions
                 {
-                    scenes = new[] { AppUIConsumerFixturePaths.Scene },
+                    scenes = new[] { scenePath },
                     locationPathName = absoluteOutput,
                     target = BuildTarget.StandaloneWindows64,
                     targetGroup = group,
