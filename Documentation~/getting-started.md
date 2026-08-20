@@ -9,12 +9,12 @@
 在 Package Manager 选择 `Add package from git URL...`：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1
 ```
 
-`v0.3.0-pre.1` 已完成全部发布门禁并作为 [GitHub Pre-release](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1) 发布，可按此地址安装。`v0.2.0-pre.4` 是较早的已验证 Pre-release；`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 虽然已有不可变 Tag，但发布门禁未完成且没有 GitHub Release，不属于 Officially Supported Releases。真实项目应使用[官方发布清单](supported-unity-versions.md#officially-supported-releases)中的不可变 Tag，不要使用无版本 URL 或 `main`。从 `0.2.x` 升级时先阅读 [0.3 迁移指南](migration-0.3.md)。
+`v0.4.0-pre.1` 已完成全部发布门禁并作为 [GitHub Pre-release](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.4.0-pre.1) 发布，是新项目当前应安装的不可变 Tag。`v0.3.0-pre.1` 与 `v0.2.0-pre.4` 只作为较早的已验证 Pre-release 保留；`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 虽然已有不可变 Tag，但发布门禁未完成且没有 GitHub Release，不属于 Officially Supported Releases。真实项目应使用[官方发布清单](supported-unity-versions.md#officially-supported-releases)中的不可变 Tag，不要使用无版本 URL 或 `main`。从 `0.3.x` 升级时先阅读 [0.4 迁移指南](migration-0.4.md)；从 `0.2.x` 升级时依次阅读 [0.3 迁移指南](migration-0.3.md)和 0.4 迁移指南。
 
-AppUI 基础包只依赖 UGUI，不要求安装第三方异步包，也不会自动启用 TextMeshPro。需要 TMP 时，在基础闭环通过后再按 [TextMeshPro 可选集成](textmeshpro-integration.md)启用。
+AppUI 0.4 的 Base Runtime、Base Editor、Basic Integration Sample 和 Base Consumer 只使用 UGUI；基础包只直接依赖 UGUI，不引用 `Unity.TextMeshPro`，也不要求第三方异步包。项目中已经安装 TMP 不会改变 Base 行为。只有项目明确选择 TMP 时，才在 UGUI 基础闭环通过后按 [TextMeshPro 可选集成](textmeshpro-integration.md)显式添加 `JOIH_APPUI_TMP`、导入对应 Sample 并配置 Provider/Resolver。
 
 ## 2. 选择三项项目实现
 

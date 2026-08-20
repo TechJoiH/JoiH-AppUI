@@ -1372,6 +1372,14 @@ set "PATH=$toolRoot;%PATH%"
             Assert-True ($readme.Contains('0.4.0-pre.1')) 'README omits the current source version.'
             Assert-True ($readme.Contains('Documentation~/textmeshpro-integration.md')) 'README does not link the optional TMP integration.'
 
+            $gettingStarted = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\getting-started.md') -Raw -Encoding UTF8
+            Assert-True ($gettingStarted.Contains('https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1')) `
+                'Getting Started does not show the current immutable Tag.'
+            Assert-True ($gettingStarted.Contains('migration-0.4.md')) `
+                'Getting Started does not link the current migration guide.'
+            Assert-True (-not $gettingStarted.Contains('git#main')) `
+                'Getting Started recommends main as a production dependency.'
+
             $tmpSample = @($package.samples | Where-Object {
                 $_.displayName -ceq 'TextMeshPro Integration' -and
                 $_.path -ceq 'Samples~/TextMeshPro Integration'
