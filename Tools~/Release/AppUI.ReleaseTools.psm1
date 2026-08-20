@@ -1140,6 +1140,108 @@ function Test-AppUIMarkdownLinks {
     return @($issues)
 }
 
+function Test-AppUITmpIsolation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageRoot
+    )
+
+    $resolvedRoot = [System.IO.Path]::GetFullPath($PackageRoot).TrimEnd('\', '/')
+    if (-not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
+        throw "TMP isolation package root does not exist: $resolvedRoot"
+    }
+
+    $violations = New-Object System.Collections.Generic.List[string]
+    $scannedPaths = New-Object 'System.Collections.Generic.HashSet[string]' `
+        ([System.StringComparer]::Ordinal)
+    $sourcePattern = '(?m)\bTMPro\b|\bTMP_[A-Za-z0-9_]*\b|TextMeshPro'
+    $sourceRoots = @(
+        'Runtime',
+        'Editor',
+        'Tests/Runtime',
+        'Tests/Editor',
+        'Samples~',
+        'Validation~/Unity6000.0Consumer/Assets/AppUIConsumer'
+    )
+    $excludedPrefixes = @(
+        'Integrations/TextMeshPro/',
+        'Tests/TextMeshPro/',
+        'Samples~/TextMeshPro Integration/'
+    )
+
+    foreach ($relativeRoot in $sourceRoots) {
+        $root = Join-Path $resolvedRoot $relativeRoot
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+            continue
+        }
+
+        foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -Force -File)) {
+            if ($file.Extension -notin @('.cs', '.asmdef')) {
+                continue
+            }
+
+            $relativePath = $file.FullName.Substring($resolvedRoot.Length).
+                TrimStart('\', '/').Replace('\', '/')
+            $excluded = $false
+            foreach ($prefix in $excludedPrefixes) {
+                if ($relativePath.StartsWith(
+                        $prefix,
+                        [System.StringComparison]::Ordinal)) {
+                    $excluded = $true
+                    break
+                }
+            }
+            if ($excluded -or -not $scannedPaths.Add($relativePath)) {
+                continue
+            }
+
+            $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+            if ($content -match $sourcePattern) {
+                $violations.Add("$relativePath`: references TextMeshPro in a base file")
+            }
+        }
+    }
+
+    $packagePath = Join-Path $resolvedRoot 'package.json'
+    if (Test-Path -LiteralPath $packagePath -PathType Leaf) {
+        [void]$scannedPaths.Add('package.json')
+        try {
+            $package = Get-Content -LiteralPath $packagePath -Raw -Encoding UTF8 |
+                ConvertFrom-Json
+            $hasTmpDependency = @($package.dependencies.PSObject.Properties |
+                Where-Object {
+                    $_.Name.Equals(
+                        'com.unity.textmeshpro',
+                        [System.StringComparison]::Ordinal)
+                }).Count -gt 0
+            if ($hasTmpDependency) {
+                $violations.Add(
+                    'package.json: declares com.unity.textmeshpro dependency')
+            }
+        }
+        catch {
+            $violations.Add(
+                "package.json: cannot verify dependencies because JSON is invalid: $($_.Exception.Message)")
+        }
+    }
+
+    $orderedViolations = [string[]]@($violations)
+    [System.Array]::Sort(
+        $orderedViolations,
+        [System.StringComparer]::Ordinal)
+    $orderedScannedPaths = [string[]]@($scannedPaths)
+    [System.Array]::Sort(
+        $orderedScannedPaths,
+        [System.StringComparer]::Ordinal)
+
+    return [PSCustomObject][ordered]@{
+        Success = $orderedViolations.Count -eq 0
+        Violations = $orderedViolations
+        ScannedFiles = $orderedScannedPaths
+    }
+}
+
 function Test-AppUIPackagePolicy {
     [CmdletBinding()]
     param(
@@ -2386,6 +2488,7 @@ Export-ModuleMember -Function @(
     'Export-AppUICandidateSnapshot',
     'Test-AppUICandidateSnapshot',
     'New-AppUIConsumerWorkspace',
+    'Test-AppUITmpIsolation',
     'Test-AppUIPackagePolicy',
     'Read-AppUINUnit3Result',
     'Invoke-AppUIProcess',

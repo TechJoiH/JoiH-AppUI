@@ -168,6 +168,27 @@ guid: 11111111111111111111111111111111
     Set-Utf8NoBomContent (Join-Path $Path 'ProjectSettings\ProjectVersion.txt') "m_EditorVersion: 6000.0.25f1`n"
 }
 
+function New-TmpIsolationTestFixture {
+    param(
+        [string]$Path,
+        [string]$DependenciesJson = '"com.unity.ugui": "2.0.0"'
+    )
+
+    Set-Utf8NoBomContent (Join-Path $Path 'package.json') @"
+{
+  "name": "com.joih.appui",
+  "version": "1.2.3-test.1",
+  "unity": "6000.0",
+  "dependencies": {
+    $DependenciesJson
+  }
+}
+"@
+    Set-Utf8NoBomContent `
+        (Join-Path $Path 'Runtime\SafeType.cs') `
+        "namespace Joi.H.AppUI { public sealed class SafeType { } }`n"
+}
+
 function New-PolicyTestRepository {
     param(
         [string]$Path,
@@ -485,6 +506,66 @@ try {
     }
 
     if (Test-GroupRequested 'Policy') {
+        Invoke-Test 'TMP isolation rejects a base asmdef reference' {
+            $fixture = Join-Path $testRoot 'tmp-isolation-base-asmdef'
+            New-TmpIsolationTestFixture $fixture
+            Set-Utf8NoBomContent `
+                (Join-Path $fixture 'Runtime\Joi.H.AppUI.Runtime.asmdef') `
+                '{"name":"Joi.H.AppUI.Runtime","references":["Unity.TextMeshPro"]}'
+
+            $result = Test-AppUITmpIsolation -PackageRoot $fixture
+
+            Assert-True (-not $result.Success) 'Base asmdef TMP reference passed.'
+            Assert-True `
+                (@($result.Violations | Where-Object { $_ -match 'Runtime/Joi.H.AppUI.Runtime.asmdef' }).Count -eq 1) `
+                'Missing normalized asmdef evidence.'
+        }
+
+        Invoke-Test 'TMP isolation rejects a base CSharp type reference' {
+            $fixture = Join-Path $testRoot 'tmp-isolation-base-source'
+            New-TmpIsolationTestFixture $fixture
+            Set-Utf8NoBomContent `
+                (Join-Path $fixture 'Runtime\Controller\Test.cs') `
+                "using TMPro;`npublic sealed class Test { public TMP_Text Label; }`n"
+
+            $result = Test-AppUITmpIsolation -PackageRoot $fixture
+
+            Assert-True (-not $result.Success) 'Base source TMP reference passed.'
+            Assert-True `
+                (@($result.Violations | Where-Object { $_ -match 'Runtime/Controller/Test.cs' }).Count -eq 1) `
+                'Missing normalized source evidence.'
+        }
+
+        Invoke-Test 'TMP isolation allows optional integration references' {
+            $fixture = Join-Path $testRoot 'tmp-isolation-optional'
+            New-TmpIsolationTestFixture $fixture
+            Set-Utf8NoBomContent `
+                (Join-Path $fixture 'Integrations\TextMeshPro\Runtime\TmpView.cs') `
+                "using TMPro;`npublic sealed class TmpView { public TMP_Text Label; }`n"
+            Set-Utf8NoBomContent `
+                (Join-Path $fixture 'Samples~\TextMeshPro Integration\TmpSample.cs') `
+                "using TMPro;`npublic sealed class TmpSample { public TMP_Text Label; }`n"
+
+            $result = Test-AppUITmpIsolation -PackageRoot $fixture
+
+            Assert-True $result.Success 'Optional integration was scanned as base code.'
+            Assert-Equal 0 @($result.Violations).Count 'Optional integration produced violations.'
+        }
+
+        Invoke-Test 'TMP isolation rejects a package dependency' {
+            $fixture = Join-Path $testRoot 'tmp-isolation-package-dependency'
+            New-TmpIsolationTestFixture `
+                -Path $fixture `
+                -DependenciesJson '"com.unity.ugui": "2.0.0", "com.unity.textmeshpro": "3.0.6"'
+
+            $result = Test-AppUITmpIsolation -PackageRoot $fixture
+
+            Assert-True (-not $result.Success) 'TMP package dependency passed.'
+            Assert-True `
+                (@($result.Violations | Where-Object { $_ -match 'package.json' }).Count -eq 1) `
+                'Missing package dependency evidence.'
+        }
+
         Invoke-Test 'Package policy accepts a clean exact commit' {
             $repository = Join-Path $testRoot 'policy-clean'
             $commit = New-PolicyTestRepository $repository
