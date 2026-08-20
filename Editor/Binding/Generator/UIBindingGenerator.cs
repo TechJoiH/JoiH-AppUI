@@ -16,6 +16,14 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         public static UIBindingGenerationResult Generate(UIBindingScopeBase scope)
         {
+            if (!UIBindingSettingsUtility.TryBuildUniqueRuleSnapshot(
+                    out _,
+                    out UIBindingRuleSnapshot snapshot,
+                    out string snapshotError))
+            {
+                return UIBindingGenerationResult.Fail(null, snapshotError);
+            }
+
             // Prefab Mode 保存检查必须在扫描和写文件之前执行，避免基于未保存对象生成错误代码。
             if (!UIBindingPrefabSaveUtility.TrySaveCurrentPrefabModeBeforeWrite(
                     scope,
@@ -24,7 +32,7 @@ namespace Joi.H.AppUI.Editor.Binding
                 return UIBindingGenerationResult.Fail(null, prefabSaveError);
             }
 
-            UIBindingScanResult scanResult = UIBindingScanner.Scan(scope);
+            UIBindingScanResult scanResult = UIBindingScanner.Scan(scope, snapshot);
             if (scanResult.HasError)
             {
                 return UIBindingGenerationResult.Fail(scanResult, "Scan has errors. Generation stopped.");
@@ -43,6 +51,7 @@ namespace Joi.H.AppUI.Editor.Binding
             if (!UIBindingVariantValidator.TryValidate(
                     scope,
                     scanResult,
+                    snapshot,
                     out string variantError))
             {
                 return UIBindingGenerationResult.Fail(scanResult, variantError);

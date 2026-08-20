@@ -259,6 +259,15 @@ namespace Joi.H.AppUI.Editor.Binding
                 return report;
             }
 
+            if (!UIBindingRuleProviderRegistry.TryBuildSnapshot(
+                    latest.Settings,
+                    out UIBindingRuleSnapshot snapshot,
+                    out string snapshotError))
+            {
+                report.AddError(snapshotError);
+                return report;
+            }
+
             // 根据同步类型创建或更新目标 Definition，具体业务字段由对应分支写入。
             UIDefinitionAssetBase definition = latest.Kind == UIDefinitionSyncKind.Page
                 ? SyncPageDefinition(latest, report)
@@ -283,7 +292,7 @@ namespace Joi.H.AppUI.Editor.Binding
             }
 
             AssetDatabase.SaveAssets();
-            AppendBindingValidation(latest.Scope, report);
+            AppendBindingValidation(latest.Scope, snapshot, report);
             AppendSetupValidation(latest, definition, report);
             return report;
         }
@@ -749,9 +758,10 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         private static void AppendBindingValidation(
             UIBindingScopeBase scope,
+            UIBindingRuleSnapshot snapshot,
             UIBindingValidationReport report)
         {
-            UIBindingValidationReport bindingReport = UIBindingValidator.ValidateScope(scope);
+            UIBindingValidationReport bindingReport = UIBindingValidator.ValidateScope(scope, snapshot);
             for (int i = 0; i < bindingReport.Errors.Count; i++)
             {
                 report.AddError(bindingReport.Errors[i]);

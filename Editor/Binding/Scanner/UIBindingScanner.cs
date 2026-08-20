@@ -16,6 +16,16 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         public static UIBindingScanResult Scan(UIBindingScopeBase scope)
         {
+            return Scan(scope, UIBindingRuleSet.CreateBuiltInSnapshot());
+        }
+
+        /// <summary>
+        /// Scans with the immutable rule snapshot resolved for the current operation.
+        /// </summary>
+        public static UIBindingScanResult Scan(
+            UIBindingScopeBase scope,
+            UIBindingRuleSnapshot snapshot)
+        {
             UIBindingScanResult result = new UIBindingScanResult();
             if (scope == null)
             {
@@ -23,9 +33,15 @@ namespace Joi.H.AppUI.Editor.Binding
                 return result;
             }
 
+            if (snapshot == null)
+            {
+                result.AddError("Binding rule snapshot is null.");
+                return result;
+            }
+
             Dictionary<string, UIBindingInfo> byProperty =
                 new Dictionary<string, UIBindingInfo>(StringComparer.Ordinal);
-            ScanTransform(scope.transform, scope.transform, result, byProperty);
+            ScanTransform(scope.transform, scope.transform, snapshot, result, byProperty);
 
             if (result.Bindings.Count == 0)
             {
@@ -41,6 +57,7 @@ namespace Joi.H.AppUI.Editor.Binding
         private static void ScanTransform(
             Transform root,
             Transform current,
+            UIBindingRuleSnapshot snapshot,
             UIBindingScanResult result,
             Dictionary<string, UIBindingInfo> byProperty)
         {
@@ -52,13 +69,13 @@ namespace Joi.H.AppUI.Editor.Binding
 
             if (!isRoot && current.name.StartsWith(UIBindingRuleSet.BindingPrefix, StringComparison.Ordinal))
             {
-                UIBindingInfo binding = CreateBindingInfo(root, current);
+                UIBindingInfo binding = CreateBindingInfo(root, current, snapshot);
                 AddBinding(result, byProperty, binding);
             }
 
             for (int i = 0; i < current.childCount; i++)
             {
-                ScanTransform(root, current.GetChild(i), result, byProperty);
+                ScanTransform(root, current.GetChild(i), snapshot, result, byProperty);
             }
         }
 
@@ -110,7 +127,10 @@ namespace Joi.H.AppUI.Editor.Binding
         /// <summary>
         /// 为普通 B_ 节点创建绑定信息，并根据组件规则选择最合适的目标对象。
         /// </summary>
-        private static UIBindingInfo CreateBindingInfo(Transform root, Transform target)
+        private static UIBindingInfo CreateBindingInfo(
+            Transform root,
+            Transform target,
+            UIBindingRuleSnapshot snapshot)
         {
             UIBindingInfo info = new UIBindingInfo();
             info.NodeName = target.name;
@@ -118,10 +138,10 @@ namespace Joi.H.AppUI.Editor.Binding
             info.BindingPrefix = UIBindingRuleSet.BindingPrefix;
             info.RawName = target.name.Substring(UIBindingRuleSet.BindingPrefix.Length);
 
-            ComponentMatch match = FindBestComponent(target);
+            ComponentMatch match = FindBestComponent(target, snapshot);
             if (match.Target == null)
             {
-                ApplyGameObjectFallback(info, target.gameObject);
+                ApplyGameObjectFallback(info, target.gameObject, snapshot.FallbackRule);
             }
             else
             {
@@ -157,7 +177,9 @@ namespace Joi.H.AppUI.Editor.Binding
         /// <summary>
         /// 在节点所有组件中选择功能优先级最高的可绑定组件。
         /// </summary>
-        private static ComponentMatch FindBestComponent(Transform target)
+        private static ComponentMatch FindBestComponent(
+            Transform target,
+            UIBindingRuleSnapshot snapshot)
         {
             Component[] components = target.GetComponents<Component>();
             ComponentMatch best = default(ComponentMatch);
@@ -170,9 +192,9 @@ namespace Joi.H.AppUI.Editor.Binding
                     continue;
                 }
 
-                for (int ruleIndex = 0; ruleIndex < UIBindingRuleSet.DefaultComponentRules.Length; ruleIndex++)
+                for (int ruleIndex = 0; ruleIndex < snapshot.Rules.Count; ruleIndex++)
                 {
-                    UIBindingComponentRule rule = UIBindingRuleSet.DefaultComponentRules[ruleIndex];
+                    UIBindingComponentRule rule = snapshot.Rules[ruleIndex];
                     if (!rule.AllowImplicitSelect ||
                         rule.ComponentType == typeof(UIGroupBase) ||
                         !rule.ComponentType.IsAssignableFrom(component.GetType()))
@@ -180,10 +202,14 @@ namespace Joi.H.AppUI.Editor.Binding
                         continue;
                     }
 
-                    // 优先级相同则保留组件列表中更靠前的组件，保持结果稳定。
+                    // Priority and RuleId define policy order before hierarchy component order.
                     if (best.Target == null ||
                         rule.FunctionPriority > best.Rule.FunctionPriority ||
-                        rule.FunctionPriority == best.Rule.FunctionPriority && i < bestComponentIndex)
+                        rule.FunctionPriority == best.Rule.FunctionPriority &&
+                        StringComparer.Ordinal.Compare(rule.RuleId, best.Rule.RuleId) < 0 ||
+                        rule.FunctionPriority == best.Rule.FunctionPriority &&
+                        string.Equals(rule.RuleId, best.Rule.RuleId, StringComparison.Ordinal) &&
+                        i < bestComponentIndex)
                     {
                         best = new ComponentMatch(component, rule);
                         bestComponentIndex = i;
@@ -211,9 +237,12 @@ namespace Joi.H.AppUI.Editor.Binding
         /// 当没有可绑定组件时，按唯一 fallback 策略绑定节点 GameObject。
         /// 这里故意不生成 Transform/RectTransform，避免同一个 B_ 节点在不同配置下生成不同字段类型和后缀。
         /// </summary>
-        private static void ApplyGameObjectFallback(UIBindingInfo info, GameObject target)
+        private static void ApplyGameObjectFallback(
+            UIBindingInfo info,
+            GameObject target,
+            UIBindingFallbackRule fallbackRule)
         {
-            if (!UIBindingRuleSet.DefaultFallbackRule.EnableGameObjectFallback)
+            if (!fallbackRule.EnableGameObjectFallback)
             {
                 info.IsValid = false;
                 info.Error = "Node uses the binding prefix but has no bindable component.";

@@ -11,6 +11,12 @@ namespace Joi.H.AppUI.Editor.Binding
     [CreateAssetMenu(fileName = "UIBindingSettings", menuName = "Joi.H AppUI/Binding Settings")]
     public sealed class UIBindingSettings : ScriptableObject
     {
+        [Header("Binding Rule Providers")]
+        [SerializeField]
+        private List<string> enabledRuleProviderIds = new List<string>();
+
+        public IReadOnlyList<string> EnabledRuleProviderIds => enabledRuleProviderIds;
+
         [Header("Asset ID Authoring")]
         [Tooltip(
             "Resolver ID explicitly registered by the integrating project's Editor adapter.")]

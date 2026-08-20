@@ -43,6 +43,22 @@ namespace Joi.H.AppUI.Editor.Binding
                     }
 
                     EditorGUILayout.Space();
+                    string[] providerIds = UIBindingRuleProviderRegistry.GetRegisteredProviderIds();
+                    EditorGUILayout.LabelField(
+                        "Registered binding Provider IDs",
+                        providerIds.Length > 0 ? string.Join(", ", providerIds) : "<none>");
+                    EditorGUILayout.LabelField(
+                        "Enabled binding Provider IDs",
+                        settings.EnabledRuleProviderIds.Count > 0
+                            ? string.Join(", ", settings.EnabledRuleProviderIds)
+                            : "<none>");
+
+                    if (!UIBindingRuleProviderRegistry.TryBuildSnapshot(settings, out _, out string providerError))
+                    {
+                        EditorGUILayout.HelpBox(providerError, MessageType.Error);
+                    }
+
+                    EditorGUILayout.Space();
                     if (UIEditorAssetIdResolverRegistry.TryGetSelected(
                             settings,
                             out IUIEditorAssetIdResolver resolver,

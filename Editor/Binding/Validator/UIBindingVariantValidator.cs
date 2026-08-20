@@ -21,13 +21,26 @@ namespace Joi.H.AppUI.Editor.Binding
             UIBindingScanResult currentScanResult,
             UIBindingValidationReport report)
         {
+            AppendValidationErrors(
+                scope,
+                currentScanResult,
+                UIBindingRuleSet.CreateBuiltInSnapshot(),
+                report);
+        }
+
+        public static void AppendValidationErrors(
+            UIBindingScopeBase scope,
+            UIBindingScanResult currentScanResult,
+            UIBindingRuleSnapshot snapshot,
+            UIBindingValidationReport report)
+        {
             if (report == null)
             {
                 return;
             }
 
             List<string> errors = new List<string>(4);
-            AppendValidationErrors(scope, currentScanResult, errors);
+            AppendValidationErrors(scope, currentScanResult, snapshot, errors);
             for (int i = 0; i < errors.Count; i++)
             {
                 report.AddError(errors[i]);
@@ -43,8 +56,21 @@ namespace Joi.H.AppUI.Editor.Binding
             UIBindingScanResult currentScanResult,
             out string error)
         {
+            return TryValidate(
+                scope,
+                currentScanResult,
+                UIBindingRuleSet.CreateBuiltInSnapshot(),
+                out error);
+        }
+
+        public static bool TryValidate(
+            UIBindingScopeBase scope,
+            UIBindingScanResult currentScanResult,
+            UIBindingRuleSnapshot snapshot,
+            out string error)
+        {
             List<string> errors = new List<string>(4);
-            AppendValidationErrors(scope, currentScanResult, errors);
+            AppendValidationErrors(scope, currentScanResult, snapshot, errors);
             if (errors.Count == 0)
             {
                 error = string.Empty;
@@ -61,6 +87,7 @@ namespace Joi.H.AppUI.Editor.Binding
         private static void AppendValidationErrors(
             UIBindingScopeBase scope,
             UIBindingScanResult currentScanResult,
+            UIBindingRuleSnapshot snapshot,
             List<string> errors)
         {
             if (errors == null)
@@ -77,6 +104,12 @@ namespace Joi.H.AppUI.Editor.Binding
             if (currentScanResult == null)
             {
                 errors.Add("Prefab Variant binding contract validation failed: scan result is null.");
+                return;
+            }
+
+            if (snapshot == null)
+            {
+                errors.Add("Prefab Variant binding contract validation failed: rule snapshot is null.");
                 return;
             }
 
@@ -109,7 +142,7 @@ namespace Joi.H.AppUI.Editor.Binding
                     ". Use the same Controller or create a separate prefab/Definition.");
             }
 
-            UIBindingScanResult baseScanResult = UIBindingScanner.Scan(baseScope);
+            UIBindingScanResult baseScanResult = UIBindingScanner.Scan(baseScope, snapshot);
             AppendBaseScanErrors(baseScanResult, context, errors);
             if (baseScanResult.HasError)
             {
@@ -153,7 +186,7 @@ namespace Joi.H.AppUI.Editor.Binding
         }
 
         /// <summary>
-        /// 比较绑定种类和生成代码类型，防止 Variant 把 Button 改成 Toggle、TMP_Text 改成 Image 等。
+        /// 比较绑定种类和生成代码类型，防止 Variant 把 Button 改成 Toggle 或 Text 改成 Image 等。
         /// </summary>
         private static void ValidateBindingShape(
             UIBindingInfo baseBinding,

@@ -30,11 +30,20 @@ namespace Joi.H.AppUI.Editor.Binding
                 return report;
             }
 
+            if (!UIBindingRuleProviderRegistry.TryBuildSnapshot(
+                    settings,
+                    out UIBindingRuleSnapshot snapshot,
+                    out string snapshotError))
+            {
+                report.AddError(snapshotError);
+                return report;
+            }
+
             HashSet<string> visitedPrefabPaths = new HashSet<string>();
-            ValidatePages(settings, visitedPrefabPaths, report);
-            ValidateGroupRegistry(settings, visitedPrefabPaths, report);
-            ValidateGroupDefinitions(settings, visitedPrefabPaths, report);
-            ValidateGroupPrefabs(settings, visitedPrefabPaths, report);
+            ValidatePages(settings, snapshot, visitedPrefabPaths, report);
+            ValidateGroupRegistry(settings, snapshot, visitedPrefabPaths, report);
+            ValidateGroupDefinitions(settings, snapshot, visitedPrefabPaths, report);
+            ValidateGroupPrefabs(settings, snapshot, visitedPrefabPaths, report);
             // Focus Prefab 校验会进入隔离 Prefab contents；放在其他 Settings 读取之后，保持资产生命周期边界清晰。
             AppUIFocusProjectValidator.AppendProjectValidation(
                 settings,
@@ -48,6 +57,7 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         private static void ValidatePages(
             UIBindingSettings settings,
+            UIBindingRuleSnapshot snapshot,
             HashSet<string> visitedPrefabPaths,
             UIBindingValidationReport report)
         {
@@ -68,6 +78,7 @@ namespace Joi.H.AppUI.Editor.Binding
 
                 ValidateDefinitionPrefab(
                     settings,
+                    snapshot,
                     page,
                     UIBindingPrefabKind.Page,
                     visitedPrefabPaths,
@@ -80,6 +91,7 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         private static void ValidateGroupRegistry(
             UIBindingSettings settings,
+            UIBindingRuleSnapshot snapshot,
             HashSet<string> visitedPrefabPaths,
             UIBindingValidationReport report)
         {
@@ -99,6 +111,7 @@ namespace Joi.H.AppUI.Editor.Binding
 
                 ValidateDefinitionPrefab(
                     settings,
+                    snapshot,
                     group,
                     UIBindingPrefabKind.Group,
                     visitedPrefabPaths,
@@ -111,6 +124,7 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         private static void ValidateGroupDefinitions(
             UIBindingSettings settings,
+            UIBindingRuleSnapshot snapshot,
             HashSet<string> visitedPrefabPaths,
             UIBindingValidationReport report)
         {
@@ -129,6 +143,7 @@ namespace Joi.H.AppUI.Editor.Binding
                 {
                     ValidateDefinitionPrefab(
                         settings,
+                        snapshot,
                         definition,
                         UIBindingPrefabKind.Group,
                         visitedPrefabPaths,
@@ -142,6 +157,7 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         private static void ValidateGroupPrefabs(
             UIBindingSettings settings,
+            UIBindingRuleSnapshot snapshot,
             HashSet<string> visitedPrefabPaths,
             UIBindingValidationReport report)
         {
@@ -168,7 +184,7 @@ namespace Joi.H.AppUI.Editor.Binding
 
                 // 缺 Definition 是配置错误，Validate All 不创建资产、不写 Registry。
                 report.AddError("Standalone Group prefab is missing a UIGroupDefinition or definition override: " + path);
-                ValidatePrefabAsset(prefab, path, UIBindingPrefabKind.Group, visitedPrefabPaths, report);
+                ValidatePrefabAsset(prefab, path, UIBindingPrefabKind.Group, snapshot, visitedPrefabPaths, report);
             }
         }
 
@@ -177,6 +193,7 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         private static void ValidateDefinitionPrefab(
             UIBindingSettings settings,
+            UIBindingRuleSnapshot snapshot,
             IUIDefinition definition,
             UIBindingPrefabKind expectedKind,
             HashSet<string> visitedPrefabPaths,
@@ -196,7 +213,7 @@ namespace Joi.H.AppUI.Editor.Binding
             }
 
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
-            ValidatePrefabAsset(prefab, path, expectedKind, visitedPrefabPaths, report);
+            ValidatePrefabAsset(prefab, path, expectedKind, snapshot, visitedPrefabPaths, report);
         }
 
         /// <summary>
@@ -206,6 +223,7 @@ namespace Joi.H.AppUI.Editor.Binding
             GameObject prefab,
             string path,
             UIBindingPrefabKind expectedKind,
+            UIBindingRuleSnapshot snapshot,
             HashSet<string> visitedPrefabPaths,
             UIBindingValidationReport report)
         {
@@ -225,7 +243,7 @@ namespace Joi.H.AppUI.Editor.Binding
                 return;
             }
 
-            UIBindingValidationReport scopeReport = UIBindingValidator.ValidateScope(scope);
+            UIBindingValidationReport scopeReport = UIBindingValidator.ValidateScope(scope, snapshot);
             for (int i = 0; i < scopeReport.Errors.Count; i++)
             {
                 report.AddError(path + ": " + scopeReport.Errors[i]);

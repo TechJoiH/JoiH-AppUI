@@ -14,6 +14,15 @@ namespace Joi.H.AppUI.Editor.Binding
         public static UIBindingBindResult Bind(UIBindingScopeBase scope)
         {
             UIBindingBindResult bindResult = new UIBindingBindResult();
+            if (!UIBindingSettingsUtility.TryBuildUniqueRuleSnapshot(
+                    out _,
+                    out UIBindingRuleSnapshot snapshot,
+                    out string snapshotError))
+            {
+                bindResult.AddError(snapshotError);
+                return bindResult;
+            }
+
             // Prefab Mode 内存在未保存修改时，必须先让 Unity 原生弹窗处理，避免对即将重载的对象写引用。
             if (!UIBindingPrefabSaveUtility.TrySaveCurrentPrefabModeBeforeWrite(
                     scope,
@@ -23,7 +32,7 @@ namespace Joi.H.AppUI.Editor.Binding
                 return bindResult;
             }
 
-            UIBindingScanResult scanResult = UIBindingScanner.Scan(scope);
+            UIBindingScanResult scanResult = UIBindingScanner.Scan(scope, snapshot);
             if (scanResult.HasError)
             {
                 for (int i = 0; i < scanResult.Errors.Count; i++)
@@ -48,6 +57,7 @@ namespace Joi.H.AppUI.Editor.Binding
             if (!UIBindingVariantValidator.TryValidate(
                     scope,
                     scanResult,
+                    snapshot,
                     out string variantError))
             {
                 bindResult.AddError(variantError);
@@ -80,16 +90,19 @@ namespace Joi.H.AppUI.Editor.Binding
 
             UIBindingPrefabSaveUtility.Save(scope);
             bindResult.AddInfo("Binding references written.");
-            AppendValidation(scope, bindResult);
+            AppendValidation(scope, snapshot, bindResult);
             return bindResult;
         }
 
         /// <summary>
         /// 写回后立即执行一次只读校验，把仍需人工处理的问题追加到结果中。
         /// </summary>
-        private static void AppendValidation(UIBindingScopeBase scope, UIBindingBindResult bindResult)
+        private static void AppendValidation(
+            UIBindingScopeBase scope,
+            UIBindingRuleSnapshot snapshot,
+            UIBindingBindResult bindResult)
         {
-            UIBindingValidationReport report = UIBindingValidator.ValidateScope(scope);
+            UIBindingValidationReport report = UIBindingValidator.ValidateScope(scope, snapshot);
             for (int i = 0; i < report.Errors.Count; i++)
             {
                 bindResult.AddError(report.Errors[i]);

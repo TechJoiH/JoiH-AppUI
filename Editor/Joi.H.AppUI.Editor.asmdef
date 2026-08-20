@@ -3,8 +3,6 @@
   "rootNamespace": "Joi.H.AppUI.Editor",
   "references": [
     "Joi.H.AppUI.Runtime",
-    "Unity.TextMeshPro",
-    "Unity.TextMeshPro.Editor",
     "UnityEngine.UI",
     "UnityEditor.UI"
   ],
@@ -20,4 +18,3 @@
   "versionDefines": [],
   "noEngineReferences": false
 }
-

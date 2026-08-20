@@ -137,5 +137,22 @@ namespace Joi.H.AppUI.Editor.Binding
 
             return TryFindUniqueSettings(out settings, out settingsPath, out error);
         }
+
+        /// <summary>
+        /// Resolves the one project settings asset and freezes the Provider rules for one operation.
+        /// </summary>
+        public static bool TryBuildUniqueRuleSnapshot(
+            out UIBindingSettings settings,
+            out UIBindingRuleSnapshot snapshot,
+            out string error)
+        {
+            snapshot = null;
+            if (!TryFindUniqueSettings(out settings, out _, out error))
+            {
+                return false;
+            }
+
+            return UIBindingRuleProviderRegistry.TryBuildSnapshot(settings, out snapshot, out error);
+        }
     }
 }

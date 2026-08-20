@@ -37,6 +37,23 @@ namespace Joi.H.AppUI.Editor.Binding
         /// </summary>
         public static UIBindingValidationReport ValidateScope(UIBindingScopeBase scope)
         {
+            if (!UIBindingSettingsUtility.TryBuildUniqueRuleSnapshot(
+                    out _,
+                    out UIBindingRuleSnapshot snapshot,
+                    out string error))
+            {
+                UIBindingValidationReport failure = new UIBindingValidationReport();
+                failure.AddError(error);
+                return failure;
+            }
+
+            return ValidateScope(scope, snapshot);
+        }
+
+        public static UIBindingValidationReport ValidateScope(
+            UIBindingScopeBase scope,
+            UIBindingRuleSnapshot snapshot)
+        {
             UIBindingValidationReport report = new UIBindingValidationReport();
             if (scope == null)
             {
@@ -49,7 +66,7 @@ namespace Joi.H.AppUI.Editor.Binding
                 report.AddError(kindError);
             }
 
-            UIBindingScanResult scanResult = UIBindingScanner.Scan(scope);
+            UIBindingScanResult scanResult = UIBindingScanner.Scan(scope, snapshot);
             for (int i = 0; i < scanResult.Errors.Count; i++)
             {
                 report.AddError(scanResult.Errors[i]);
@@ -57,7 +74,7 @@ namespace Joi.H.AppUI.Editor.Binding
 
             UIBindingOwnershipValidator.AppendScanTargetErrors(scope, scanResult, report);
             // Prefab Variant 只能继承 base prefab 的绑定契约；只读校验在这里提前暴露删除、替换或新增 B_ 节点的问题。
-            UIBindingVariantValidator.AppendValidationErrors(scope, scanResult, report);
+            UIBindingVariantValidator.AppendValidationErrors(scope, scanResult, snapshot, report);
 
             if (!UIBindingFileUtility.TryGetSourceInfo(
                     scope,

@@ -102,7 +102,7 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
-        public void BaseRuntimeAssembly_DoesNotReferenceTextMeshPro()
+        public void BaseRuntimeAssembly_DoesNotReferenceOptionalTextPackage()
         {
             PackageInfo packageInfo = PackageInfo.FindForAssembly(
                 typeof(AppUIManager).Assembly);
