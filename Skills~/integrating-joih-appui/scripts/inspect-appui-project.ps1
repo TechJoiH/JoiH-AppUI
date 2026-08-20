@@ -10,20 +10,12 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $issues = New-Object 'System.Collections.Generic.List[object]'
-$validationEvidenceSchemaVersion = 'joih-appui-project-validation-attestation.v2'
+$validationEvidenceSchemaVersion = 'joih-appui-project-validation-attestation.v3'
 $validationEvidenceProducer = 'integrating-joih-appui/new-appui-validation-attestation.ps1'
 $validationEvidenceOwner = 'Project'
 $validationAssetsDigestAlgorithm = 'SHA-256'
 $validationAssetsDigestScope = 'validation-relevant-project-files-v2'
 $validationAssetsDigestCanonicalization = 'ordinal-portable-path-nul-lower-sha256-lf-v2'
-$requiredRuntimeTests = @(
-    'Joi.H.AppUI.Tests.Lifecycle.Open',
-    'Joi.H.AppUI.Tests.Lifecycle.Refresh',
-    'Joi.H.AppUI.Tests.Lifecycle.Close',
-    'Joi.H.AppUI.Tests.Lifecycle.ReleaseScope',
-    'Joi.H.AppUI.Tests.Lifecycle.SceneRebind',
-    'Joi.H.AppUI.Tests.Lifecycle.Shutdown'
-)
 
 function Add-Issue {
     param(
@@ -818,6 +810,8 @@ function Test-ValidationEvidence {
         $document = $null
     }
     $reason = $null
+    $bindingStatus = 'Unknown'
+    $runtimeStatus = 'Unknown'
     if ((Get-ExactObjectPropertyValue -Object $document -Name 'schemaVersion') -cne
         $validationEvidenceSchemaVersion) {
         $reason = 'SchemaMismatch'
@@ -855,57 +849,153 @@ function Test-ValidationEvidence {
         $reason = 'EvidenceStale'
     }
     else {
+        $run = Get-ExactObjectPropertyValue -Object $document -Name 'run'
+        $runStartedAt = Convert-AttestationTimestamp `
+            -Value (Get-ExactObjectPropertyValue -Object $run -Name 'startedAtUtc')
+        $runFinishedAt = Convert-AttestationTimestamp `
+            -Value (Get-ExactObjectPropertyValue -Object $run -Name 'finishedAtUtc')
+        $runId = [guid]::Empty
+        $runIdValid = [guid]::TryParse(
+            [string](Get-ExactObjectPropertyValue -Object $run -Name 'runId'), [ref]$runId)
+        $lifecycleFilter = [string](Get-ExactObjectPropertyValue -Object $run -Name 'lifecycleTestFilter')
+        $settingsPath = [string](Get-ExactObjectPropertyValue -Object $run -Name 'bindingSettingsPath')
+        if (-not $runIdValid -or $runId -eq [guid]::Empty -or
+            $null -eq $runStartedAt -or $null -eq $runFinishedAt -or
+            $runStartedAt -gt $runFinishedAt -or
+            $runFinishedAt -gt [datetimeoffset]::UtcNow.AddSeconds(1) -or
+            (Get-ExactObjectPropertyValue -Object $run -Name 'unityExecutableSha256') -notmatch
+                '^[0-9a-f]{64}$' -or
+            $settingsPath -notmatch '^Assets/.+\.asset$' -or
+            $lifecycleFilter.Length -gt 200 -or
+            $lifecycleFilter -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){1,15}$') {
+            $reason = 'RunMismatch'
+        }
+
         $binding = Get-ExactObjectPropertyValue -Object $document -Name 'binding'
+        $bindingProcessStartedAt = Convert-AttestationTimestamp `
+            -Value (Get-ExactObjectPropertyValue -Object $binding -Name 'processStartedAtUtc')
+        $bindingProcessFinishedAt = Convert-AttestationTimestamp `
+            -Value (Get-ExactObjectPropertyValue -Object $binding -Name 'processFinishedAtUtc')
+        $bindingReportStartedAt = Convert-AttestationTimestamp `
+            -Value (Get-ExactObjectPropertyValue -Object $binding -Name 'reportStartedAtUtc')
+        $bindingReportFinishedAt = Convert-AttestationTimestamp `
+            -Value (Get-ExactObjectPropertyValue -Object $binding -Name 'reportFinishedAtUtc')
         $bindingReportTime = Convert-AttestationTimestamp `
             -Value (Get-ExactObjectPropertyValue -Object $binding -Name 'reportLastWriteTimeUtc')
-        if ((Get-ExactObjectPropertyValue -Object $binding -Name 'schemaVersion') -cne
-                'app-ui-binding-validation.v2' -or
-            (Get-ExactObjectPropertyValue -Object $binding -Name 'tool') -cne 'AppUIBindingValidateAll' -or
-            (Get-ExactObjectPropertyValue -Object $binding -Name 'unityVersion') -cne
-                $ProjectBinding.unityVersion -or
-            -not ((Get-ExactObjectPropertyValue -Object $binding -Name 'success') -is [bool]) -or
-            (Get-ExactObjectPropertyValue -Object $binding -Name 'success') -ne $true -or
-            -not ((Get-ExactObjectPropertyValue -Object $binding -Name 'exitCode') -is [int]) -or
-            (Get-ExactObjectPropertyValue -Object $binding -Name 'exitCode') -ne 0 -or
-            -not ((Get-ExactObjectPropertyValue -Object $binding -Name 'errorCount') -is [int]) -or
-            (Get-ExactObjectPropertyValue -Object $binding -Name 'errorCount') -ne 0 -or
-            (Get-ExactObjectPropertyValue -Object $binding -Name 'reportSha256') -notmatch
-                '^[0-9a-f]{64}$') {
+        $bindingStatus = [string](Get-ExactObjectPropertyValue -Object $binding -Name 'status')
+        $bindingSuccess = Get-ExactObjectPropertyValue -Object $binding -Name 'success'
+        $bindingExitCode = Get-ExactObjectPropertyValue -Object $binding -Name 'exitCode'
+        $bindingErrorCount = Get-ExactObjectPropertyValue -Object $binding -Name 'errorCount'
+        if ($null -eq $reason -and
+            ((Get-ExactObjectPropertyValue -Object $binding -Name 'schemaVersion') -cne
+                    'app-ui-binding-validation.v2' -or
+                (Get-ExactObjectPropertyValue -Object $binding -Name 'tool') -cne 'AppUIBindingValidateAll' -or
+                (Get-ExactObjectPropertyValue -Object $binding -Name 'unityVersion') -cne
+                    $ProjectBinding.unityVersion -or
+                (Get-ExactObjectPropertyValue -Object $binding -Name 'settingsPath') -cne $settingsPath -or
+                (Get-ExactObjectPropertyValue -Object $binding -Name 'reportFileName') -cne
+                    'app-ui-binding-validation.v2.json' -or
+                (Get-ExactObjectPropertyValue -Object $binding -Name 'reportSha256') -notmatch
+                    '^[0-9a-f]{64}$' -or
+                -not ($bindingSuccess -is [bool]) -or -not ($bindingExitCode -is [int]) -or
+                -not ($bindingErrorCount -is [int]) -or $bindingErrorCount -lt 0 -or
+                $null -eq $bindingProcessStartedAt -or $null -eq $bindingProcessFinishedAt -or
+                $null -eq $bindingReportStartedAt -or $null -eq $bindingReportFinishedAt -or
+                $null -eq $bindingReportTime -or
+                $bindingProcessStartedAt -lt $runStartedAt -or
+                $bindingProcessFinishedAt -gt $runFinishedAt.AddSeconds(1) -or
+                $bindingProcessFinishedAt -lt $bindingProcessStartedAt -or
+                $bindingReportStartedAt -lt $bindingProcessStartedAt -or
+                $bindingReportFinishedAt -gt $bindingProcessFinishedAt.AddSeconds(1) -or
+                $bindingReportFinishedAt -lt $bindingReportStartedAt -or
+                $bindingReportTime -lt $bindingProcessStartedAt -or
+                $bindingReportTime -gt $bindingProcessFinishedAt.AddSeconds(1) -or
+                $bindingReportTime -le [datetimeoffset]$ProjectBinding.newestInputWriteTimeUtc -or
+                ($bindingStatus -ceq 'Passed' -and
+                    ($bindingSuccess -ne $true -or $bindingExitCode -ne 0 -or $bindingErrorCount -ne 0)) -or
+                ($bindingStatus -ceq 'Failed' -and
+                    ($bindingSuccess -ne $false -or $bindingExitCode -ne 1 -or $bindingErrorCount -le 0)) -or
+                ($bindingStatus -cne 'Passed' -and $bindingStatus -cne 'Failed'))) {
             $reason = 'BindingReportMismatch'
         }
-        if ($null -eq $reason) {
-            $runtime = Get-ExactObjectPropertyValue -Object $document -Name 'runtime'
-            $runtimeReportTime = Convert-AttestationTimestamp `
-                -Value (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportLastWriteTimeUtc')
-            $actualRequiredTests = @(
-                Get-ExactObjectPropertyValue -Object $runtime -Name 'requiredTests'
-            )
-            if ((Get-ExactObjectPropertyValue -Object $runtime -Name 'format') -cne 'NUnit3' -or
-                (Get-ExactObjectPropertyValue -Object $runtime -Name 'result') -cne 'Passed' -or
-                -not ((Get-ExactObjectPropertyValue -Object $runtime -Name 'total') -is [int]) -or
-                [int](Get-ExactObjectPropertyValue -Object $runtime -Name 'total') -lt
-                    $requiredRuntimeTests.Count -or
-                -not ((Get-ExactObjectPropertyValue -Object $runtime -Name 'passed') -is [int]) -or
-                (Get-ExactObjectPropertyValue -Object $runtime -Name 'passed') -ne
-                    (Get-ExactObjectPropertyValue -Object $runtime -Name 'total') -or
-                -not ((Get-ExactObjectPropertyValue -Object $runtime -Name 'failed') -is [int]) -or
-                (Get-ExactObjectPropertyValue -Object $runtime -Name 'failed') -ne 0 -or
-                -not ((Get-ExactObjectPropertyValue -Object $runtime -Name 'inconclusive') -is [int]) -or
-                (Get-ExactObjectPropertyValue -Object $runtime -Name 'inconclusive') -ne 0 -or
-                -not ((Get-ExactObjectPropertyValue -Object $runtime -Name 'skipped') -is [int]) -or
-                (Get-ExactObjectPropertyValue -Object $runtime -Name 'skipped') -ne 0 -or
-                (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportSha256') -notmatch
-                    '^[0-9a-f]{64}$' -or
-                [string]::Join('|', $actualRequiredTests) -cne
-                    [string]::Join('|', $requiredRuntimeTests)) {
+
+        $runtime = Get-ExactObjectPropertyValue -Object $document -Name 'runtime'
+        $runtimeStatus = [string](Get-ExactObjectPropertyValue -Object $runtime -Name 'status')
+        if ($null -eq $reason -and $bindingStatus -ceq 'Failed') {
+            if ($runtimeStatus -cne 'NotRun' -or
+                (Get-ExactObjectPropertyValue -Object $runtime -Name 'reason') -cne
+                    'BindingValidationFailed' -or
+                $null -ne (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportSha256')) {
                 $reason = 'RuntimeReportMismatch'
             }
         }
-        if ($null -eq $reason) {
-            $newestInput = [datetimeoffset]$ProjectBinding.newestInputWriteTimeUtc
-            if ($null -eq $bindingReportTime -or $null -eq $runtimeReportTime -or
-                $bindingReportTime -le $newestInput -or $runtimeReportTime -le $newestInput) {
-                $reason = 'EvidenceStale'
+        elseif ($null -eq $reason) {
+            $expectedRequired = @(
+                ($lifecycleFilter + '.Open'),
+                ($lifecycleFilter + '.Refresh'),
+                ($lifecycleFilter + '.Close'),
+                ($lifecycleFilter + '.Shutdown')
+            )
+            $expectedAnyOf = @(
+                ($lifecycleFilter + '.ReleaseScope'),
+                ($lifecycleFilter + '.SceneRebind')
+            )
+            $actualRequired = @(Get-ExactObjectPropertyValue -Object $runtime -Name 'requiredTests')
+            $actualAnyOf = @(Get-ExactObjectPropertyValue -Object $runtime -Name 'requiredAnyOfTests')
+            if ((Get-ExactObjectPropertyValue -Object $runtime -Name 'format') -cne 'NUnit3' -or
+                (Get-ExactObjectPropertyValue -Object $runtime -Name 'lifecycleTestFilter') -cne
+                    $lifecycleFilter -or
+                [string]::Join('|', $actualRequired) -cne [string]::Join('|', $expectedRequired) -or
+                [string]::Join('|', $actualAnyOf) -cne [string]::Join('|', $expectedAnyOf) -or
+                @('Passed', 'Failed', 'Pending') -cnotcontains $runtimeStatus) {
+                $reason = 'RuntimeReportMismatch'
+            }
+
+            if ($null -eq $reason -and $runtimeStatus -ceq 'Pending') {
+                $pendingReason = Get-ExactObjectPropertyValue -Object $runtime -Name 'reason'
+                if (@('RuntimeProcessDidNotStart', 'RuntimeProcessTimedOut', 'RuntimeReportMissing',
+                        'RuntimeReportRejected') -cnotcontains $pendingReason -or
+                    $null -ne (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportSha256')) {
+                    $reason = 'RuntimeReportMismatch'
+                }
+            }
+            elseif ($null -eq $reason) {
+                $runtimeProcessStartedAt = Convert-AttestationTimestamp `
+                    -Value (Get-ExactObjectPropertyValue -Object $runtime -Name 'processStartedAtUtc')
+                $runtimeProcessFinishedAt = Convert-AttestationTimestamp `
+                    -Value (Get-ExactObjectPropertyValue -Object $runtime -Name 'processFinishedAtUtc')
+                $runtimeReportTime = Convert-AttestationTimestamp `
+                    -Value (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportLastWriteTimeUtc')
+                $runtimeExitCode = Get-ExactObjectPropertyValue -Object $runtime -Name 'processExitCode'
+                $runtimeTotal = Get-ExactObjectPropertyValue -Object $runtime -Name 'total'
+                $runtimePassed = Get-ExactObjectPropertyValue -Object $runtime -Name 'passed'
+                $runtimeFailed = Get-ExactObjectPropertyValue -Object $runtime -Name 'failed'
+                $runtimeInconclusive = Get-ExactObjectPropertyValue -Object $runtime -Name 'inconclusive'
+                $runtimeSkipped = Get-ExactObjectPropertyValue -Object $runtime -Name 'skipped'
+                if ($null -eq $runtimeProcessStartedAt -or $null -eq $runtimeProcessFinishedAt -or
+                    $null -eq $runtimeReportTime -or
+                    $runtimeProcessStartedAt -lt $bindingProcessFinishedAt -or
+                    $runtimeProcessFinishedAt -gt $runFinishedAt.AddSeconds(1) -or
+                    $runtimeProcessFinishedAt -lt $runtimeProcessStartedAt -or
+                    $runtimeReportTime -lt $runtimeProcessStartedAt -or
+                    $runtimeReportTime -gt $runtimeProcessFinishedAt.AddSeconds(1) -or
+                    $runtimeReportTime -le [datetimeoffset]$ProjectBinding.newestInputWriteTimeUtc -or
+                    (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportFileName') -cne
+                        'app-ui-lifecycle-tests.xml' -or
+                    (Get-ExactObjectPropertyValue -Object $runtime -Name 'reportSha256') -notmatch
+                        '^[0-9a-f]{64}$' -or
+                    -not ($runtimeExitCode -is [int]) -or
+                    -not ($runtimeTotal -is [int]) -or -not ($runtimePassed -is [int]) -or
+                    -not ($runtimeFailed -is [int]) -or -not ($runtimeInconclusive -is [int]) -or
+                    -not ($runtimeSkipped -is [int]) -or
+                    (Get-ExactObjectPropertyValue -Object $runtime -Name 'timedOut') -ne $false -or
+                    ($runtimeStatus -ceq 'Passed' -and
+                        ((Get-ExactObjectPropertyValue -Object $runtime -Name 'result') -cne 'Passed' -or
+                            $runtimeExitCode -ne 0 -or $runtimeFailed -ne 0 -or
+                            $runtimeInconclusive -ne 0 -or $runtimeSkipped -ne 0 -or
+                            $runtimeTotal -ne $runtimePassed -or $runtimePassed -lt 5))) {
+                    $reason = 'RuntimeReportMismatch'
+                }
             }
         }
     }
@@ -922,9 +1012,13 @@ function Test-ValidationEvidence {
 
     return [pscustomobject][ordered]@{
         accepted = $true
+        bindingStatus = $bindingStatus
+        runtimeStatus = $runtimeStatus
         evidence = [pscustomobject][ordered]@{
             path = $RelativePath
-            status = 'Passed'
+            status = if ($bindingStatus -ceq 'Failed') { 'Failed' }
+                elseif ($runtimeStatus -ceq 'Passed') { 'Passed' }
+                else { 'Pending' }
             binding = 'Bound'
             schemaVersion = Get-ExactObjectPropertyValue -Object $document -Name 'schemaVersion'
             producer = Get-ExactObjectPropertyValue -Object $document -Name 'producer'
@@ -932,11 +1026,11 @@ function Test-ValidationEvidence {
             assetsDigest = Get-ExactObjectPropertyValue -Object $document -Name 'assetsDigest'
             assetsFileCount = Get-ExactObjectPropertyValue -Object $document -Name 'assetsFileCount'
             checks = [pscustomobject][ordered]@{
-                hostBoundariesStatus = 'Passed'
-                runtimeRootStatus = 'Passed'
-                pageContractStatus = 'Passed'
-                bindingStatus = 'Passed'
-                runtimeLifecycleStatus = 'Passed'
+                hostBoundariesStatus = $bindingStatus
+                runtimeRootStatus = $bindingStatus
+                pageContractStatus = $bindingStatus
+                bindingStatus = $bindingStatus
+                runtimeLifecycleStatus = $runtimeStatus
             }
         }
     }
@@ -1226,6 +1320,8 @@ else {
     $runtimeValidationEvidence = New-Object 'System.Collections.Generic.List[object]'
     $bindingRejectedEvidence = New-Object 'System.Collections.Generic.List[object]'
     $runtimeRejectedEvidence = New-Object 'System.Collections.Generic.List[object]'
+    $acceptedBindingValidationStatus = 'Unknown'
+    $acceptedRuntimeValidationStatus = 'Unknown'
     $validationAssetEntries = New-Object 'System.Collections.Generic.List[object]'
     $basicSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $customSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -1588,6 +1684,8 @@ else {
         if ($validationResult.accepted) {
             $bindingValidationEvidence.Add($validationResult.evidence) | Out-Null
             $runtimeValidationEvidence.Add($validationResult.evidence) | Out-Null
+            $acceptedBindingValidationStatus = $validationResult.bindingStatus
+            $acceptedRuntimeValidationStatus = $validationResult.runtimeStatus
         }
         else {
             $bindingRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
@@ -1637,8 +1735,8 @@ else {
     $bindingCandidateCoverage = ($bindingSettingsCandidates.Count -gt 0 -and $generatedBindingCandidates.Count -gt 0)
     $integrationFacts.binding.candidateCoverageComplete = $bindingCandidateCoverage
 
-    $bindingValidationStatus = if ($bindingValidationEvidence.Count -gt 0) { 'Passed' } else { 'Unknown' }
-    $runtimeValidationStatus = if ($runtimeValidationEvidence.Count -gt 0) { 'Passed' } else { 'Unknown' }
+    $bindingValidationStatus = $acceptedBindingValidationStatus
+    $runtimeValidationStatus = $acceptedRuntimeValidationStatus
     $hostBoundariesValidationStatus = $bindingValidationStatus
     $runtimeRootValidationStatus = $bindingValidationStatus
     $pageContractValidationStatus = $bindingValidationStatus
@@ -1705,6 +1803,11 @@ else {
     elseif (-not $bindingCandidateCoverage) {
         $status = 'BindingGenerationPending'
     }
+    elseif ($bindingValidationStatus -eq 'Failed') {
+        $status = 'BindingInvalid'
+        Add-Issue -Code 'BINDING_VALIDATION_FAILED' -Severity 'Error' `
+            -Message 'The current verified AppUI Binding validation run failed.'
+    }
     elseif ($bindingValidationStatus -ne 'Passed' -or $runtimeValidationStatus -ne 'Passed' -or
         -not $projectFacts.scanComplete) {
         $status = 'RuntimeValidationPending'
@@ -1712,9 +1815,9 @@ else {
             Add-Issue -Code 'BINDING_VALIDATION_EVIDENCE_MISSING' -Severity 'Warning' `
                 -Message 'No explicit current passing Binding validation attestation was accepted.'
         }
-        if ($runtimeValidationStatus -eq 'Unknown') {
+        if ($runtimeValidationStatus -ne 'Passed') {
             Add-Issue -Code 'RUNTIME_VALIDATION_EVIDENCE_MISSING' -Severity 'Warning' `
-                -Message 'No explicit current passing Runtime validation attestation was accepted.'
+                -Message 'No explicit current passing Runtime lifecycle attestation was accepted.'
         }
         if (-not $projectFacts.scanComplete) {
             Add-Issue -Code 'INSPECTION_TRUNCATED' -Severity 'Warning' `

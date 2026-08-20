@@ -232,50 +232,183 @@ function Get-FileSha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-function New-RealValidationReports {
+function New-FakeUnityExecutable {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $source = @'
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Security;
+using System.Text;
+
+public static class FakeUnityCommandLine
+{
+    private static string Arg(string[] args, string name)
+    {
+        for (int i = 0; i + 1 < args.Length; i++)
+        {
+            if (String.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+                return args[i + 1];
+        }
+        return String.Empty;
+    }
+
+    private static bool Has(string[] args, string value)
+    {
+        return args.Any(item => String.Equals(item, value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string Json(string value)
+    {
+        if (value == null) return String.Empty;
+        return value.Replace("\\", "\\\\").Replace("\"", "\\\"")
+            .Replace("\r", "\\r").Replace("\n", "\\n");
+    }
+
+    private static void LogInvocation(string[] args)
+    {
+        string path = Environment.GetEnvironmentVariable("APPUI_FAKE_UNITY_INVOCATION_LOG");
+        if (String.IsNullOrEmpty(path)) return;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
+        string line = String.Join("|", args.Select(item =>
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(item))).ToArray());
+        File.AppendAllText(path, line + Environment.NewLine, new UTF8Encoding(false));
+    }
+
+    private static int WriteBinding(string[] args, string scenario)
+    {
+        string path = Arg(args, "-appUIValidationReportPath");
+        if (scenario == "BindingNoReport") return 0;
+        if (String.IsNullOrEmpty(path)) return 2;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
+        DateTime started = DateTime.UtcNow.AddMilliseconds(-2);
+        DateTime finished = DateTime.UtcNow;
+        bool validationFailed = scenario == "BindingFail";
+        bool commandFailed = scenario == "BindingCommandFail";
+        int exitCode = commandFailed ? 2 : (validationFailed ? 1 : 0);
+        int errorCount = exitCode == 0 ? 0 : 1;
+        string json = "{" +
+            "\"schemaVersion\":\"app-ui-binding-validation.v2\"," +
+            "\"tool\":\"AppUIBindingValidateAll\"," +
+            "\"unityVersion\":\"6000.0.25f1\"," +
+            "\"settingsPath\":\"" + Json(Arg(args, "-appUIBindingSettingsPath")) + "\"," +
+            "\"reportPath\":\"" + Json(path.Replace('\\', '/')) + "\"," +
+            "\"startedAtUtc\":\"" + started.ToString("o", CultureInfo.InvariantCulture) + "\"," +
+            "\"finishedAtUtc\":\"" + finished.ToString("o", CultureInfo.InvariantCulture) + "\"," +
+            "\"durationMs\":2," +
+            "\"success\":" + (exitCode == 0 ? "true" : "false") + "," +
+            "\"exitCode\":" + exitCode.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"errorCount\":" + errorCount.ToString(CultureInfo.InvariantCulture) + "," +
+            "\"warningCount\":0,\"infoCount\":0,\"messages\":[]}";
+        File.WriteAllText(path, json, new UTF8Encoding(false));
+        if (scenario == "BindingReplay") File.SetLastWriteTimeUtc(path, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        if (scenario == "BindingFuture") File.SetLastWriteTimeUtc(path, new DateTime(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        return exitCode;
+    }
+
+    private static int WriteRuntime(string[] args, string scenario)
+    {
+        string path = Arg(args, "-testResults");
+        if (scenario == "RuntimeNoReport") return 0;
+        if (scenario == "RuntimeProcessFail") return 3;
+        if (String.IsNullOrEmpty(path)) return 3;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
+        string prefix = Arg(args, "-testFilter");
+        bool missingLifecycle = scenario == "RuntimeMissingLifecycle";
+        bool failed = scenario == "RuntimeFail";
+        var names = new List<string> {
+            prefix + ".Open", prefix + ".Refresh", prefix + ".Close",
+            prefix + ".Shutdown"
+        };
+        if (!missingLifecycle)
+        {
+            names.Insert(3, prefix + ".ReleaseScope");
+            names.Insert(4, prefix + ".SceneRebind");
+        }
+        int total = names.Count;
+        int passed = failed ? total - 1 : total;
+        int failedCount = failed ? 1 : 0;
+        string result = failed ? "Failed" : "Passed";
+        var cases = new StringBuilder();
+        for (int i = 0; i < names.Count; i++)
+        {
+            string caseResult = failed && i == 0 ? "Failed" : "Passed";
+            cases.Append("<test-case fullname=\"")
+                .Append(SecurityElement.Escape(names[i]))
+                .Append("\" result=\"").Append(caseResult).Append("\" />");
+        }
+        string xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+            "<test-run id=\"2\" result=\"" + result + "\" total=\"" + total +
+            "\" passed=\"" + passed + "\" failed=\"" + failedCount +
+            "\" inconclusive=\"0\" skipped=\"0\"><test-suite result=\"" + result + "\">" +
+            cases + "</test-suite></test-run>";
+        File.WriteAllText(path, xml, new UTF8Encoding(false));
+        if (scenario == "RuntimeReplay") File.SetLastWriteTimeUtc(path, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        if (scenario == "RuntimeFuture") File.SetLastWriteTimeUtc(path, new DateTime(2099, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        return failed ? 2 : 0;
+    }
+
+    public static int Main(string[] args)
+    {
+        LogInvocation(args);
+        string scenario = Environment.GetEnvironmentVariable("APPUI_FAKE_UNITY_SCENARIO") ?? "Pass";
+        if (Has(args, "Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll"))
+            return WriteBinding(args, scenario);
+        if (Has(args, "-runTests"))
+            return WriteRuntime(args, scenario);
+        return 9;
+    }
+}
+'@
+    Add-Type -TypeDefinition $source -OutputAssembly $Path -OutputType ConsoleApplication
+}
+
+function Read-FakeUnityInvocations {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return @()
+    }
+    return @(Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object {
+        $arguments = @()
+        if (-not [string]::IsNullOrWhiteSpace($_)) {
+            $arguments = @($_.Split('|') | ForEach-Object {
+                [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_))
+            })
+        }
+        ,$arguments
+    })
+}
+
+function Invoke-ValidationProducer {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectPath,
-        [Parameter(Mandatory = $true)][string]$ReportRoot
+        [Parameter(Mandatory = $true)][string]$OutputPath,
+        [string]$Scenario = 'Pass',
+        [string]$LifecycleTestFilter = 'Joi.H.AppUI.Tests.Lifecycle',
+        [string]$InvocationLogPath = ''
     )
 
-    [System.IO.Directory]::CreateDirectory($ReportRoot) | Out-Null
-    $bindingReportPath = Join-Path $ReportRoot 'app-ui-binding-validation.v2.json'
-    $runtimeReportPath = Join-Path $ReportRoot 'app-ui-lifecycle-tests.xml'
-    Write-Utf8File -Path $bindingReportPath -Content (@{
-        schemaVersion = 'app-ui-binding-validation.v2'
-        tool = 'AppUIBindingValidateAll'
-        unityVersion = '6000.0.25f1'
-        success = $true
-        exitCode = 0
-        errorCount = 0
-    } | ConvertTo-Json -Depth 6)
-    Write-Utf8File -Path $runtimeReportPath -Content @'
-<?xml version="1.0" encoding="utf-8"?>
-<test-run id="2" testcasecount="6" result="Passed" total="6" passed="6" failed="0" inconclusive="0" skipped="0" asserts="0">
-  <test-suite type="Assembly" name="Joi.H.AppUI.ProjectTests" result="Passed" total="6" passed="6" failed="0" inconclusive="0" skipped="0">
-    <test-case fullname="Joi.H.AppUI.Tests.Lifecycle.Open" result="Passed" />
-    <test-case fullname="Joi.H.AppUI.Tests.Lifecycle.Refresh" result="Passed" />
-    <test-case fullname="Joi.H.AppUI.Tests.Lifecycle.Close" result="Passed" />
-    <test-case fullname="Joi.H.AppUI.Tests.Lifecycle.ReleaseScope" result="Passed" />
-    <test-case fullname="Joi.H.AppUI.Tests.Lifecycle.SceneRebind" result="Passed" />
-    <test-case fullname="Joi.H.AppUI.Tests.Lifecycle.Shutdown" result="Passed" />
-  </test-suite>
-</test-run>
-'@
-
-    $newestProjectInput = [datetime]::MinValue
-    foreach ($file in Get-ChildItem -LiteralPath $ProjectPath -Recurse -File -Force) {
-        if ($file.LastWriteTimeUtc -gt $newestProjectInput) {
-            $newestProjectInput = $file.LastWriteTimeUtc
-        }
+    if ([string]::IsNullOrWhiteSpace($InvocationLogPath)) {
+        $InvocationLogPath = $OutputPath + '.unity-invocations.log'
     }
-    $reportTime = $newestProjectInput.AddSeconds(2)
-    [System.IO.File]::SetLastWriteTimeUtc($bindingReportPath, $reportTime)
-    [System.IO.File]::SetLastWriteTimeUtc($runtimeReportPath, $reportTime)
-
-    return [pscustomobject]@{
-        binding = $bindingReportPath
-        runtime = $runtimeReportPath
+    $priorScenario = [Environment]::GetEnvironmentVariable('APPUI_FAKE_UNITY_SCENARIO')
+    $priorLog = [Environment]::GetEnvironmentVariable('APPUI_FAKE_UNITY_INVOCATION_LOG')
+    try {
+        [Environment]::SetEnvironmentVariable('APPUI_FAKE_UNITY_SCENARIO', $Scenario)
+        [Environment]::SetEnvironmentVariable('APPUI_FAKE_UNITY_INVOCATION_LOG', $InvocationLogPath)
+        return @(& $script:AttestationProducerPath -ProjectPath $ProjectPath `
+            -UnityPath $script:FakeUnityPath `
+            -BindingSettingsPath (Join-Path $ProjectPath 'Assets\AppUI\Settings\MainUIBindingSettings.asset') `
+            -LifecycleTestFilter $LifecycleTestFilter -OutputPath $OutputPath `
+            -TimeoutSeconds 10 -MaxSourceFiles 10000)
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable('APPUI_FAKE_UNITY_SCENARIO', $priorScenario)
+        [Environment]::SetEnvironmentVariable('APPUI_FAKE_UNITY_INVOCATION_LOG', $priorLog)
     }
 }
 
@@ -288,13 +421,9 @@ function New-RealValidationAttestation {
 
     Assert-True -Condition (Test-Path -LiteralPath $script:AttestationProducerPath -PathType Leaf) `
         -Message ("Missing separate attestation producer: {0}" -f $script:AttestationProducerPath)
-    $reports = New-RealValidationReports -ProjectPath $ProjectPath `
-        -ReportRoot (Join-Path $ArtifactRoot 'reports')
     [System.IO.Directory]::CreateDirectory($ArtifactRoot) | Out-Null
     $outputPath = Join-Path $ArtifactRoot $Name
-    & $script:AttestationProducerPath -ProjectPath $ProjectPath `
-        -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-        -OutputPath $outputPath | Out-Null
+    Invoke-ValidationProducer -ProjectPath $ProjectPath -OutputPath $outputPath | Out-Null
     Assert-True -Condition (Test-Path -LiteralPath $outputPath -PathType Leaf) `
         -Message 'Separate producer emitted no attestation.'
     return $outputPath
@@ -303,7 +432,7 @@ function New-RealValidationAttestation {
 function Add-RealValidationAttestation {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
-        [string]$SchemaVersion = 'joih-appui-project-validation-attestation.v2',
+        [string]$SchemaVersion = 'joih-appui-project-validation-attestation.v3',
         [string]$Producer = 'integrating-joih-appui/new-appui-validation-attestation.ps1'
     )
 
@@ -311,7 +440,7 @@ function Add-RealValidationAttestation {
     $artifactRoot = Join-Path $script:CurrentRunRoot `
         ("generated-attestation-{0}" -f [guid]::NewGuid().ToString('N'))
     $attestationPath = New-RealValidationAttestation -ProjectPath $Root -ArtifactRoot $artifactRoot
-    if ($SchemaVersion -cne 'joih-appui-project-validation-attestation.v2' -or
+    if ($SchemaVersion -cne 'joih-appui-project-validation-attestation.v3' -or
         $Producer -cne 'integrating-joih-appui/new-appui-validation-attestation.ps1') {
         $attestation = [System.IO.File]::ReadAllText($attestationPath) | ConvertFrom-Json
         $attestation.schemaVersion = $SchemaVersion
@@ -383,6 +512,8 @@ $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimE
 $runRoot = Join-Path $tempRoot ("integrating-appui-inspector-tests-{0}" -f [guid]::NewGuid().ToString('N'))
 $script:CurrentRunRoot = $runRoot
 [System.IO.Directory]::CreateDirectory($runRoot) | Out-Null
+$script:FakeUnityPath = Join-Path $runRoot 'FakeUnity.exe'
+New-FakeUnityExecutable -Path $script:FakeUnityPath
 
 try {
     $officialTag = 'https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1'
@@ -417,35 +548,9 @@ try {
             -Message 'Inspector invokes the separate producer.'
     }
 
-    Invoke-Test -Name 'Separate producer rejects self-declared status reports' -Body {
+    Invoke-Test -Name 'Separate producer accepts no caller report or status inputs' -Body {
         Assert-True -Condition (Test-Path -LiteralPath $script:AttestationProducerPath -PathType Leaf) `
             -Message ("Missing separate attestation producer: {0}" -f $script:AttestationProducerPath)
-        $fixture = New-UnityFixture -RunRoot $runRoot -Name 'self-declared-reports' -AppUIReference $officialTag
-        Add-AppUIHostAndPorts -Root $fixture
-        Add-RuntimeRoot -Root $fixture
-        Add-PageContract -Root $fixture
-        Add-GeneratedBinding -Root $fixture
-        $reportRoot = Join-Path $runRoot 'self-declared-report-artifacts'
-        $bindingReport = Join-Path $reportRoot 'binding.json'
-        $runtimeReport = Join-Path $reportRoot 'runtime.json'
-        Write-Utf8File -Path $bindingReport -Content `
-            '{"schemaVersion":"app-ui-binding-validation.v2","tool":"AppUIBindingValidateAll","status":"Passed"}'
-        Write-Utf8File -Path $runtimeReport -Content `
-            '{"framework":"NUnit","status":"Passed","tests":"all"}'
-        $attestation = Join-Path $reportRoot 'attestation.json'
-        $blocked = $false
-        try {
-            & $script:AttestationProducerPath -ProjectPath $fixture `
-                -BindingReportPath $bindingReport -RuntimeTestResultPath $runtimeReport `
-                -OutputPath $attestation | Out-Null
-        }
-        catch {
-            $blocked = $true
-        }
-        Assert-True -Condition $blocked -Message 'Self-declared status documents produced an attestation.'
-        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $attestation) `
-            -Message 'Rejected reports left an attestation behind.'
-
         $tokens = $null
         $parseErrors = $null
         $producerAst = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -453,12 +558,48 @@ try {
         Assert-Equal -Expected 0 -Actual $parseErrors.Count -Message 'Producer failed AST parsing.'
         $producerParameterNames = @($producerAst.ParamBlock.Parameters | ForEach-Object {
             $_.Name.VariablePath.UserPath
-        })
-        Assert-True -Condition (-not ($producerParameterNames -match 'Status')) `
-            -Message 'Producer accepts a caller-declared validation status.'
+        } | Sort-Object)
+        $expected = @('BindingSettingsPath', 'LifecycleTestFilter', 'MaxSourceFiles',
+            'OutputPath', 'ProjectPath', 'TimeoutSeconds', 'UnityPath')
+        Assert-Equal -Expected ([string]::Join('|', $expected)) `
+            -Actual ([string]::Join('|', $producerParameterNames)) `
+            -Message 'Producer exposes caller-provided report or outcome parameters.'
+        Assert-True -Condition (-not ($producerParameterNames -match 'Status|Report|Result')) `
+            -Message 'Producer accepts a caller-declared report or validation outcome.'
     }
 
-    Invoke-Test -Name 'Explicit env or secret-named evidence inputs are never trusted' -Body {
+    Invoke-Test -Name 'Run-owned Binding reports reject replay and future timestamps' -Body {
+        $fixture = New-UnityFixture -RunRoot $runRoot -Name 'run-owned-report-window' `
+            -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $fixture
+        Add-RuntimeRoot -Root $fixture
+        Add-PageContract -Root $fixture
+        Add-GeneratedBinding -Root $fixture
+        $artifactRoot = Join-Path $runRoot 'run-owned-report-window-artifacts'
+        [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
+        $prewritten = Join-Path $artifactRoot 'caller-prewritten-binding.json'
+        Write-Utf8File -Path $prewritten -Content '{"success":true,"status":"Passed"}'
+        $prewrittenHash = Get-FileSha256 -Path $prewritten
+        foreach ($scenario in @('BindingReplay', 'BindingFuture')) {
+            $output = Join-Path $artifactRoot ("{0}.attestation.json" -f $scenario)
+            $blocked = $false
+            try {
+                Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $output `
+                    -Scenario $scenario | Out-Null
+            }
+            catch {
+                $blocked = $true
+            }
+            Assert-True -Condition $blocked `
+                -Message ("A {0} report escaped the verified process window." -f $scenario)
+            Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $output) `
+                -Message ("A {0} report left an attestation." -f $scenario)
+        }
+        Assert-Equal -Expected $prewrittenHash -Actual (Get-FileSha256 -Path $prewritten) `
+            -Message 'Producer read or changed a caller-prewritten report.'
+    }
+
+    Invoke-Test -Name 'Secret-named explicit attestations are never trusted' -Body {
         $fixture = New-UnityFixture -RunRoot $runRoot -Name 'secret-named-explicit-evidence' `
             -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $fixture
@@ -467,30 +608,8 @@ try {
         Add-GeneratedBinding -Root $fixture
         $artifactRoot = Join-Path $runRoot 'secret-named-evidence-artifacts'
         [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
-        $reports = New-RealValidationReports -ProjectPath $fixture -ReportRoot $artifactRoot
-        $envBindingReport = Join-Path $artifactRoot '.env'
-        Write-Utf8File -Path $envBindingReport `
-            -Content ([System.IO.File]::ReadAllText($reports.binding))
-        [System.IO.File]::SetLastWriteTimeUtc($envBindingReport,
-            (Get-Item -LiteralPath $reports.binding).LastWriteTimeUtc)
-        $blockedOutput = Join-Path $artifactRoot 'secret-input-attestation.json'
-        $blocked = $false
-        try {
-            & $script:AttestationProducerPath -ProjectPath $fixture `
-                -BindingReportPath $envBindingReport -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $blockedOutput | Out-Null
-        }
-        catch {
-            $blocked = $true
-        }
-        Assert-True -Condition $blocked -Message 'Producer read a .env Binding report.'
-        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $blockedOutput) `
-            -Message 'A .env report produced an attestation.'
-
         $validOutput = Join-Path $artifactRoot 'valid-attestation.json'
-        & $script:AttestationProducerPath -ProjectPath $fixture `
-            -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-            -OutputPath $validOutput | Out-Null
+        Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $validOutput | Out-Null
         $envAttestation = Join-Path $artifactRoot '.secret'
         Write-Utf8File -Path $envAttestation -Content ([System.IO.File]::ReadAllText($validOutput))
         $result = Invoke-Inspection -ProjectPath $fixture -AttestationPath $envAttestation
@@ -572,6 +691,7 @@ try {
         $hiddenFixture = New-UnityFixture -RunRoot $runRoot -Name 'hidden-relevant-input' `
             -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $hiddenFixture
+        Add-PageContract -Root $hiddenFixture
         $hiddenPath = Join-Path $hiddenFixture 'Assets\AppUI\HiddenPanel.prefab'
         Write-Utf8File -Path $hiddenPath -Content 'hidden-prefab'
         [System.IO.File]::SetAttributes($hiddenPath, [System.IO.FileAttributes]::Hidden)
@@ -582,13 +702,10 @@ try {
             -Message 'A hidden validation-relevant file retained Ready.'
         $hiddenArtifacts = Join-Path $runRoot 'hidden-relevant-artifacts'
         [System.IO.Directory]::CreateDirectory($hiddenArtifacts) | Out-Null
-        $hiddenReports = New-RealValidationReports -ProjectPath $hiddenFixture -ReportRoot $hiddenArtifacts
         $hiddenOutput = Join-Path $hiddenArtifacts 'attestation.json'
         $hiddenBlocked = $false
         try {
-            & $script:AttestationProducerPath -ProjectPath $hiddenFixture `
-                -BindingReportPath $hiddenReports.binding -RuntimeTestResultPath $hiddenReports.runtime `
-                -OutputPath $hiddenOutput | Out-Null
+            Invoke-ValidationProducer -ProjectPath $hiddenFixture -OutputPath $hiddenOutput | Out-Null
         }
         catch {
             $hiddenBlocked = $true
@@ -601,6 +718,7 @@ try {
         $reparseFixture = New-UnityFixture -RunRoot $runRoot -Name 'reparse-relevant-input' `
             -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $reparseFixture
+        Add-PageContract -Root $reparseFixture
         $outside = Join-Path $runRoot 'reparse-relevant-outside'
         Write-Utf8File -Path (Join-Path $outside 'Panel.prefab') -Content 'outside-prefab'
         $junction = Join-Path $reparseFixture 'Assets\LinkedValidationInputs'
@@ -613,14 +731,10 @@ try {
             -Message 'A reparse validation-input subtree retained Ready.'
         $reparseArtifacts = Join-Path $runRoot 'reparse-relevant-artifacts'
         [System.IO.Directory]::CreateDirectory($reparseArtifacts) | Out-Null
-        $reparseReports = New-RealValidationReports -ProjectPath $reparseFixture `
-            -ReportRoot $reparseArtifacts
         $reparseOutput = Join-Path $reparseArtifacts 'attestation.json'
         $reparseBlocked = $false
         try {
-            & $script:AttestationProducerPath -ProjectPath $reparseFixture `
-                -BindingReportPath $reparseReports.binding `
-                -RuntimeTestResultPath $reparseReports.runtime -OutputPath $reparseOutput | Out-Null
+            Invoke-ValidationProducer -ProjectPath $reparseFixture -OutputPath $reparseOutput | Out-Null
         }
         catch {
             $reparseBlocked = $true
@@ -1031,7 +1145,7 @@ public sealed class SamplePanelController : PanelBaseController {
 
     Invoke-Test -Name 'Validation evidence is exact produced and bound to current project facts' -Body {
         $ready = Invoke-Inspection -ProjectPath $completeFixture
-        Assert-Equal -Expected 'joih-appui-project-validation-attestation.v2' `
+        Assert-Equal -Expected 'joih-appui-project-validation-attestation.v3' `
             -Actual $ready.integration.validation.contract.schemaVersion `
             -Message 'Validation evidence schema contract was not reported.'
         Assert-Equal -Expected 'integrating-joih-appui/new-appui-validation-attestation.ps1' `
@@ -1090,7 +1204,7 @@ public sealed class SamplePanelController : PanelBaseController {
             -Message 'Stale project binding was not rejected explicitly.'
     }
 
-    Invoke-Test -Name 'Attestation producer rejects a non-passing real Binding report' -Body {
+    Invoke-Test -Name 'Genuine Binding failure produces bounded evidence and BindingInvalid' -Body {
         $failedBinding = New-UnityFixture -RunRoot $runRoot -Name 'failed-binding-producer' `
             -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $failedBinding
@@ -1099,57 +1213,30 @@ public sealed class SamplePanelController : PanelBaseController {
         Add-GeneratedBinding -Root $failedBinding
         $artifactRoot = Join-Path $runRoot 'failed-binding-artifacts'
         [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
-        $reports = New-RealValidationReports -ProjectPath $failedBinding -ReportRoot $artifactRoot
-        $bindingDocument = [System.IO.File]::ReadAllText($reports.binding) | ConvertFrom-Json
-        $bindingDocument.success = $false
-        $bindingDocument.exitCode = 1
-        $bindingDocument.errorCount = 1
-        Write-Utf8File -Path $reports.binding -Content ($bindingDocument | ConvertTo-Json -Depth 6)
-        [System.IO.File]::SetLastWriteTimeUtc($reports.binding, [datetime]::UtcNow.AddMinutes(5))
-        $output = Join-Path $artifactRoot 'rejected-attestation.json'
-        $blocked = $false
-        try {
-            & $script:AttestationProducerPath -ProjectPath $failedBinding `
-                -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $output | Out-Null
-        }
-        catch {
-            $blocked = $true
-        }
-        Assert-True -Condition $blocked -Message 'A failed Binding report produced an attestation.'
-        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $output) `
-            -Message 'Rejected Binding evidence left an output file.'
+        $output = Join-Path $artifactRoot 'failed-binding-attestation.json'
+        $invocationLog = Join-Path $artifactRoot 'failed-binding-invocations.log'
+        Invoke-ValidationProducer -ProjectPath $failedBinding -OutputPath $output `
+            -Scenario 'BindingFail' -InvocationLogPath $invocationLog | Out-Null
+        Assert-True -Condition (Test-Path -LiteralPath $output -PathType Leaf) `
+            -Message 'Genuine Binding failure did not produce a current attestation.'
+        $attestation = [System.IO.File]::ReadAllText($output) | ConvertFrom-Json
+        Assert-Equal -Expected 'Failed' -Actual $attestation.binding.status `
+            -Message 'Binding validation failure was not preserved.'
+        Assert-Equal -Expected 'NotRun' -Actual $attestation.runtime.status `
+            -Message 'Runtime tests ran after Binding validation failed.'
+        $invocations = @(Read-FakeUnityInvocations -Path $invocationLog)
+        Assert-Equal -Expected 1 -Actual $invocations.Count `
+            -Message 'Binding failure invoked Unity more than once.'
+        Assert-True -Condition (-not ($invocations[0] -contains '-runTests')) `
+            -Message 'Binding failure still invoked Unity Test Runner.'
+        $inspection = Invoke-Inspection -ProjectPath $failedBinding -AttestationPath $output
+        Assert-Equal -Expected 'BindingInvalid' -Actual $inspection.status `
+            -Message 'A genuine current Binding failure remained unreachable.'
+        Assert-Equal -Expected 'Failed' -Actual $inspection.integration.validation.binding.status `
+            -Message 'Inspector did not expose the bound Binding failure.'
     }
 
-    Invoke-Test -Name 'Attestation producer requires fresh reports and every lifecycle test' -Body {
-        $staleReports = New-UnityFixture -RunRoot $runRoot -Name 'stale-real-reports' `
-            -AppUIReference $officialTag
-        Add-AppUIHostAndPorts -Root $staleReports
-        Add-RuntimeRoot -Root $staleReports
-        Add-PageContract -Root $staleReports
-        Add-GeneratedBinding -Root $staleReports
-        $staleRoot = Join-Path $runRoot 'stale-real-report-artifacts'
-        [System.IO.Directory]::CreateDirectory($staleRoot) | Out-Null
-        $reports = New-RealValidationReports -ProjectPath $staleReports -ReportRoot $staleRoot
-        $newPrefab = Join-Path $staleReports 'Assets\AppUI\Pages\NewerPanel.prefab'
-        Write-Utf8File -Path $newPrefab -Content 'newer-than-reports'
-        $reportTime = (Get-Item -LiteralPath $reports.binding).LastWriteTimeUtc
-        [System.IO.File]::SetLastWriteTimeUtc($newPrefab, $reportTime.AddSeconds(1))
-        $staleOutput = Join-Path $staleRoot 'stale-attestation.json'
-        $staleBlocked = $false
-        try {
-            & $script:AttestationProducerPath -ProjectPath $staleReports `
-                -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $staleOutput | Out-Null
-        }
-        catch {
-            $staleBlocked = $true
-        }
-        Assert-True -Condition $staleBlocked `
-            -Message 'Reports older than a validation-relevant prefab produced an attestation.'
-        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $staleOutput) `
-            -Message 'Stale reports left an attestation output.'
-
+    Invoke-Test -Name 'Binding pass without genuine lifecycle result remains RuntimeValidationPending' -Body {
         $missingLifecycle = New-UnityFixture -RunRoot $runRoot -Name 'missing-lifecycle-report' `
             -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $missingLifecycle
@@ -1158,27 +1245,34 @@ public sealed class SamplePanelController : PanelBaseController {
         Add-GeneratedBinding -Root $missingLifecycle
         $lifecycleRoot = Join-Path $runRoot 'missing-lifecycle-artifacts'
         [System.IO.Directory]::CreateDirectory($lifecycleRoot) | Out-Null
-        $lifecycleReports = New-RealValidationReports -ProjectPath $missingLifecycle `
-            -ReportRoot $lifecycleRoot
-        $runtimeXml = [System.IO.File]::ReadAllText($lifecycleReports.runtime).Replace(
-            'Joi.H.AppUI.Tests.Lifecycle.SceneRebind',
-            'Joi.H.AppUI.Tests.Lifecycle.NotTheRequiredSceneRebind')
-        Write-Utf8File -Path $lifecycleReports.runtime -Content $runtimeXml
-        [System.IO.File]::SetLastWriteTimeUtc($lifecycleReports.runtime, [datetime]::UtcNow.AddMinutes(5))
         $lifecycleOutput = Join-Path $lifecycleRoot 'missing-lifecycle-attestation.json'
-        $lifecycleBlocked = $false
-        try {
-            & $script:AttestationProducerPath -ProjectPath $missingLifecycle `
-                -BindingReportPath $lifecycleReports.binding `
-                -RuntimeTestResultPath $lifecycleReports.runtime -OutputPath $lifecycleOutput | Out-Null
-        }
-        catch {
-            $lifecycleBlocked = $true
-        }
-        Assert-True -Condition $lifecycleBlocked `
-            -Message 'A runtime report missing SceneRebind produced an attestation.'
-        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $lifecycleOutput) `
-            -Message 'Incomplete lifecycle evidence left an attestation output.'
+        Invoke-ValidationProducer -ProjectPath $missingLifecycle -OutputPath $lifecycleOutput `
+            -Scenario 'RuntimeMissingLifecycle' | Out-Null
+        $lifecycleAttestation = [System.IO.File]::ReadAllText($lifecycleOutput) | ConvertFrom-Json
+        Assert-Equal -Expected 'Passed' -Actual $lifecycleAttestation.binding.status `
+            -Message 'Valid Binding pass was discarded when lifecycle evidence was incomplete.'
+        Assert-Equal -Expected 'Failed' -Actual $lifecycleAttestation.runtime.status `
+            -Message 'Missing required lifecycle names were not recorded as a runtime failure.'
+        $lifecycleInspection = Invoke-Inspection -ProjectPath $missingLifecycle `
+            -AttestationPath $lifecycleOutput
+        Assert-Equal -Expected 'RuntimeValidationPending' -Actual $lifecycleInspection.status `
+            -Message 'Missing lifecycle evidence produced a definitive Ready status.'
+
+        $noRuntime = New-UnityFixture -RunRoot $runRoot -Name 'no-runtime-report' -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $noRuntime
+        Add-RuntimeRoot -Root $noRuntime
+        Add-PageContract -Root $noRuntime
+        Add-GeneratedBinding -Root $noRuntime
+        $noRuntimeOutput = Join-Path $lifecycleRoot 'no-runtime-attestation.json'
+        Invoke-ValidationProducer -ProjectPath $noRuntime -OutputPath $noRuntimeOutput `
+            -Scenario 'RuntimeNoReport' | Out-Null
+        $noRuntimeAttestation = [System.IO.File]::ReadAllText($noRuntimeOutput) | ConvertFrom-Json
+        Assert-Equal -Expected 'Pending' -Actual $noRuntimeAttestation.runtime.status `
+            -Message 'Missing Unity Test Runner output was treated as a result.'
+        $noRuntimeInspection = Invoke-Inspection -ProjectPath $noRuntime `
+            -AttestationPath $noRuntimeOutput
+        Assert-Equal -Expected 'RuntimeValidationPending' -Actual $noRuntimeInspection.status `
+            -Message 'Binding-only evidence produced Ready.'
     }
 
     Invoke-Test -Name 'Attestation producer rejects protected existing and reparse output paths' -Body {
@@ -1190,14 +1284,10 @@ public sealed class SamplePanelController : PanelBaseController {
         Add-GeneratedBinding -Root $fixture
         $artifactRoot = Join-Path $runRoot 'producer-output-safety-artifacts'
         [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
-        $reports = New-RealValidationReports -ProjectPath $fixture -ReportRoot $artifactRoot
-
         $protectedOutput = Join-Path $fixture 'Assets\validation-attestation.json'
         $protectedBlocked = $false
         try {
-            & $script:AttestationProducerPath -ProjectPath $fixture `
-                -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $protectedOutput | Out-Null
+            Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $protectedOutput | Out-Null
         }
         catch {
             $protectedBlocked = $true
@@ -1211,9 +1301,7 @@ public sealed class SamplePanelController : PanelBaseController {
         Write-Utf8File -Path $existingOutput -Content 'EXISTING_PRODUCER_OUTPUT'
         $existingBlocked = $false
         try {
-            & $script:AttestationProducerPath -ProjectPath $fixture `
-                -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $existingOutput | Out-Null
+            Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $existingOutput | Out-Null
         }
         catch {
             $existingBlocked = $true
@@ -1231,9 +1319,7 @@ public sealed class SamplePanelController : PanelBaseController {
         $reparseOutput = Join-Path $outputJunction 'attestation.json'
         $reparseBlocked = $false
         try {
-            & $script:AttestationProducerPath -ProjectPath $fixture `
-                -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $reparseOutput | Out-Null
+            Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $reparseOutput | Out-Null
         }
         catch {
             $reparseBlocked = $true
@@ -1245,7 +1331,7 @@ public sealed class SamplePanelController : PanelBaseController {
             -Message 'Producer output escaped through a junction.'
     }
 
-    Invoke-Test -Name 'Separate project-owned producer binds exact reports and uses CreateNew UTF8 output' -Body {
+    Invoke-Test -Name 'Producer invokes exact Unity commands and binds run-owned reports' -Body {
         $produced = New-UnityFixture -RunRoot $runRoot -Name 'project-owned-producer' -AppUIReference $officialTag
         Add-AppUIHostAndPorts -Root $produced
         Add-RuntimeRoot -Root $produced
@@ -1254,10 +1340,10 @@ public sealed class SamplePanelController : PanelBaseController {
 
         $artifactRoot = Join-Path $runRoot 'project-owned-producer-artifacts'
         [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
-        $reports = New-RealValidationReports -ProjectPath $produced -ReportRoot $artifactRoot
         $output = Join-Path $artifactRoot 'attestation.json'
-        $stdout = & $script:AttestationProducerPath -ProjectPath $produced `
-            -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime -OutputPath $output
+        $invocationLog = Join-Path $artifactRoot 'unity-invocations.log'
+        $stdout = Invoke-ValidationProducer -ProjectPath $produced -OutputPath $output `
+            -InvocationLogPath $invocationLog
         $stdoutJson = $stdout -join [Environment]::NewLine
         $fileJson = [System.IO.File]::ReadAllText($output)
         Assert-Equal -Expected $stdoutJson -Actual $fileJson -Message 'Producer file bytes differ from stdout JSON.'
@@ -1265,7 +1351,7 @@ public sealed class SamplePanelController : PanelBaseController {
         $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
         Assert-Equal -Expected $false -Actual $hasBom -Message 'Producer output has a UTF-8 BOM.'
         $attestation = $fileJson | ConvertFrom-Json
-        Assert-Equal -Expected 'joih-appui-project-validation-attestation.v2' `
+        Assert-Equal -Expected 'joih-appui-project-validation-attestation.v3' `
             -Actual $attestation.schemaVersion -Message 'Producer emitted the wrong schema.'
         Assert-Equal -Expected 'Project' -Actual $attestation.owner `
             -Message 'Producer impersonated a package-owned validator.'
@@ -1277,8 +1363,45 @@ public sealed class SamplePanelController : PanelBaseController {
             -Message 'Producer did not bind validation-relevant Assets files.'
         Assert-Equal -Expected 'app-ui-binding-validation.v2' -Actual $attestation.binding.schemaVersion `
             -Message 'Producer did not bind the exact Binding report schema.'
+        Assert-Equal -Expected 'Passed' -Actual $attestation.binding.status `
+            -Message 'Producer did not bind a genuine Binding pass.'
         Assert-Equal -Expected 'NUnit3' -Actual $attestation.runtime.format `
             -Message 'Producer did not bind the Unity Test Runner result format.'
+        Assert-Equal -Expected 'Passed' -Actual $attestation.runtime.status `
+            -Message 'Producer did not bind genuine lifecycle passes.'
+        Assert-True -Condition ([guid]::Parse([string]$attestation.run.runId) -ne [guid]::Empty) `
+            -Message 'Producer omitted its unique validation run ID.'
+        Assert-True -Condition ([string]$attestation.binding.reportSha256 -match '^[0-9a-f]{64}$') `
+            -Message 'Binding report hash was not recorded.'
+        Assert-True -Condition ([string]$attestation.runtime.reportSha256 -match '^[0-9a-f]{64}$') `
+            -Message 'Runtime report hash was not recorded.'
+
+        $invocations = @(Read-FakeUnityInvocations -Path $invocationLog)
+        Assert-Equal -Expected 2 -Actual $invocations.Count `
+            -Message 'Producer did not invoke exactly Binding then Unity Test Runner.'
+        Assert-True -Condition ($invocations[0] -contains '-executeMethod') `
+            -Message 'First Unity invocation omitted -executeMethod.'
+        Assert-True -Condition ($invocations[0] -contains `
+            'Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll') `
+            -Message 'Producer invoked the wrong Binding validation method.'
+        Assert-True -Condition ($invocations[0] -contains ([System.IO.Path]::GetFullPath($produced))) `
+            -Message 'Binding invocation did not use the exact Unity project root.'
+        Assert-True -Condition ($invocations[0] -contains 'Assets/AppUI/Settings/MainUIBindingSettings.asset') `
+            -Message 'Binding invocation did not use the exact project settings asset.'
+        Assert-True -Condition ($invocations[1] -contains '-runTests') `
+            -Message 'Second Unity invocation did not run Unity Test Runner.'
+        Assert-True -Condition ($invocations[1] -contains 'Joi.H.AppUI.Tests.Lifecycle') `
+            -Message 'Unity Test Runner did not receive the bounded lifecycle filter.'
+        $bindingOutputIndex = [Array]::IndexOf($invocations[0], '-appUIValidationReportPath')
+        $runtimeOutputIndex = [Array]::IndexOf($invocations[1], '-testResults')
+        Assert-True -Condition ($bindingOutputIndex -ge 0 -and $runtimeOutputIndex -ge 0) `
+            -Message 'Unity commands omitted run-owned output paths.'
+        $bindingRunPath = $invocations[0][$bindingOutputIndex + 1]
+        $runtimeRunPath = $invocations[1][$runtimeOutputIndex + 1]
+        Assert-True -Condition ($bindingRunPath -ne $runtimeRunPath -and
+            -not (Test-Path -LiteralPath $bindingRunPath) -and
+            -not (Test-Path -LiteralPath $runtimeRunPath)) `
+            -Message 'Unique temporary validation reports were not cleaned after hashing.'
 
         $withoutAttestation = Invoke-Inspection -ProjectPath $produced
         Assert-Equal -Expected 'RuntimeValidationPending' -Actual $withoutAttestation.status `
@@ -1289,9 +1412,7 @@ public sealed class SamplePanelController : PanelBaseController {
 
         $blocked = $false
         try {
-            & $script:AttestationProducerPath -ProjectPath $produced `
-                -BindingReportPath $reports.binding -RuntimeTestResultPath $reports.runtime `
-                -OutputPath $output | Out-Null
+            Invoke-ValidationProducer -ProjectPath $produced -OutputPath $output | Out-Null
         }
         catch {
             $blocked = $true

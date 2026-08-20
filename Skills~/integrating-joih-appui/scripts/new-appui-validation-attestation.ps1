@@ -1,28 +1,37 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectPath,
-    [Parameter(Mandatory = $true)][string]$BindingReportPath,
-    [Parameter(Mandatory = $true)][string]$RuntimeTestResultPath,
+    [Parameter(Mandatory = $true)][string]$UnityPath,
+    [Parameter(Mandatory = $true)][string]$BindingSettingsPath,
     [Parameter(Mandatory = $true)][string]$OutputPath,
+    [Parameter(Mandatory = $true)]
+    [ValidateScript({
+        -not [string]::IsNullOrWhiteSpace($_) -and $_.Length -le 200 -and
+        $_ -cmatch '^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){1,15}$'
+    })]
+    [string]$LifecycleTestFilter,
+    [ValidateRange(1, 3600)][int]$TimeoutSeconds = 120,
     [ValidateRange(1, 100000)][int]$MaxSourceFiles = 10000
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$schemaVersion = 'joih-appui-project-validation-attestation.v2'
+$schemaVersion = 'joih-appui-project-validation-attestation.v3'
 $producer = 'integrating-joih-appui/new-appui-validation-attestation.ps1'
 $owner = 'Project'
 $digestAlgorithm = 'SHA-256'
 $digestScope = 'validation-relevant-project-files-v2'
 $digestCanonicalization = 'ordinal-portable-path-nul-lower-sha256-lf-v2'
 $requiredRuntimeTests = @(
-    'Joi.H.AppUI.Tests.Lifecycle.Open',
-    'Joi.H.AppUI.Tests.Lifecycle.Refresh',
-    'Joi.H.AppUI.Tests.Lifecycle.Close',
-    'Joi.H.AppUI.Tests.Lifecycle.ReleaseScope',
-    'Joi.H.AppUI.Tests.Lifecycle.SceneRebind',
-    'Joi.H.AppUI.Tests.Lifecycle.Shutdown'
+    ($LifecycleTestFilter + '.Open'),
+    ($LifecycleTestFilter + '.Refresh'),
+    ($LifecycleTestFilter + '.Close'),
+    ($LifecycleTestFilter + '.Shutdown')
+)
+$requiredRuntimeAnyOfTests = @(
+    ($LifecycleTestFilter + '.ReleaseScope'),
+    ($LifecycleTestFilter + '.SceneRebind')
 )
 
 function Get-ExactPropertyValue {
@@ -348,54 +357,244 @@ function Get-ProjectBinding {
     }
 }
 
+function Convert-ToExactTimestamp {
+    param(
+        [AllowNull()]$Value,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    $parsed = [datetimeoffset]::MinValue
+    if ($null -eq $Value -or -not [datetimeoffset]::TryParseExact([string]$Value, 'o',
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)) {
+        throw ("{0} is not an exact round-trip timestamp." -f $Description)
+    }
+    return $parsed.UtcDateTime
+}
+
+function Convert-ToWindowsCommandLineArgument {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
+        return $Value
+    }
+    $builder = New-Object System.Text.StringBuilder
+    $builder.Append('"') | Out-Null
+    $backslashes = 0
+    for ($index = 0; $index -lt $Value.Length; $index++) {
+        $character = $Value[$index]
+        if ($character -eq '\') {
+            $backslashes++
+            continue
+        }
+        if ($character -eq '"') {
+            $builder.Append(('\' * (($backslashes * 2) + 1))) | Out-Null
+            $builder.Append('"') | Out-Null
+            $backslashes = 0
+            continue
+        }
+        if ($backslashes -gt 0) {
+            $builder.Append(('\' * $backslashes)) | Out-Null
+            $backslashes = 0
+        }
+        $builder.Append($character) | Out-Null
+    }
+    if ($backslashes -gt 0) {
+        $builder.Append(('\' * ($backslashes * 2))) | Out-Null
+    }
+    $builder.Append('"') | Out-Null
+    return $builder.ToString()
+}
+
+function Invoke-ExactProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExecutablePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][int]$Timeout
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $ExecutablePath
+    $startInfo.Arguments = [string]::Join(' ', @($Arguments | ForEach-Object {
+        Convert-ToWindowsCommandLineArgument -Value ([string]$_)
+    }))
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $startedAtUtc = [datetime]::UtcNow
+    try {
+        if (-not $process.Start()) {
+            throw 'The validation process did not start.'
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $completed = $process.WaitForExit($Timeout * 1000)
+        if (-not $completed) {
+            try {
+                $process.Kill()
+            }
+            catch {
+                # The process may have exited between timeout detection and Kill.
+            }
+            $process.WaitForExit()
+        }
+        $finishedAtUtc = [datetime]::UtcNow
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        return [pscustomobject][ordered]@{
+            startedAtUtc = $startedAtUtc
+            finishedAtUtc = $finishedAtUtc
+            timedOut = -not $completed
+            exitCode = if ($completed) { [int]$process.ExitCode } else { $null }
+            stdoutLength = $stdout.Length
+            stderrLength = $stderr.Length
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
+function Assert-ReportWindow {
+    param(
+        [Parameter(Mandatory = $true)][System.IO.FileInfo]$File,
+        [Parameter(Mandatory = $true)]$ProcessResult,
+        [Parameter(Mandatory = $true)][datetime]$NewestProjectInput,
+        [Parameter(Mandatory = $true)][string]$Description
+    )
+
+    if ($ProcessResult.timedOut) {
+        throw ("{0} process timed out." -f $Description)
+    }
+    if ($File.LastWriteTimeUtc -le $NewestProjectInput) {
+        throw ("{0} is not newer than every validation-relevant project input." -f $Description)
+    }
+    if ($File.LastWriteTimeUtc -lt $ProcessResult.startedAtUtc) {
+        throw ("{0} predates its verified process run." -f $Description)
+    }
+    if ($File.LastWriteTimeUtc -gt $ProcessResult.finishedAtUtc.AddSeconds(1)) {
+        throw ("{0} has a future timestamp outside its verified process run." -f $Description)
+    }
+}
+
 function Get-BindingReportFacts {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$UnityVersion,
+        [Parameter(Mandatory = $true)][string]$SettingsPath,
+        [Parameter(Mandatory = $true)]$ProcessResult,
         [Parameter(Mandatory = $true)][datetime]$NewestProjectInput
     )
 
     $file = Assert-OrdinaryReadableFile -Path $Path -Description 'Binding validation report' `
         -MaximumBytes 2097152
-    if ($file.LastWriteTimeUtc -le $NewestProjectInput) {
-        throw 'Binding validation report is not newer than every validation-relevant project input.'
-    }
+    Assert-ReportWindow -File $file -ProcessResult $ProcessResult `
+        -NewestProjectInput $NewestProjectInput -Description 'Binding validation report'
     $document = [System.IO.File]::ReadAllText($file.FullName) | ConvertFrom-Json
+    $reportStartedAtUtc = Convert-ToExactTimestamp `
+        -Value (Get-ExactPropertyValue -Object $document -Name 'startedAtUtc') `
+        -Description 'Binding report startedAtUtc'
+    $reportFinishedAtUtc = Convert-ToExactTimestamp `
+        -Value (Get-ExactPropertyValue -Object $document -Name 'finishedAtUtc') `
+        -Description 'Binding report finishedAtUtc'
+    $expectedReportPath = $file.FullName.Replace('\', '/')
+    $success = Get-ExactPropertyValue -Object $document -Name 'success'
+    $exitCode = Get-ExactPropertyValue -Object $document -Name 'exitCode'
+    $errorCount = Get-ExactPropertyValue -Object $document -Name 'errorCount'
     if ((Get-ExactPropertyValue -Object $document -Name 'schemaVersion') -cne
-        'app-ui-binding-validation.v2' -or
+            'app-ui-binding-validation.v2' -or
         (Get-ExactPropertyValue -Object $document -Name 'tool') -cne 'AppUIBindingValidateAll' -or
         (Get-ExactPropertyValue -Object $document -Name 'unityVersion') -cne $UnityVersion -or
-        -not ((Get-ExactPropertyValue -Object $document -Name 'success') -is [bool]) -or
-        (Get-ExactPropertyValue -Object $document -Name 'success') -ne $true -or
-        -not ((Get-ExactPropertyValue -Object $document -Name 'exitCode') -is [int]) -or
-        (Get-ExactPropertyValue -Object $document -Name 'exitCode') -ne 0 -or
-        -not ((Get-ExactPropertyValue -Object $document -Name 'errorCount') -is [int]) -or
-        (Get-ExactPropertyValue -Object $document -Name 'errorCount') -ne 0) {
-        throw 'Binding validation report does not satisfy app-ui-binding-validation.v2.'
+        (Get-ExactPropertyValue -Object $document -Name 'settingsPath') -cne $SettingsPath -or
+        (Get-ExactPropertyValue -Object $document -Name 'reportPath') -cne $expectedReportPath -or
+        -not ($success -is [bool]) -or -not ($exitCode -is [int]) -or
+        -not ($errorCount -is [int]) -or $errorCount -lt 0 -or
+        $exitCode -ne $ProcessResult.exitCode -or $exitCode -eq 2 -or
+        $reportStartedAtUtc -lt $ProcessResult.startedAtUtc -or
+        $reportFinishedAtUtc -lt $reportStartedAtUtc -or
+        $reportFinishedAtUtc -gt $ProcessResult.finishedAtUtc.AddSeconds(1)) {
+        throw 'Binding validation report does not match the verified Unity process.'
     }
+    $status = if ($success -eq $true -and $exitCode -eq 0 -and $errorCount -eq 0) {
+        'Passed'
+    }
+    elseif ($success -eq $false -and $exitCode -eq 1 -and $errorCount -gt 0) {
+        'Failed'
+    }
+    else {
+        throw 'Binding validation report has an impossible success or exit-code combination.'
+    }
+
     return [pscustomobject][ordered]@{
+        status = $status
         schemaVersion = 'app-ui-binding-validation.v2'
         tool = 'AppUIBindingValidateAll'
         unityVersion = $UnityVersion
-        success = $true
-        exitCode = 0
-        errorCount = 0
+        settingsPath = $SettingsPath
+        success = [bool]$success
+        exitCode = [int]$exitCode
+        errorCount = [int]$errorCount
+        processStartedAtUtc = $ProcessResult.startedAtUtc.ToString('o')
+        processFinishedAtUtc = $ProcessResult.finishedAtUtc.ToString('o')
+        reportStartedAtUtc = $reportStartedAtUtc.ToString('o')
+        reportFinishedAtUtc = $reportFinishedAtUtc.ToString('o')
+        reportFileName = $file.Name
         reportSha256 = Get-FileSha256 -Path $file.FullName
         reportLastWriteTimeUtc = $file.LastWriteTimeUtc.ToString('o')
+    }
+}
+
+function New-RuntimeFactsWithoutReport {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('NotRun', 'Pending')][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Reason,
+        [AllowNull()]$ProcessResult
+    )
+
+    return [pscustomobject][ordered]@{
+        status = $Status
+        reason = $Reason
+        format = 'NUnit3'
+        lifecycleTestFilter = $LifecycleTestFilter
+        requiredTests = @($requiredRuntimeTests)
+        requiredAnyOfTests = @($requiredRuntimeAnyOfTests)
+        processStartedAtUtc = if ($null -ne $ProcessResult) {
+            $ProcessResult.startedAtUtc.ToString('o')
+        } else { $null }
+        processFinishedAtUtc = if ($null -ne $ProcessResult) {
+            $ProcessResult.finishedAtUtc.ToString('o')
+        } else { $null }
+        processExitCode = if ($null -ne $ProcessResult) { $ProcessResult.exitCode } else { $null }
+        timedOut = if ($null -ne $ProcessResult) { [bool]$ProcessResult.timedOut } else { $false }
+        result = $null
+        total = $null
+        passed = $null
+        failed = $null
+        inconclusive = $null
+        skipped = $null
+        reportFileName = $null
+        reportSha256 = $null
+        reportLastWriteTimeUtc = $null
     }
 }
 
 function Get-RuntimeReportFacts {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)]$ProcessResult,
         [Parameter(Mandatory = $true)][datetime]$NewestProjectInput
     )
 
     $file = Assert-OrdinaryReadableFile -Path $Path -Description 'Unity Test Runner NUnit result' `
         -MaximumBytes 10485760
-    if ($file.LastWriteTimeUtc -le $NewestProjectInput) {
-        throw 'Runtime test result is not newer than every validation-relevant project input.'
-    }
+    Assert-ReportWindow -File $file -ProcessResult $ProcessResult `
+        -NewestProjectInput $NewestProjectInput -Description 'Unity Test Runner NUnit result'
 
     $settings = New-Object System.Xml.XmlReaderSettings
     $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
@@ -414,9 +613,8 @@ function Get-RuntimeReportFacts {
     }
 
     $root = $document.DocumentElement
-    if ($null -eq $root -or $root.Name -cne 'test-run' -or
-        $root.GetAttribute('result') -cne 'Passed') {
-        throw 'Runtime test result is not a passing NUnit3 test-run.'
+    if ($null -eq $root -or $root.Name -cne 'test-run') {
+        throw 'Runtime test result is not an NUnit3 test-run.'
     }
     $counts = @{}
     foreach ($name in @('total', 'passed', 'failed', 'inconclusive', 'skipped')) {
@@ -426,32 +624,90 @@ function Get-RuntimeReportFacts {
         }
         $counts[$name] = $parsed
     }
-    if ($counts['failed'] -ne 0 -or $counts['inconclusive'] -ne 0 -or
-        $counts['skipped'] -ne 0 -or $counts['total'] -ne $counts['passed'] -or
-        $counts['passed'] -lt $requiredRuntimeTests.Count) {
-        throw 'Runtime test result includes a non-passing, skipped, or inconclusive test.'
-    }
+
+    $requiredPassed = $true
     foreach ($requiredName in $requiredRuntimeTests) {
         $matches = @($document.SelectNodes('//test-case') | Where-Object {
             $_.GetAttribute('fullname') -ceq $requiredName
         })
         if ($matches.Count -ne 1 -or $matches[0].GetAttribute('result') -cne 'Passed') {
-            throw ("Runtime test result lacks one exact passing lifecycle test: {0}" -f $requiredName)
+            $requiredPassed = $false
         }
     }
+    $alternativePassed = $false
+    foreach ($alternativeName in $requiredRuntimeAnyOfTests) {
+        $matches = @($document.SelectNodes('//test-case') | Where-Object {
+            $_.GetAttribute('fullname') -ceq $alternativeName
+        })
+        if ($matches.Count -eq 1 -and $matches[0].GetAttribute('result') -ceq 'Passed') {
+            $alternativePassed = $true
+        }
+    }
+    $allPassed = ($root.GetAttribute('result') -ceq 'Passed' -and
+        $counts['failed'] -eq 0 -and $counts['inconclusive'] -eq 0 -and
+        $counts['skipped'] -eq 0 -and $counts['total'] -eq $counts['passed'] -and
+        $counts['passed'] -ge ($requiredRuntimeTests.Count + 1) -and
+        $requiredPassed -and $alternativePassed -and
+        -not $ProcessResult.timedOut -and $ProcessResult.exitCode -eq 0)
 
     return [pscustomobject][ordered]@{
+        status = if ($allPassed) { 'Passed' } else { 'Failed' }
+        reason = if ($allPassed) { $null } else { 'LifecycleValidationFailed' }
         format = 'NUnit3'
-        result = 'Passed'
+        lifecycleTestFilter = $LifecycleTestFilter
+        requiredTests = @($requiredRuntimeTests)
+        requiredAnyOfTests = @($requiredRuntimeAnyOfTests)
+        processStartedAtUtc = $ProcessResult.startedAtUtc.ToString('o')
+        processFinishedAtUtc = $ProcessResult.finishedAtUtc.ToString('o')
+        processExitCode = $ProcessResult.exitCode
+        timedOut = [bool]$ProcessResult.timedOut
+        result = $root.GetAttribute('result')
         total = $counts['total']
         passed = $counts['passed']
         failed = $counts['failed']
         inconclusive = $counts['inconclusive']
         skipped = $counts['skipped']
-        requiredTests = @($requiredRuntimeTests)
+        reportFileName = $file.Name
         reportSha256 = Get-FileSha256 -Path $file.FullName
         reportLastWriteTimeUtc = $file.LastWriteTimeUtc.ToString('o')
     }
+}
+
+function New-VerifiedRunDirectory {
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/')
+    Assert-NoReparsePath -Path $tempRoot
+    $runPath = Join-Path $tempRoot ("joih-appui-validation-{0}" -f [guid]::NewGuid().ToString('N'))
+    [System.IO.Directory]::CreateDirectory($runPath) | Out-Null
+    if (-not (Test-PathWithinRoot -Path $runPath -Root $tempRoot)) {
+        throw 'Validation run directory escaped the system temp directory.'
+    }
+    Assert-NoReparsePath -Path $runPath
+    if ([System.IO.Directory]::GetFileSystemEntries($runPath).Length -ne 0) {
+        throw 'Validation run directory was not uniquely empty.'
+    }
+    return $runPath
+}
+
+function Remove-VerifiedRunDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return
+    }
+    $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\', '/')
+    if (-not (Test-PathWithinRoot -Path $Path -Root $tempRoot)) {
+        throw 'Refusing to clean a validation run outside the system temp directory.'
+    }
+    Assert-NoReparsePath -Path $Path
+    foreach ($entry in [System.IO.Directory]::GetFileSystemEntries($Path)) {
+        $attributes = [System.IO.File]::GetAttributes($entry)
+        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            ($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+            throw 'Validation run cleanup found an unexpected directory or reparse point.'
+        }
+        [System.IO.File]::Delete($entry)
+    }
+    [System.IO.Directory]::Delete($Path, $false)
 }
 
 function Assert-SafeOutputPath {
@@ -496,34 +752,152 @@ function Write-Utf8NoBomNewFile {
     }
 }
 
+$requestedProjectPath = [System.IO.Path]::GetFullPath($ProjectPath).TrimEnd('\', '/')
 $unityRoot = Resolve-UnityProjectRoot -StartPath $ProjectPath
+if (-not $requestedProjectPath.Equals($unityRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'ProjectPath must identify the exact Unity project root.'
+}
 $resolvedOutputPath = [System.IO.Path]::GetFullPath($OutputPath)
 Assert-SafeOutputPath -Path $resolvedOutputPath -UnityRoot $unityRoot
-$binding = Get-ProjectBinding -UnityRoot $unityRoot -MaximumFiles $MaxSourceFiles
-$bindingReport = Get-BindingReportFacts -Path ([System.IO.Path]::GetFullPath($BindingReportPath)) `
-    -UnityVersion $binding.unityVersion -NewestProjectInput $binding.newestInputWriteTimeUtc
-$runtimeReport = Get-RuntimeReportFacts -Path ([System.IO.Path]::GetFullPath($RuntimeTestResultPath)) `
-    -NewestProjectInput $binding.newestInputWriteTimeUtc
 
-$attestation = [pscustomobject][ordered]@{
-    schemaVersion = $schemaVersion
-    producer = $producer
-    owner = $owner
-    unityVersion = $binding.unityVersion
-    manifestSha256 = $binding.manifestSha256
-    packagesLockSha256 = $binding.packagesLockSha256
-    projectVersionSha256 = $binding.projectVersionSha256
-    projectSettingsSha256 = $binding.projectSettingsSha256
-    assetsDigestAlgorithm = $digestAlgorithm
-    assetsDigestScope = $digestScope
-    assetsDigestCanonicalization = $digestCanonicalization
-    assetsDigest = $binding.assetsDigest
-    assetsFileCount = $binding.assetsFileCount
-    newestInputWriteTimeUtc = $binding.newestInputWriteTimeUtc.ToString('o')
-    binding = $bindingReport
-    runtime = $runtimeReport
+$resolvedUnityPath = [System.IO.Path]::GetFullPath($UnityPath)
+$unityExecutable = Assert-OrdinaryReadableFile -Path $resolvedUnityPath `
+    -Description 'Unity executable' -MaximumBytes 1073741824
+if ($unityExecutable.Extension -cne '.exe') {
+    throw 'UnityPath must identify an exact .exe file.'
 }
-$json = $attestation | ConvertTo-Json -Depth 16
-Assert-SafeOutputPath -Path $resolvedOutputPath -UnityRoot $unityRoot
-Write-Utf8NoBomNewFile -Path $resolvedOutputPath -Content $json
-Write-Output $json
+
+$resolvedBindingSettingsPath = if ([System.IO.Path]::IsPathRooted($BindingSettingsPath)) {
+    [System.IO.Path]::GetFullPath($BindingSettingsPath)
+}
+else {
+    [System.IO.Path]::GetFullPath((Join-Path $unityRoot $BindingSettingsPath))
+}
+$bindingSettingsFile = Assert-OrdinaryReadableFile -Path $resolvedBindingSettingsPath `
+    -Description 'UIBindingSettings asset' -MaximumBytes 8388608
+if ($bindingSettingsFile.Extension -cne '.asset' -or
+    -not (Test-PathWithinRoot -Path $bindingSettingsFile.FullName -Root (Join-Path $unityRoot 'Assets'))) {
+    throw 'BindingSettingsPath must identify an exact .asset file under the Unity Assets directory.'
+}
+$bindingSettingsUnityPath = Convert-ToPortableRelativePath -Root $unityRoot `
+    -Path $bindingSettingsFile.FullName
+
+$runDirectory = $null
+try {
+    $initialBinding = Get-ProjectBinding -UnityRoot $unityRoot -MaximumFiles $MaxSourceFiles
+    $runId = [guid]::NewGuid().ToString('D')
+    $runStartedAtUtc = [datetime]::UtcNow
+    $runDirectory = New-VerifiedRunDirectory
+    $bindingReportPath = Join-Path $runDirectory 'app-ui-binding-validation.v2.json'
+    $bindingLogPath = Join-Path $runDirectory 'binding-unity.log'
+    $runtimeReportPath = Join-Path $runDirectory 'app-ui-lifecycle-tests.xml'
+    $runtimeLogPath = Join-Path $runDirectory 'runtime-unity.log'
+
+    $bindingArguments = @(
+        '-batchmode', '-nographics', '-quit',
+        '-projectPath', $unityRoot,
+        '-executeMethod', 'Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll',
+        '-appUIBindingSettingsPath', $bindingSettingsUnityPath,
+        '-appUIValidationReportPath', $bindingReportPath,
+        '-logFile', $bindingLogPath
+    )
+    $bindingProcess = Invoke-ExactProcess -ExecutablePath $resolvedUnityPath `
+        -Arguments $bindingArguments -WorkingDirectory $unityRoot -Timeout $TimeoutSeconds
+    if ($bindingProcess.timedOut) {
+        throw 'Binding validation Unity process timed out.'
+    }
+    $provisionalBindingReport = Get-BindingReportFacts -Path $bindingReportPath `
+        -UnityVersion $initialBinding.unityVersion -SettingsPath $bindingSettingsUnityPath `
+        -ProcessResult $bindingProcess -NewestProjectInput $initialBinding.newestInputWriteTimeUtc
+
+    $runtimeProcess = $null
+    if ($provisionalBindingReport.status -ceq 'Passed') {
+        $runtimeArguments = @(
+            '-batchmode', '-nographics',
+            '-projectPath', $unityRoot,
+            '-runTests', '-testPlatform', 'EditMode',
+            '-testFilter', $LifecycleTestFilter,
+            '-testResults', $runtimeReportPath,
+            '-logFile', $runtimeLogPath
+        )
+        try {
+            $runtimeProcess = Invoke-ExactProcess -ExecutablePath $resolvedUnityPath `
+                -Arguments $runtimeArguments -WorkingDirectory $unityRoot -Timeout $TimeoutSeconds
+        }
+        catch {
+            $runtimeProcess = $null
+        }
+    }
+
+    $binding = Get-ProjectBinding -UnityRoot $unityRoot -MaximumFiles $MaxSourceFiles
+    $bindingReport = Get-BindingReportFacts -Path $bindingReportPath `
+        -UnityVersion $binding.unityVersion -SettingsPath $bindingSettingsUnityPath `
+        -ProcessResult $bindingProcess -NewestProjectInput $binding.newestInputWriteTimeUtc
+
+    if ($bindingReport.status -ceq 'Failed') {
+        $runtimeReport = New-RuntimeFactsWithoutReport -Status 'NotRun' `
+            -Reason 'BindingValidationFailed' -ProcessResult $null
+    }
+    elseif ($null -eq $runtimeProcess) {
+        $runtimeReport = New-RuntimeFactsWithoutReport -Status 'Pending' `
+            -Reason 'RuntimeProcessDidNotStart' -ProcessResult $null
+    }
+    elseif ($runtimeProcess.timedOut) {
+        $runtimeReport = New-RuntimeFactsWithoutReport -Status 'Pending' `
+            -Reason 'RuntimeProcessTimedOut' -ProcessResult $runtimeProcess
+    }
+    elseif (-not (Test-Path -LiteralPath $runtimeReportPath -PathType Leaf)) {
+        $runtimeReport = New-RuntimeFactsWithoutReport -Status 'Pending' `
+            -Reason 'RuntimeReportMissing' -ProcessResult $runtimeProcess
+    }
+    else {
+        try {
+            $runtimeReport = Get-RuntimeReportFacts -Path $runtimeReportPath `
+                -ProcessResult $runtimeProcess -NewestProjectInput $binding.newestInputWriteTimeUtc
+        }
+        catch {
+            $runtimeReport = New-RuntimeFactsWithoutReport -Status 'Pending' `
+                -Reason 'RuntimeReportRejected' -ProcessResult $runtimeProcess
+        }
+    }
+
+    $runFinishedAtUtc = [datetime]::UtcNow
+    $attestation = [pscustomobject][ordered]@{
+        schemaVersion = $schemaVersion
+        producer = $producer
+        owner = $owner
+        run = [pscustomobject][ordered]@{
+            runId = $runId
+            startedAtUtc = $runStartedAtUtc.ToString('o')
+            finishedAtUtc = $runFinishedAtUtc.ToString('o')
+            unityExecutableSha256 = Get-FileSha256 -Path $resolvedUnityPath
+            bindingSettingsPath = $bindingSettingsUnityPath
+            lifecycleTestFilter = $LifecycleTestFilter
+        }
+        unityVersion = $binding.unityVersion
+        manifestSha256 = $binding.manifestSha256
+        packagesLockSha256 = $binding.packagesLockSha256
+        projectVersionSha256 = $binding.projectVersionSha256
+        projectSettingsSha256 = $binding.projectSettingsSha256
+        assetsDigestAlgorithm = $digestAlgorithm
+        assetsDigestScope = $digestScope
+        assetsDigestCanonicalization = $digestCanonicalization
+        assetsDigest = $binding.assetsDigest
+        assetsFileCount = $binding.assetsFileCount
+        newestInputWriteTimeUtc = $binding.newestInputWriteTimeUtc.ToString('o')
+        binding = $bindingReport
+        runtime = $runtimeReport
+    }
+    $json = $attestation | ConvertTo-Json -Depth 20
+
+    Remove-VerifiedRunDirectory -Path $runDirectory
+    $runDirectory = $null
+    Assert-SafeOutputPath -Path $resolvedOutputPath -UnityRoot $unityRoot
+    Write-Utf8NoBomNewFile -Path $resolvedOutputPath -Content $json
+    Write-Output $json
+}
+finally {
+    if ($null -ne $runDirectory -and (Test-Path -LiteralPath $runDirectory -PathType Container)) {
+        Remove-VerifiedRunDirectory -Path $runDirectory
+    }
+}
