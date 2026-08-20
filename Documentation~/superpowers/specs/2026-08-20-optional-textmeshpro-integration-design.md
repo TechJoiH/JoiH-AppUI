@@ -284,10 +284,21 @@ TMP 集成提供 `TextMeshProNoticeView`。接入项目也可以实现 UGUI Text
 | 配置 | 行为 |
 | --- | --- |
 | `Enabled == false` | Notice 视觉服务不加载资源、不创建池；调用返回无效 Handle，并在每个 Runtime Epoch 内按稳定诊断键输出一次结构化 Warning |
-| `Enabled == true` 且 AssetId 为空 | 初始化/验证失败 |
-| `Enabled == true` 且加载失败 | 操作明确失败，租约按所有权合同释放 |
-| Prefab 无 `NoticeViewBase` 派生类 | 验证失败，不自动补组件 |
+| `Enabled == true` 且 AssetId 为空 | 初始化以 `InvalidNoticeConfiguration` 失败 |
+| `Enabled == true` 且加载失败 | 初始化以 `NoticePrefabLoadFailed` 失败，租约按所有权合同释放 |
+| Prefab 无 `NoticeViewBase` 派生类 | 初始化以 `InvalidNoticePrefab` 失败，不自动补组件 |
 | 派生视图内容应用失败 | 当前 Notice 失败回收并记录结构化诊断 |
+
+只要任一 Notice 池被显式启用，初始化就必须验证宿主提供了 `NoticeLayer` 根节点；缺失时
+初始化以 `MissingNoticeLayer` 失败，而不是等待第一次展示时静默失败。所有 Notice 池均关闭时，
+`NoticeLayer` 不是必需项。
+
+任一 Notice 初始化步骤失败时，必须释放本次已经获得的全部 Asset Lease、清空部分构建的
+对象池和依赖引用，并保持 Manager 未初始化；不能留下“初始化返回失败但仍持有资源”的半状态。
+
+`Enabled` 的序列化默认值为 `false`。新建 Profile、调用 `CreateDefault()`，以及从
+0.3 反序列化没有该字段的旧资产时，Notice 都保持关闭，直到接入项目显式启用并配置
+Prefab；框架不会为了保留旧 fallback 外观而自动开启。
 
 “一次 Warning”的去重键为
 `(RuntimeEpoch, DiagnosticCode, NoticeApiKind, ScopeId)`，至少包含：
@@ -318,6 +329,7 @@ TMP 集成提供 `TextMeshProNoticeView`。接入项目也可以实现 UGUI Text
 - `Button`
 - `Toggle`
 - `Slider`
+- `ScrollRect`
 - `Scrollbar`
 - `InputField`
 - `Dropdown`
@@ -443,6 +455,7 @@ TMP Dropdown 展开后，列表区域的 Focus 节点属于 Dropdown 的临时�
 - UGUI `InputField`
 - UGUI `Dropdown`
 - `Slider`
+- `ScrollRect`
 - `Scrollbar`
 - UGUI `Text`
 - `Image`
@@ -766,7 +779,9 @@ Consumer 模板。每次候选验证从该模板复制两个独立临时目录�
 ### 16.1 基础隔离
 
 - Core、基础 Runtime、基础 Editor asmdef 无 TMP 引用；
-- 基础源码无 `TMPro`、`TMP_`、`TextMeshPro` 类型引用；
+- `package.json` 不声明 `com.unity.textmeshpro`；
+- Runtime、Editor、基础 Tests、非 TMP Samples 与基础 Validation Consumer 源码无
+  `TMPro`、`TMP_`、`TextMeshPro` 类型引用；
 - 不定义 `JOIH_APPUI_TMP` 时包可解析、编译、运行和构建；
 - 基础 Consumer 使用 UGUI Text 完成全链路验证。
 
