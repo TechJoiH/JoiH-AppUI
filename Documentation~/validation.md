@@ -53,7 +53,7 @@ https://github.com/TechJoiH/JoiH-AppUI.git#<40-character-commit-sha>
 只有 Commit SHA Smoke 通过并再次获得明确授权，才创建普通 SemVer Tag。Tag 创建后使用另一个全新 Consumer 安装：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1
 ```
 
 Tag Smoke 失败时不移动、不删除并重建同名 Tag。修复必须发布新版本。
@@ -139,7 +139,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIP
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1 `
   -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#<commit-or-tag>' `
-  -ExpectedPackageVersion '0.3.0-pre.1' `
+  -ExpectedPackageVersion '0.4.0-pre.1' `
   -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
   -RunRoot D:\AppUIValidation\git-smoke
 ```
@@ -191,29 +191,25 @@ Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式�
 
 该 Tag 保持不可变，不会移动、删除或复用；失败属于发布证据脱敏边界缺口，不是 AppUI Runtime 或 Unity 的 `Known Incompatible`。
 
-## 最新已发布 `v0.3.0-pre.1` 验证状态
+## 最新已发布 `v0.4.0-pre.1` 验证状态
 
-发布前的包内 EditMode 150/150、PlayMode 14/14、Basic 11/11 与 Custom Host
-10/10 是 `Historical Development Evidence`，用于开发回归，但不作为正式发布
-结论。`v0.3.0-pre.1` 的 `Current Release Evidence` 来自精确候选快照和外部
-Consumer：
+包内测试和开发期运行结果属于 `Historical Development Evidence`，用于回归但不作为正式发布结论。`v0.4.0-pre.1` 的 `Current Release Evidence` 来自同一精确候选快照、两个互不共享 Library 的外部 Consumer，以及独立的 Commit/Tag Git URL Consumer：
 
-- Source Commit：`fa2b062c4adeacd09c450fe9704bfc45fb7179e0`；
-- Source Tree：`6da206c18fc295949d86645c38199b444c241165`；
-- Package Manifest SHA-256：`1187024f89e531600fcefbd7c1e945a37636f9d7b11723c128a43ae6c8aa7491`；
-- Static Policy 与 Candidate Snapshot：`Passed`；
-- Unity `6000.0.25f1` 版本检查：`Passed`；
-- Visual Studio 2022 C++ 工具链预检：`Passed`；
-- Package resolve、Sample、Domain Reload：`Passed`；
-- Binding：`Passed`，0 Error、0 Warning、8 Info；
-- EditMode：`Passed`，166/166；
-- PlayMode：`Passed`，30/30；
-- Windows x64 Mono 与 IL2CPP：`Passed`，0 Error、0 Warning；
-- 远端 Commit SHA Smoke 与 `v0.3.0-pre.1` Tag URL Smoke：`Passed`；
-- Formal Report、十项 Artifact、秘密、本机路径与远端 SHA-256 审计：`Passed`；
-- GitHub Pre-release：[v0.3.0-pre.1](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1)，10 个附件。
+- Source Commit：`9e664e7aa96fd58994caf097d2e3b960c6a090b6`；
+- Source Tree：`8db5c2f3fdce97c110c64a9e16a2921d18b13003`；
+- Package Manifest SHA-256：`ca03da387cac6f9c0bb05cc095aa8023a5f47b347e08c91235a47f98a1416469`；
+- Static Policy、Candidate Snapshot、Unity `6000.0.25f1` 与 Visual Studio 2022 C++ 工具链预检：`Passed`；
+- Base Package resolve、Basic Sample、Domain Reload、Fixture 与 Binding：`Passed`，Binding 0 Error、0 Warning、8 Info；
+- Base EditMode：`Passed`，201/201；PlayMode：`Passed`，40/40；
+- Base Windows x64 Mono 与 IL2CPP：`Passed`；
+- TextMeshPro Define、Sample、Domain Reload、Binding 与集成诊断：`Passed`，Binding 0 Error；
+- TextMeshPro EditMode：`Passed`，24/24；PlayMode：`Passed`，23/23；
+- TextMeshPro Windows x64 Mono 与 IL2CPP：`Passed`；
+- 远端 Commit SHA Smoke 与 `v0.4.0-pre.1` Tag URL Smoke：安装、初始化、页面打开和关闭均为 `Passed`；
+- Formal Report、16 项 Artifact、秘密、本机路径与远端 SHA-256 审计：`Passed`；
+- GitHub Pre-release：[v0.4.0-pre.1](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.4.0-pre.1)，16 个附件。
 
-因此 `v0.3.0-pre.1` 在 Unity `6000.0.25f1` 上登记为 `Officially Supported` 的 Pre-release。该结论绑定精确 Tag/Commit/Tree/Manifest，不可复制到其他 Unity 或 AppUI 版本。较早的 `v0.2.0-pre.4` 仍保留在[官方发布清单](supported-unity-versions.md#officially-supported-releases)中，其证据不能复用于 `0.3`。
+因此 `v0.4.0-pre.1` 在 Unity `6000.0.25f1` 上登记为 `Officially Supported` 的 Pre-release。该结论绑定精确 Tag/Commit/Tree/Manifest，不可复制到其他 Unity 或 AppUI 版本。较早的正式版本仍保留在[官方发布清单](supported-unity-versions.md#officially-supported-releases)中，其证据不能复用于 `0.4`。
 
 ## 人工验收
 

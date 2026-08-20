@@ -2,7 +2,7 @@
 
 Joi.H AppUI 是面向 Unity 6 UGUI 的页面与交互框架。它统一页面定义、分层、作用域、生命周期、Binding、焦点导航和输入阻挡，但不替项目选择异步库、资源系统、文本技术或业务架构。
 
-> 当前源码版本：`0.4.0-pre.1`。0.4 将基础 Runtime、Editor 和 Consumer 固定为纯 UGUI，把 TextMeshPro Binding、InputField、Dropdown、Notice 与诊断移到用户显式启用的可选 Integration。该版本尚未发布 Tag；当前最新 **Officially Supported Pre-release** 仍是 [v0.3.0-pre.1](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1)。1.0 前公共 API 与序列化字段仍可能调整。
+> 当前版本：[v0.4.0-pre.1](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.4.0-pre.1)。0.4 将基础 Runtime、Editor 和 Consumer 固定为纯 UGUI，把 TextMeshPro Binding、InputField、Dropdown、Notice 与诊断移到用户显式启用的可选 Integration。该版本是当前最新 **Officially Supported Pre-release**；1.0 前公共 API 与序列化字段仍可能调整。
 
 > **Failed Release Attempt：**不可变 Tag `v0.2.0-pre.2` 已固定到 Commit `2ba1c90f732b429b3b76cd2d8bcba73a4bb486cc`，但 Tag URL 冒烟因发布工具未导出远端 Tag 解析命令而在进入 Unity 前失败，因此没有创建 GitHub Release，也不属于 Officially Supported Release。该 Tag 不会移动、删除或复用。
 
@@ -69,7 +69,7 @@ Unity 2022.3 与 2021.3 当前属于 `Community Port`：允许用户自行移植
 真实项目应安装经过验证的普通 SemVer Tag，不要长期跟随 `main`。打开 `Window > Package Manager`，点击 `+ > Add package from git URL...`，输入：
 
 ```text
-https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1
+https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1
 ```
 
 > 已验证的不可变 Pre-release Tag；不要改为 `main` 或无版本仓库 URL。
@@ -79,14 +79,14 @@ https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1
 ```json
 {
   "dependencies": {
-    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1"
+    "com.joih.appui": "https://github.com/TechJoiH/JoiH-AppUI.git#v0.4.0-pre.1"
   }
 }
 ```
 
-`v0.3.0-pre.1` 已完成完整 Consumer、Mono/IL2CPP、Commit SHA、Tag URL 与 Artifact 门禁，可以按上面的 URL 安装。`v0.2.0-pre.4` 仍保留为较早的已验证 Pre-release；`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 是失败发布尝试，不在 Officially Supported Releases 中。不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
+`v0.4.0-pre.1` 已完成 Base 与 TextMeshPro 双 Consumer、Mono/IL2CPP、Commit SHA、Tag URL 与 16 项 Artifact 门禁，可以按上面的 URL 安装。`v0.3.0-pre.1` 与 `v0.2.0-pre.4` 仍保留为较早的已验证 Pre-release；`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 是失败发布尝试，不在 Officially Supported Releases 中。不要把无版本仓库 URL 或 `main` 当成生产依赖。仓库若为 Private，Git 还需要使用已授权的 GitHub 凭据。
 
-需要评估 0.4 源码候选时，应固定到经过你自己验证的 40 位 Commit；不要在 `v0.4.0-pre.1` Tag 实际发布前使用或假设该 Tag 存在。基础安装不启用 TMP。需要 TMP 时，按 [TextMeshPro 可选集成](Documentation~/textmeshpro-integration.md)显式添加 `JOIH_APPUI_TMP` 并导入对应 Sample。
+基础安装不启用 TMP。需要 TMP 时，按 [TextMeshPro 可选集成](Documentation~/textmeshpro-integration.md)显式添加 `JOIH_APPUI_TMP` 并导入对应 Sample；从 0.3 升级前请先阅读 [0.4 迁移指南](Documentation~/migration-0.4.md)。
 
 ## 最短接入路径
 
@@ -193,8 +193,8 @@ AppUI 只等待 `IUIOperation<UITransitionResult>`，不关心 `projectTransitio
 ## 当前验证与限制
 
 - 框架开发阶段已在独立、未安装第三方异步包的 Unity 6 消费项目完成 Domain Reload、EditMode 与 PlayMode 验证；这些历史结果属于 `Historical Development Evidence`，不能跨候选 Commit 充当发布证据，当前状态见[验证与发布门禁](Documentation~/validation.md)。
-- `v0.3.0-pre.1` 已在 Unity `6000.0.25f1` 的外部干净 Consumer 中完成 EditMode 166/166、PlayMode 30/30、Binding 0 Error/0 Warning、Mono/IL2CPP、Commit SHA 与 Tag URL smoke，并发布十项经过秘密、路径和远端 SHA-256 审计的证据。它是当前已验证的 Pre-release。
-- `0.4.0-pre.1` 的发布门禁使用两个互不共享 Library 的临时 Consumer：Base 模式证明无 TMP 编译依赖，TextMeshPro 模式证明 Define、Sample、诊断、Binding、测试与 Mono/IL2CPP；在不可变 Tag 和正式证据发布前，它仍是源码候选。
+- `v0.4.0-pre.1` 已在 Unity `6000.0.25f1` 的两个外部干净 Consumer 中完成验证：Base 为 EditMode 201/201、PlayMode 40/40，TextMeshPro 为 EditMode 24/24、PlayMode 23/23；两种模式的 Binding、Mono/IL2CPP 均通过，TMP 集成诊断、Commit SHA 与 Tag URL smoke 也已通过。
+- `v0.4.0-pre.1` 发布了 16 项经过秘密、本机路径和远端 SHA-256 审计的证据。Base Consumer 证明基础包无 TMP 编译依赖，TextMeshPro Consumer 证明 Define、Sample、诊断和可选集成闭环；它是当前已验证的 Pre-release。
 - 发布前的包内 EditMode 150/150、PlayMode 14/14、Basic 11/11 与 Custom Host 10/10 属于 `Historical Development Evidence`；正式结论只采用绑定精确 Tag/Commit/Tree 的外部 `Current Release Evidence`。
 - `0.x` 期间允许破坏性整理，升级前请阅读 [CHANGELOG](CHANGELOG.md)。
 - 最终视觉、字体、动画手感、Prefab 点击区域仍需要在接入项目中人工验收。

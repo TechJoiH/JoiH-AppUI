@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.0-pre.1] - Unreleased
+## [0.4.0-pre.1] - 2026-08-20
 
 ### Breaking
 
@@ -20,7 +20,8 @@
 
 ### Release policy
 
-- Package source version is `0.4.0-pre.1`, but this entry remains Unreleased until an immutable Tag, dual-Consumer Mono/IL2CPP evidence, Git URL smoke, and GitHub Pre-release are published.
+- Published immutable Tag `v0.4.0-pre.1` for Commit `9e664e7aa96fd58994caf097d2e3b960c6a090b6` after Base and TextMeshPro dual-Consumer Binding, EditMode, PlayMode, Mono/IL2CPP, Commit SHA and Tag URL gates passed.
+- Published a GitHub Pre-release with the formal report and 16 audited evidence artifacts.
 - Unity 6.0 / `6000.0` remains the only Official Target; optional TMP isolation does not expand Unity support claims.
 
 ## [0.3.0-pre.1] - 2026-08-14
