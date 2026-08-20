@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.4.0-pre.1] - Unreleased
+
+### Breaking
+
+- Removed text mutation helpers from base controllers; projects now update their authored UGUI, TMP, or custom View bindings directly.
+- Removed TMP InputField/Dropdown recognition and `Unity.TextMeshPro` references from the base Runtime, Editor, tests, and Consumer assemblies.
+- TMP InputField now requires `TextMeshProInputFieldPolicyResolver`; TMP Dropdown now requires an explicit `TextMeshProFocusDropdownControlPolicy` with its existing ChildRegionId.
+- Binding optional component rules now enter through explicitly selected immutable Providers; installed Providers are not enabled automatically.
+
+### Added
+
+- Added Define-gated `Joi.H.AppUI.Integrations.TextMeshPro.Runtime/Editor` assemblies for Binding, InputField, Dropdown, Notice, and diagnostics.
+- Added the standalone TextMeshPro Integration Sample with its own host adapters, assets, scene, Binding settings, Focus policies, Notice Prefab, and contract tests.
+- Added deterministic Focus Resolver conflict handling and frozen Binding rule snapshots shared by Generate, Bind, Validate, Variant, and Definition Sync operations.
+- Added explicit project-owned Notice Views and a UGUI Notice fixture to the base Consumer.
+- Added independent Base and TextMeshPro temporary Consumer layouts, mode-specific evidence, safe cleanup, and `appui-pretag-report.v2`.
+- Added Notice, TextMeshPro Integration, and 0.4 migration documentation.
+
+### Release policy
+
+- Package source version is `0.4.0-pre.1`, but this entry remains Unreleased until an immutable Tag, dual-Consumer Mono/IL2CPP evidence, Git URL smoke, and GitHub Pre-release are published.
+- Unity 6.0 / `6000.0` remains the only Official Target; optional TMP isolation does not expand Unity support claims.
+
 ## [0.3.0-pre.1] - 2026-08-14
 
 ### Breaking

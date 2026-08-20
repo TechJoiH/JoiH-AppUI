@@ -8,6 +8,7 @@
 - `Tools > Joi.H AppUI > Validate Input Policies`
 - `Tools > Joi.H AppUI > Validate Focus P0`
 - `Tools > Joi.H AppUI > Open Focus Runtime Trace`
+- `Project Settings > Joi.H AppUI > TextMeshPro Integration`（仅启用可选 Integration 后）
 
 ## 推荐日常流程
 
@@ -32,6 +33,7 @@ Editor AssetId 工具开始前，先在 `UIBindingSettings` 选择一个已注�
 - EditMode 覆盖 Definition、Operation、Focus、Input、Binding 与 Lease；
 - PlayMode 覆盖打开/刷新/关闭、取消、晚到加载与真实 EventSystem Raycast；
 - 从干净消费项目安装包并完成 Domain Reload；
+- 分别创建 Base 与 TextMeshPro 两个临时 Consumer，禁止共享 Library、生成 Binding 或构建目录；
 - 至少在一个目标平台做 IL2CPP Development Build。
 - 宿主 Adapter 测试 asmdef 引用 `Joi.H.AppUI.Tests.HostIntegration`，继承
   Operation、Asset、Execution、Lifecycle 与 Instance 契约夹具；
@@ -45,9 +47,14 @@ Editor AssetId 工具开始前，先在 `UIBindingSettings` 选择一个已注�
 - `Tools~/Release/Invoke-AppUIPreTagValidation.ps1`；
 - `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`；
 - `Tools~/Release/New-AppUIReleaseReport.ps1`。
-- `Tools~/Release/New-AppUIReleaseArtifacts.ps1`：从正式报告、测试、Binding、Build、Commit/Tag Smoke 与日志归档生成恰好十个脱敏上传文件。
+- `Tools~/Release/New-AppUIReleaseArtifacts.ps1`：从正式报告、Base/TMP 双模式测试、Binding、Build、TMP 诊断、Commit/Tag Smoke 与日志归档生成脱敏上传文件。
 - `Tools~/Release/Test-AppUIReleaseReadiness.ps1`：用有界只读查询检查远端 `main`、候选 Commit/Tree 与 Tag 是否占用；远端不可达时返回 `Blocked`，不创建或移动任何远端引用。
 
 不要直接打开仓库内 Consumer 模板，也不要把它生成的 `Library`、Fixture、Build 或报告提交回包仓库。完整的候选身份、执行顺序、超时和 Artifact 规则见[验证与发布门禁](validation.md)。
 
 当前证据和版本数字见[验证与发布门禁](validation.md)。
+
+TMP 诊断区分 Edit-time 与 Play Mode 可验证事实。EditMode 可以确认 Define、程序集、
+Provider、Binding 快照和 Notice Prefab；只有进入 Play Mode 且 Host 初始化后，才能确认
+实际 `AppUIRuntimeConfiguration` 是否注入 Resolver。`NotVerifiable` 不是 Passed，也不是
+Failure；发布命令仍要求所有可静态验证项不存在 Failure。

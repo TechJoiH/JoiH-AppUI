@@ -12,6 +12,11 @@ references.
 Generated members use namespace `Joi.H.AppUI` conventions and remain compatible
 with IL2CPP because no runtime code generation or dynamic proxy is used.
 
+Before scanning, the operation freezes the built-in UGUI rules plus every
+provider ID explicitly selected by `UIBindingSettings.EnabledRuleProviderIds`.
+Generation, binding and validation must use that same snapshot. Optional
+providers never become active merely because their assembly is installed.
+
 ## Stage 2: bind
 
 The prefab binder writes serialized references into the controller only after
@@ -22,6 +27,7 @@ generation succeeds. Ownership and variant validators then ensure:
 - nested groups do not leak ownership into the parent;
 - prefab variants do not silently replace required references;
 - generated and serialized member sets stay aligned.
+- selected Provider IDs resolve without RuleId or component-type conflicts.
 
 ## Validation commands
 

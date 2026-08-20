@@ -11,3 +11,11 @@
 5. 宿主通过 `AppUIRuntimeConfiguration` 注入 `TextMeshProInputFieldPolicyResolver`。
 
 样例包含 TMP InputField、显式 ChildRegion Dropdown Policy、TMP Notice View、Binding Settings 和可直接打开的场景。它自己提供 Operation Factory、Unity Execution Context 和内存 Asset Provider，不依赖 Basic Integration Sample。
+
+打开 `Scenes/TextMeshProIntegration.unity` 即可验证 Open、Refresh、Close。项目设置中的
+TextMeshPro Integration 诊断会检查 Define、程序集、`joih.appui.tmp` Provider、冻结
+Binding 快照、Notice Prefab 和运行时 Resolver；EditMode 下 Runtime Host 可能显示
+`NotVerifiable`，进入 Play Mode 并初始化本场景后可获得真实 Host 结果。
+
+停用时先替换组件和生成字段，移除 Provider/Resolver/Dropdown/Notice 引用，再删除
+`JOIH_APPUI_TMP`。详细教程见 `Documentation~/textmeshpro-integration.md`。

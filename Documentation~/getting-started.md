@@ -14,7 +14,7 @@ https://github.com/TechJoiH/JoiH-AppUI.git#v0.3.0-pre.1
 
 `v0.3.0-pre.1` 已完成全部发布门禁并作为 [GitHub Pre-release](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1) 发布，可按此地址安装。`v0.2.0-pre.4` 是较早的已验证 Pre-release；`v0.2.0-pre.2` 与 `v0.2.0-pre.3` 虽然已有不可变 Tag，但发布门禁未完成且没有 GitHub Release，不属于 Officially Supported Releases。真实项目应使用[官方发布清单](supported-unity-versions.md#officially-supported-releases)中的不可变 Tag，不要使用无版本 URL 或 `main`。从 `0.2.x` 升级时先阅读 [0.3 迁移指南](migration-0.3.md)。
 
-AppUI 只依赖 UGUI，不要求安装第三方异步包。
+AppUI 基础包只依赖 UGUI，不要求安装第三方异步包，也不会自动启用 TextMeshPro。需要 TMP 时，在基础闭环通过后再按 [TextMeshPro 可选集成](textmeshpro-integration.md)启用。
 
 ## 2. 选择三项项目实现
 
@@ -173,3 +173,13 @@ ui.Close("settings");
 5. 再销毁项目自有 Provider 和 UI Root。
 
 下一步阅读[核心概念](core-concepts.md)和[生命周期](lifecycle.md)。
+
+## 可选：启用 TextMeshPro
+
+基础页面可以直接使用 UGUI `Text`。项目明确选择 TMP 时，再执行三步：
+
+1. 为目标 Build Target 添加 `JOIH_APPUI_TMP`；
+2. 导入 Package Manager 中的 **TextMeshPro Integration** Sample；
+3. 在 Binding Settings 选择 `joih.appui.tmp`，并把 `TextMeshProInputFieldPolicyResolver` 注入 Runtime Configuration。
+
+不要在 Base Consumer 或基础 asmdef 中添加 `Unity.TextMeshPro` 引用。完整代码、Dropdown ChildRegion 和 Notice 配置见[集成教程](textmeshpro-integration.md)。

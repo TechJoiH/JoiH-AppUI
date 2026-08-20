@@ -13,5 +13,8 @@
 7. [Unity 版本支持政策](supported-unity-versions.md)：区分官方支持、社区验证、社区移植、不支持和已知不兼容。
 8. [Host Integration](host-integration.md)：接入未知宿主、资源/实例所有权、Editor Resolver 与契约测试。
 9. [Migration to 0.3](migration-0.3.md)：从 0.2 迁移 Strategy、Configuration 和 Editor AssetId。
+10. [Notice System](notice-system.md)：显式 Notice View、Prefab 与失败语义。
+11. [TextMeshPro 可选集成](textmeshpro-integration.md)：按需启用 TMP Binding、Focus、Dropdown、Notice 与诊断。
+12. [Migration to 0.4](migration-0.4.md)：从混合 TMP 基础程序集迁移到显式 Integration。
 
 资源适配细节见[接入与资源适配](integration.md)，外部 Consumer、Commit/Tag 安装与发布证据见[验证与发布门禁](validation.md)。使用非官方 Unity 版本前，先阅读[社区 Unity 移植指南](community-unity-porting.md)。

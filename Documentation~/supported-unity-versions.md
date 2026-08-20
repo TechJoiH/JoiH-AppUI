@@ -20,6 +20,10 @@ AppUI 的官方目标由项目自身的验证策略决定，不与 Unity 当前�
 
 ## Officially Supported Releases
 
+`0.4.0-pre.1` 当前是源码候选，尚未创建不可变 Tag 或 GitHub Release，因此不在下表，
+也不能继承 `v0.3.0-pre.1` 的正式证据。0.4 的双 Consumer 门禁提高了可移植性证明，
+但不会扩大 Unity 官方支持范围。
+
 | AppUI | Unity | 状态 | Commit | 证据 |
 |---|---|---|---|---|
 | `v0.3.0-pre.1` | `6000.0.25f1` | `Officially Supported`（Pre-release API） | `fa2b062c4adeacd09c450fe9704bfc45fb7179e0` | [GitHub Pre-release 与十项证据](https://github.com/TechJoiH/JoiH-AppUI/releases/tag/v0.3.0-pre.1) |

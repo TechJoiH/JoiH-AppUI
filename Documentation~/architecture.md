@@ -10,7 +10,9 @@ flowchart LR
     Config["AppUIRuntimeConfiguration：可选 Strategy"] --> Host
     Host --> Runtime["Joi.H.AppUI.Runtime"]
     Runtime --> Core["Joi.H.AppUI.Core 契约"]
-    Runtime --> UGUI["Unity UGUI / TextMeshPro"]
+    Runtime --> UGUI["Unity UGUI"]
+    TMP["可选 TextMeshPro Integration"] --> Runtime
+    TMP --> UGUI
     Editor["Joi.H.AppUI.Editor"] --> Assets["Definition / Prefab / Binding"]
     Runtime --> Assets
 ```
@@ -57,6 +59,11 @@ sequenceDiagram
 
 AppUI 不自动扫描业务程序集、不创建 Addressables 或 Resources fallback，也不把 Sample 实现注册到 Runtime。
 
+文本技术遵循同一边界。Base Runtime 与 Base Editor 不引用 TMP；可选
+`Joi.H.AppUI.Integrations.TextMeshPro.Runtime/Editor` 只能单向依赖基础程序集。
+基础程序集永远不能反向发现或调用 Integration。用户通过 Define、Binding Provider、
+Focus Resolver、显式 Dropdown Policy 和 Notice Prefab 完成组合。
+
 ## 环境差异边界
 
 AppUI 官方只维护 Unity 6.0 / `6000.0` 一条源码和发行线。异步库、资源系统、宿主框架与非官方 Unity 版本都属于边界适配：
@@ -75,9 +82,12 @@ Unity 2022.3 / 2021.3      → Community Port
 - `Joi.H.AppUI.Core`：Operation、资源和执行上下文契约；
 - `Joi.H.AppUI.Runtime`：Player 可用的页面与交互实现；
 - `Joi.H.AppUI.Editor`：生成和验证工具；
+- `Joi.H.AppUI.Integrations.TextMeshPro.Runtime`：可选 TMP InputField、Dropdown 与 Notice 适配；
+- `Joi.H.AppUI.Integrations.TextMeshPro.Editor`：可选 Binding Provider 与只读诊断；
 - `Joi.H.AppUI.Tests.*`：包测试，不进入 Player；
 - `Joi.H.AppUI.Tests.HostIntegration`：消费项目按需引用的契约测试夹具，不进入 Player；
 - `Joi.H.AppUI.Samples.Basic`：最小三端口示例；
 - `Joi.H.AppUI.Samples.CustomHost`：完整宿主组合、场景、输入、池化与 Shutdown 示例。
+- `Joi.H.AppUI.Samples.TextMeshPro`：独立 TMP 组合示例，不依赖 Basic Sample。
 
 完整宿主边界见 [Host Integration](host-integration.md)。

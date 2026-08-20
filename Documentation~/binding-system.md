@@ -18,6 +18,18 @@ Binding 将 Prefab 层级中的运行时引用变成可生成、可审查、可�
 
 生成代码后立即绑定、但不等待编译，会因为新字段尚未进入类型系统而失败。这个边界是刻意保留的。
 
+## Rule Provider 与冻结快照
+
+基础 Binding Provider 只提供 UGUI 规则。可选技术通过
+`IUIBindingRuleProvider` 注册稳定 `ProviderId`，但只有出现在
+`UIBindingSettings.EnabledRuleProviderIds` 中才参与当前操作。每次 Generate、Bind、
+Validate 或 Definition Sync 开始时只构建一次不可变 `UIBindingRuleSnapshot`，后续阶段
+共享同一快照。
+
+缺失 Provider、重复 ProviderId、重复 RuleId，或多个启用 Provider 争用同一 Component
+Type 都会在写文件/Prefab 前失败。框架没有优先级覆盖或 first/last-wins 行为。TMP 的
+Provider ID 是 `joih.appui.tmp`，基础项目不应选择它。
+
 ## 资产 ID
 
 运行时 AssetId 由项目 Provider 定义。项目在 Editor 程序集中实现

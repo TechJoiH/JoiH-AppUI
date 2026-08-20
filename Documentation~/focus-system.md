@@ -17,6 +17,18 @@ Focus 变化不应自动等同于业务选择或点击。
 - `AppUIFocusRegion`：局部进入、退出与 Cancel 规则；
 - `IAppUIFocusVisibilityAdapter`：确保普通 ScrollRect 目标可见；
 - `IAppUIFocusVirtualizationAdapter`：在虚拟列表中异步实现目标。
+- `IAppUIFocusControlPolicyResolver`：把可选控件技术解析成显式焦点 Policy。
+
+## 控件 Policy 解析顺序
+
+节点显式传入的 Policy 永远优先；没有显式 Policy 时，框架调用 Runtime
+Configuration 中的所有外部 Resolver。恰好一个匹配时采用它；两个及以上匹配、返回
+null 或抛出异常都会拒绝本次注册且不修改旧焦点快照。没有外部匹配时才使用 UGUI
+内建规则，最后回退到 FrameworkOnly。Resolver 没有优先级，也不存在首个匹配获胜。
+
+TMP InputField 由 `TextMeshProInputFieldPolicyResolver` 提供。TMP Dropdown 必须由页面
+显式构造 `TextMeshProFocusDropdownControlPolicy` 并使用稳定 ChildRegionId；它不会由
+InputField Resolver 或基础 UGUI Policy 猜测。
 
 ## 页面打开与恢复
 

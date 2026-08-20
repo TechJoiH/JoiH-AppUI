@@ -12,6 +12,38 @@
 
 可以，但它只是项目自己的可选适配器。安装、版本和转换扩展都由项目维护，AppUI 包不会引用或自动安装它。
 
+## 基础包还依赖 TextMeshPro 吗？
+
+不依赖。0.4 的 Base Runtime、Base Editor、基础测试和基础 Consumer 都没有
+`Unity.TextMeshPro` 程序集引用或 TMP 组件类型。包中保留的 TMP 代码位于 Define-gated
+可选 Integration、对应测试和 Sample 中；未添加 `JOIH_APPUI_TMP` 时不会编译进入项目。
+
+## 为什么安装后 TMP Binding 没有生效？
+
+安装程序集不等于启用能力。确认目标 Build Target 有 `JOIH_APPUI_TMP`，导入了
+TextMeshPro Integration Sample，并在唯一的 `UIBindingSettings` 中把
+`joih.appui.tmp` 加入 `EnabledRuleProviderIds`。然后重新执行 Generate、等待 Domain
+Reload、Bind、Validate。
+
+## TMP InputField 和 Dropdown 如何接入焦点？
+
+把 `TextMeshProInputFieldPolicyResolver` 注入 `AppUIRuntimeConfiguration` 处理 InputField。
+Dropdown 使用页面显式创建的 `TextMeshProFocusDropdownControlPolicy(dropdown,
+childRegionId)`；同一个 Policy 同时用于 Dropdown 节点和 ChildRegion。不要依赖自动猜测。
+
+## 为什么 TMP 诊断显示 Runtime Host NotVerifiable？
+
+EditMode 没有已经初始化的不可变 Runtime Configuration，因此不能证明真实宿主包含
+Resolver。进入 Play Mode，加载实际集成场景并初始化 Host 后再刷新诊断。这不影响
+EditMode 对 Define、程序集、Provider、Binding 和 Notice 的检查。
+
+## 如何完全停用 TMP Integration？
+
+先把 TMP 组件替换为 UGUI 或项目自有组件，移除 `joih.appui.tmp` Provider 选择和 Runtime
+Resolver/Dropdown/Notice 引用，再从所有目标 Build Target 删除 `JOIH_APPUI_TMP`，最后
+重新 Generate、Bind、Validate 和 Player Build。只删除 Define 而保留生成字段会造成编译
+或 Binding 漂移。
+
 ## 为什么没有 Resources Provider？
 
 Resources 是具体资源策略。AppUI 只使用 `IUIAssetProvider`；项目可适配 Addressables、AssetBundle、远端缓存、Resources 或测试内存表。Basic Integration 使用显式对象引用，不调用 Resources。
