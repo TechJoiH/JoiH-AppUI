@@ -32,6 +32,12 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
             AppUIConsumerBatchCommand.Run(ValidateSampleCore);
         }
 
+        public static void GenerateSampleBindings()
+        {
+            AppUIConsumerBatchCommand.Run(
+                () => InvokeSampleValidation("GenerateBindings"));
+        }
+
         public static string GetInstalledPackageVersion()
         {
             UnityEditor.PackageManager.PackageInfo package =
@@ -87,19 +93,24 @@ namespace Joi.H.AppUI.Validation.Consumer.Editor
 
         private static void ValidateSampleCore()
         {
+            InvokeSampleValidation("Validate");
+        }
+
+        private static void InvokeSampleValidation(string methodName)
+        {
             const string typeName =
                 "Joi.H.AppUI.Samples.TextMeshPro.Editor.TextMeshProSampleValidationCommand, " +
                 "Joi.H.AppUI.Samples.TextMeshPro.Editor";
             Type validationType = Type.GetType(typeName, false);
-            MethodInfo validate = validationType?.GetMethod(
-                "Validate", BindingFlags.Public | BindingFlags.Static);
-            if (validate == null)
+            MethodInfo method = validationType?.GetMethod(
+                methodName, BindingFlags.Public | BindingFlags.Static);
+            if (method == null)
             {
                 throw new InvalidOperationException(
                     "Imported TextMeshPro Integration validation entry was not compiled.");
             }
 
-            validate.Invoke(null, null);
+            method.Invoke(null, null);
         }
     }
 }

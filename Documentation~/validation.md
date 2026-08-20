@@ -85,7 +85,9 @@ Configure JOIH_APPUI_TMP
 → Domain Reload
 → Import TextMeshPro Integration
 → Domain Reload
-→ Sample Binding Validate
+→ Generate Sample Bindings
+→ Domain Reload
+→ Bind + Validate Sample
 → Integration Diagnostics
 → EditMode
 → PlayMode

@@ -22,19 +22,27 @@ namespace Joi.H.AppUI.Samples.TextMeshPro.Editor
             public string unityVersion;
         }
 
+        public static void GenerateBindings()
+        {
+            LoadSample(out _, out TextMeshProSamplePageController controller);
+            UIBindingGenerationResult result = UIBindingGenerator.Generate(controller);
+            if (!result.Success)
+                throw new InvalidOperationException(
+                    "TMP sample Binding generation failed: " +
+                    string.Join(" | ", result.Errors));
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            Debug.Log("<Joi.H.AppUI> TextMeshPro Integration bindings generated.");
+        }
+
         public static void Validate()
         {
-            UIBindingSettings settings = AssetDatabase.LoadAssetAtPath<UIBindingSettings>(
-                SampleRoot + "/Settings/TextMeshProBindingSettings.asset");
-            string error = string.Empty;
-            if (settings == null ||
-                !UIBindingRuleProviderRegistry.TryBuildSnapshot(settings, out _, out error))
-                throw new InvalidOperationException(error ?? "TMP sample Binding settings are missing.");
-            GameObject page = AssetDatabase.LoadAssetAtPath<GameObject>(
-                SampleRoot + "/Prefabs/TextMeshProPage.prefab");
-            TextMeshProSamplePageController controller =
-                page != null ? page.GetComponent<TextMeshProSamplePageController>() : null;
-            if (controller == null) throw new InvalidOperationException("TMP sample page prefab is missing.");
+            LoadSample(out UIBindingSettings settings, out TextMeshProSamplePageController controller);
+            UIBindingBindResult bind = UIBindingPrefabBinder.Bind(controller);
+            if (!bind.Success)
+                throw new InvalidOperationException(
+                    "TMP sample Binding writeback failed: " +
+                    string.Join(" | ", bind.Errors));
             UIBindingValidationReport report = UIBindingValidator.ValidateScope(controller, BuildSnapshot(settings));
             if (report.HasError) throw new InvalidOperationException(report.ToString());
             GameObject notice = AssetDatabase.LoadAssetAtPath<GameObject>(
@@ -56,6 +64,25 @@ namespace Joi.H.AppUI.Samples.TextMeshPro.Editor
                     }, true));
             }
             Debug.Log("<Joi.H.AppUI> TextMeshPro Integration sample validation passed.");
+        }
+
+        private static void LoadSample(
+            out UIBindingSettings settings,
+            out TextMeshProSamplePageController controller)
+        {
+            settings = AssetDatabase.LoadAssetAtPath<UIBindingSettings>(
+                SampleRoot + "/Settings/TextMeshProBindingSettings.asset");
+            string error = string.Empty;
+            if (settings == null ||
+                !UIBindingRuleProviderRegistry.TryBuildSnapshot(settings, out _, out error))
+                throw new InvalidOperationException(error ?? "TMP sample Binding settings are missing.");
+            GameObject page = AssetDatabase.LoadAssetAtPath<GameObject>(
+                SampleRoot + "/Prefabs/TextMeshProPage.prefab");
+            controller = page != null
+                ? page.GetComponent<TextMeshProSamplePageController>()
+                : null;
+            if (controller == null)
+                throw new InvalidOperationException("TMP sample page prefab is missing.");
         }
 
         private static UIBindingRuleSnapshot BuildSnapshot(UIBindingSettings settings)

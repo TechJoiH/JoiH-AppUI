@@ -1352,6 +1352,7 @@ set "PATH=$toolRoot;%PATH%"
                 'BuildMono',
                 'BuildIl2Cpp',
                 'AppUIConsumerTextMeshProCommand',
+                'GenerateSampleBindings',
                 'BuildTextMeshProMono',
                 'BuildTextMeshProIl2Cpp',
                 'AppUIConsumerSmokeCommand'

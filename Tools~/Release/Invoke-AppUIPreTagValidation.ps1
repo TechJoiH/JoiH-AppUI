@@ -183,13 +183,17 @@ try {
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerTextMeshProCommand.ImportSample')
     Invoke-Gate 'textmeshpro' '04-sample-domain-reload' @('-quit')
-    Invoke-Gate 'textmeshpro' '05-bind-validate' @(
+    Invoke-Gate 'textmeshpro' '05-generate-bindings' @(
+        '-quit', '-executeMethod',
+        'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerTextMeshProCommand.GenerateSampleBindings')
+    Invoke-Gate 'textmeshpro' '06-binding-domain-reload' @('-quit')
+    Invoke-Gate 'textmeshpro' '07-bind-validate' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerTextMeshProCommand.ValidateSample')
-    Invoke-Gate 'textmeshpro' '06-diagnostics' @(
+    Invoke-Gate 'textmeshpro' '08-diagnostics' @(
         '-executeMethod',
         'Joi.H.AppUI.Integrations.TextMeshPro.Editor.TextMeshProIntegrationValidationCommandLine.Validate')
-    Invoke-Gate 'textmeshpro' '07-editmode' @(
+    Invoke-Gate 'textmeshpro' '09-editmode' @(
         '-runTests', '-testPlatform', 'EditMode',
         '-assemblyNames',
         'Joi.H.AppUI.Tests.TextMeshPro.Editor;Joi.H.AppUI.Tests.TextMeshPro.Runtime;Joi.H.AppUI.Samples.TextMeshPro.Tests',
@@ -197,17 +201,17 @@ try {
     Read-AppUINUnit3Result `
         -Path (Join-Path $layout.TextMeshProEvidenceRoot 'editmode.xml') `
         -RequirePassed | Out-Null
-    Invoke-Gate 'textmeshpro' '08-playmode' @(
+    Invoke-Gate 'textmeshpro' '10-playmode' @(
         '-runTests', '-testPlatform', 'PlayMode',
         '-assemblyNames', 'Joi.H.AppUI.Tests.Runtime',
         '-testResults', (Join-Path $layout.TextMeshProEvidenceRoot 'playmode.xml'))
     Read-AppUINUnit3Result `
         -Path (Join-Path $layout.TextMeshProEvidenceRoot 'playmode.xml') `
         -RequirePassed | Out-Null
-    Invoke-Gate 'textmeshpro' '09-build-mono' @(
+    Invoke-Gate 'textmeshpro' '11-build-mono' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildTextMeshProMono')
-    Invoke-Gate 'textmeshpro' '10-build-il2cpp' @(
+    Invoke-Gate 'textmeshpro' '12-build-il2cpp' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildTextMeshProIl2Cpp')
 }
