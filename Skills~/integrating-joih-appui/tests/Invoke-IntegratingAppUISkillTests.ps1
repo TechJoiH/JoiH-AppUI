@@ -290,17 +290,17 @@ public static class FakeUnityCommandLine
     {
         try
         {
-            if (args.Length != 14 ||
-                args[0] != "-batchmode" || args[1] != "-nographics" || args[2] != "-quit" ||
-                args[3] != "-projectPath" || !Path.IsPathRooted(args[4]) ||
-                args[5] != "-runTests" || args[6] != "-testPlatform" || args[7] != "EditMode" ||
-                args[8] != "-testFilter" || String.IsNullOrEmpty(args[9]) ||
-                args[10] != "-testResults" ||
-                Path.GetFileName(args[11]) != "app-ui-lifecycle-tests.xml" ||
-                args[12] != "-logFile" || Path.GetFileName(args[13]) != "runtime-unity.log")
+            if (args.Length != 13 ||
+                args[0] != "-batchmode" || args[1] != "-nographics" ||
+                args[2] != "-projectPath" || !Path.IsPathRooted(args[3]) ||
+                args[4] != "-runTests" || args[5] != "-testPlatform" || args[6] != "EditMode" ||
+                args[7] != "-testFilter" || String.IsNullOrEmpty(args[8]) ||
+                args[9] != "-testResults" ||
+                Path.GetFileName(args[10]) != "app-ui-lifecycle-tests.xml" ||
+                args[11] != "-logFile" || Path.GetFileName(args[12]) != "runtime-unity.log")
                 return false;
-            return String.Equals(Path.GetDirectoryName(Path.GetFullPath(args[11])),
-                Path.GetDirectoryName(Path.GetFullPath(args[13])), StringComparison.OrdinalIgnoreCase);
+            return String.Equals(Path.GetDirectoryName(Path.GetFullPath(args[10])),
+                Path.GetDirectoryName(Path.GetFullPath(args[12])), StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
@@ -1535,7 +1535,7 @@ public sealed class SamplePanelController : PanelBaseController {
             '-logFile', (Join-Path $validationRunRoot 'binding-unity.log')
         )
         $expectedRuntimeArguments = @(
-            '-batchmode', '-nographics', '-quit',
+            '-batchmode', '-nographics',
             '-projectPath', ([System.IO.Path]::GetFullPath($produced)),
             '-runTests', '-testPlatform', 'EditMode',
             '-testFilter', 'Joi.H.AppUI.Tests.Lifecycle',

@@ -842,7 +842,7 @@ try {
     $runtimeProcess = $null
     if ($provisionalBindingReport.status -ceq 'Passed') {
         $runtimeArguments = @(
-            '-batchmode', '-nographics', '-quit',
+            '-batchmode', '-nographics',
             '-projectPath', $unityRoot,
             '-runTests', '-testPlatform', 'EditMode',
             '-testFilter', $LifecycleTestFilter,
