@@ -1,6 +1,6 @@
 # Joi.H AppUI 可选 TextMeshPro 集成设计
 
-**状态：** 设计草案，等待文档评审后进入实施计划
+**状态：** 已确认设计基线，可进入实施计划
 
 **目标版本：** `v0.4.0-pre.1`
 
@@ -25,8 +25,13 @@ Consumer 验证工程直接引用了 TMP 类型与程序集。这带来的是架
 - Notice 会在配置缺失时自动创建 TMP 视图，掩盖真实配置错误；
 - Unity 版本移植时，UGUI、TMP 和 Editor API 差异混在同一程序集内，难以定位。
 
-0.4 的目标不是宣称“Unity 6 安装体积会减少”，而是把 TMP 从 AppUI 基础能力中解耦，
-验证 AppUI 的 Provider、Policy 和宿主注入边界能够承载真实的可选 UI 技术集成。
+0.4 的目标不是宣称“Unity 6 安装体积会减少”，也不只是“增加可选 TMP 支持”，而是：
+
+> 建立 AppUI 基础能力与 UI 技术集成之间的正式边界，并以 TextMeshPro 作为第一套
+> 官方 Integration 验证这套扩展模型。
+
+TMP 从 AppUI 基础能力中解耦后，Provider、Policy 和宿主注入边界必须能够承载真实的
+可选 UI 技术集成。
 
 ## 2. 目标
 
@@ -57,14 +62,14 @@ Consumer 验证工程直接引用了 TMP 类型与程序集。这带来的是架
 | 发布形态 | 单一 UPM 包 `com.joih.appui` |
 | 官方版本 | `v0.4.0-pre.1` |
 | TMP 开关 | 项目显式定义 `JOIH_APPUI_TMP` |
-| TMP 注册 | Binding Provider 显式选择；Focus Resolver 显式注入 |
+| TMP 注册 | Binding Provider 显式选择；InputField Resolver 显式注入；Dropdown Policy 显式构造 |
 | 自动行为 | 不安装、不改 Define、不反射发现 |
 | 基础文本 | 保留 UGUI `Text` Binding 规则 |
 | Controller | 移除 TMP 与本地化辅助方法，不新增文本抽象 |
 | Notice | 内容合同中立，具体视图由 Prefab 与派生类负责 |
-| Focus | 内置 UGUI 策略；TMP 由外部 Resolver 提供 |
+| Focus | 内置 UGUI 策略；TMP 使用外部 Resolver 或显式 Policy |
 | Binding | 内置基础规则始终启用；可选 Provider 显式启用 |
-| 验证 | 同一临时 Consumer 顺序执行基础与 TMP 两阶段 |
+| 验证 | 同一 pristine 模板生成两个互不共享缓存的临时 Consumer |
 | 兼容性 | Unity 6 官方支持；其他版本按社区移植教程处理 |
 
 ## 5. 程序集边界
@@ -155,10 +160,15 @@ Consumer 验证工程直接引用了 TMP 类型与程序集。这带来的是架
 2. 确认项目已有可用的 TMP 程序集。
 3. 在 Player Settings 的 Scripting Define Symbols 中加入
    `JOIH_APPUI_TMP`。
-4. 在 AppUI Project Settings 中启用 Binding Provider
+4. 需要 TMP Binding 时，在 AppUI Project Settings 中启用 Provider
    `joih.appui.tmp`。
-5. 在组合根创建 Runtime Configuration 时注入 TMP Focus Resolver。
-6. 为 Notice 配置带 `TextMeshProNoticeView` 的 Prefab。
+5. 需要 TMP InputField 原生编辑/Cancel 语义时，在组合根创建 Runtime
+   Configuration 并注入 `TextMeshProInputFieldPolicyResolver`。
+6. 需要 TMP Dropdown 子区域时，页面显式构造
+   `TextMeshProFocusDropdownControlPolicy` 并提供 `ChildRegionId`。
+7. 需要 TMP Notice 时，配置带 `TextMeshProNoticeView` 的 Prefab。
+8. 打开 TextMeshPro Integration 状态页核对编辑期状态，并在 Play Mode 核对
+   Runtime Host 快照。
 
 Unity 6 官方目标环境通常不需要额外安装 TMP 包。社区移植到较旧 Unity 时，用户先安装
 与该 Unity/UGUI 版本匹配的 TMP，再增加 Define。
@@ -225,6 +235,9 @@ TMP Dropdown 需要
 
 `Text`、`Color` 和 `FontSize` 是 Notice 的呈现意图，不绑定某个文本组件。
 如果后续需要增加图标、样式 ID 或本地化键，应通过新的已评审合同扩展，0.4 不提前加入。
+
+0.4 的边界是“Notice 不知道 TMPro”，不是“Notice 不知道文字和基础视觉参数”。
+不继续增加 `INoticePresentation`、`INoticeTextStyle`、`ITextRenderer` 等抽象。
 
 ### 8.2 视图合同
 
@@ -403,6 +416,7 @@ TMP 集成提供：
 - `TextMeshProDropdownRegionBridge`
 
 `TextMeshProInputFieldPolicyResolver` 是注入 Runtime Configuration 的自动解析器。
+`ResolverId` 固定为 `joih.appui.tmp.input-field`。
 `TextMeshProFocusDropdownControlPolicy` 由页面使用 Dropdown 与
 `ChildRegionId` 显式构造，并同时用于 Dropdown Node 与对应 ChildRegion；它不通过
 Resolver 自动创建。
@@ -508,27 +522,95 @@ Provider 返回集合在注册后被修改，不得影响正在运行的 Binding
 
 任何冲突都不通过“后注册覆盖先注册”处理。程序集加载顺序和静态初始化顺序不得改变生成结果。
 
-## 11. Editor 设置与验证
+## 11. Editor 设置、集成状态与验证
 
-AppUI Project Settings 至少显示：
+TextMeshPro Integration 状态诊断是 0.4 的核心接入体验和正式验收项，不只是文档提示。
+诊断只报告可验证事实和修复步骤，不替用户修改项目。
 
-- 可用 Binding Provider；
-- 已启用 Provider ID；
-- Provider 来源程序集；
-- 每个 Provider 的规则摘要；
-- 缺失、重复和冲突诊断；
-- TMP 集成是否因 `JOIH_APPUI_TMP` 可用。
+### 11.1 状态模型
 
-设置界面只提供编辑和验证，不自动：
+每一项诊断使用四种状态：
+
+| 状态 | 含义 |
+| --- | --- |
+| Pass | 已从当前工程或运行时快照验证 |
+| Warning | 集成可继续，但某项可选能力不可用或存在高概率误配置 |
+| Failure | 当前合同不满足，相关生成、验证或运行行为不能继续 |
+| Not Verifiable | 当前阶段没有足够事实，不能伪装成 Pass 或 Failure |
+
+诊断项必须同时显示：
+
+- 稳定诊断码；
+- 当前事实；
+- 影响的能力；
+- 人工修复步骤；
+- 可验证时使用的 Asset、Provider、Resolver 或 Host 标识。
+
+### 11.2 编辑期 TextMeshPro Integration 页面
+
+`Joi.H.AppUI.Integrations.TextMeshPro.Editor` 在
+`JOIH_APPUI_TMP` 生效并成功编译后提供：
+
+    Project/Joi.H AppUI/Integrations/TextMeshPro
+
+该页面至少显示：
+
+- TextMeshPro API 是否可用；
+- `JOIH_APPUI_TMP` 是否对当前 Build Target 生效；
+- TMP Runtime/Editor 集成程序集是否已编译；
+- `joih.appui.tmp` Provider 是否已注册；
+- Provider 是否在当前 `UIBindingSettings` 中启用；
+- TMP Binding 规则快照是否有效；
+- 每个 `AppUIRuntimeProfile` 的已启用 Notice 配置能否解析 Prefab；
+- Prefab 是否包含 `NoticeViewBase` 派生类，以及具体视图类型；
+- Sample 所需的 `TextMeshProNoticeView` 是否已配置。
+
+该页面位于可选 Editor 程序集，基础 Editor 不引用 TMP 类型、程序集或 TMP 专有源代码。
+Define 尚未生效时，完整 TMP 页面不会参与编译；此时入口由安装文档和 Sample README
+说明。若 `UIBindingSettings` 已选择 `joih.appui.tmp` 但程序集不可用，基础 Binding
+验证仍会以“已选择的 Provider 不存在”阻止生成，并显示缺失的 Provider ID。
+
+启用 TMP 不代表项目必须使用 TMP Notice。普通项目只要每项 `Enabled` Notice 配置满足
+基础 `NoticeViewBase` 合同即可；“未配置 TextMeshProNoticeView”只表示 TMP Notice
+呈现能力未使用，不作为全局失败。TMP Sample 和 TMP Consumer 则必须把它作为自己的
+验收合同。
+
+### 11.3 运行时配置快照
+
+`AppUIRuntimeConfiguration` 由宿主组合根在运行时构造，Editor 在非运行状态无法可靠
+证明 Resolver 已注入。因此：
+
+- `AppUIRuntimeHost` 在初始化后公开只读 Configuration/Diagnostics 快照；
+- 快照只公开不可变 Resolver ID 列表和必要状态，不允许 Editor 修改运行时配置；
+- TMP Integration 页面在 Play Mode 按每个已初始化 Host 显示
+  `joih.appui.tmp.input-field` 是否存在；
+- Host 未初始化时显示 Not Verifiable，不显示虚假的绿色通过；
+- TMP 集成已启用但 Resolver 缺失时显示 Warning，并说明 TMP InputField 将按
+  FrameworkOnly 处理；
+- 多个 Host 分别显示，不通过进程级静态状态合并成一个结论。
+
+Runtime Configuration 本身不要求所有项目必须注入 TMP Resolver；只有使用 TMP InputField
+原生编辑/Cancel 语义的项目需要它。TMP Sample 与 TMP Consumer 把该 Resolver 设为
+强制验收项。
+
+### 11.4 只诊断，不代替用户决策
+
+设置界面不自动：
 
 - 添加/删除 Scripting Define Symbols；
 - 安装或升级 TMP；
+- 启用 Binding Provider；
+- 注入 Focus Resolver；
 - 为已有 Prefab 添加 `TextMeshProNoticeView`；
 - 修改 Runtime Configuration；
 - 重写用户生成代码。
 
+Editor 诊断可以读取编译符号、程序集状态、Provider Registry、Asset 和运行时快照，
+但这些信息只能用于显示和验证，不能用于自动注册、选择或启用运行时实现。
+
 Binding Sync/Validation 在开始生成前冻结一次规则快照。若设置无效，整个操作停止，不生成
-部分文件，也不覆盖上一次有效产物。
+部分文件，也不覆盖上一次有效产物。可在编辑期确定的诊断同时进入命令行验证；Resolver
+注入与 TMP 控件行为通过 PlayMode/Consumer 测试验证。
 
 ## 12. Sample 与 Consumer 验证
 
@@ -550,16 +632,29 @@ Sample 不执行项目级自动修改。导入后若未完成启用步骤，应�
 
 验证目标是“外部项目安装发布包后可用”，不是包源码自身可以编译。
 
-一次候选验证只创建一个临时 Consumer，按顺序运行两个阶段，发布结束后清理：
+仓库只维护一份不包含 `Library`、`Temp`、`Logs`、`obj` 和本机状态的 pristine
+Consumer 模板。每次候选验证从该模板复制两个独立临时目录：
 
-    Package Repo
-      ↓ install candidate package
-    Clean Unity6000.0 Consumer
-      ↓ Phase A: Base
-      ↓ Phase B: TextMeshPro
-      ↓ cleanup
+    Candidate Package
+      ├ CleanConsumer.Base
+      │   └ install the same candidate package
+      └ CleanConsumer.TextMeshPro
+          └ install the same candidate package
 
-#### Phase A：基础模式
+两个目录不共享：
+
+- `Library` 编译/导入缓存；
+- Binding 生成产物；
+- ProjectSettings 修改；
+- Domain Reload 状态；
+- Player Build 输出；
+- Unity 的临时与用户状态。
+
+验证任务可以为了机器资源顺序执行，但环境必须独立。临时 Consumer 不加入 Unity Hub，
+发布任务在收集 XML、日志、构建摘要和诊断报告后统一删除；失败时也只保留报告，不把临时
+工程留在用户工作区。
+
+#### CleanConsumer.Base：基础模式
 
 - 不定义 `JOIH_APPUI_TMP`；
 - Consumer 源码无 `using TMPro`；
@@ -578,19 +673,23 @@ Sample 不执行项目级自动修改。导入后若未完成启用步骤，应�
 扫描范围包括 Core、基础 Runtime、基础 Editor 及其基础测试，匹配数必须为 0。文档、
 可选集成、TMP Sample 和 TMP 专用测试不属于此扫描范围。
 
-#### Phase B：TMP 模式
+#### CleanConsumer.TextMeshPro：TMP 模式
 
-- 在同一 Consumer 中加入 `JOIH_APPUI_TMP`；
+- 从 pristine 模板独立创建，不复用 Base 的 `Library` 或生成结果；
+- 加入 `JOIH_APPUI_TMP`；
 - 启用 `joih.appui.tmp`；
+- 注入 `joih.appui.tmp.input-field` Resolver；
 - 验证 TMP Runtime/Editor 程序集编译；
 - 验证 TMP Binding 字段；
 - 验证 InputField Cancel 不关闭页面；
 - 验证 Dropdown 子区域 Focus 与折叠清理；
 - 验证 TMP Notice 内容、池化和 Scope 清理；
 - 执行 TMP 专用 EditMode/PlayMode；
+- 执行 Mono Player Build；
 - 执行 IL2CPP Player Build。
 
-Phase B 不替代 Phase A。只有两阶段都通过，候选版本才允许发布。
+两个 Consumer 互不替代。只有它们从各自 pristine 环境完成全部门禁，候选版本才允许
+发布。
 
 ## 13. 迁移设计
 
@@ -603,10 +702,14 @@ Phase B 不替代 Phase A。只有两阶段都通过，候选版本才允许发�
 3. 在 Binding Settings 启用 `joih.appui.tmp`。
 4. 将 `SetText` / `SetTextStr` 调用替换为直接呈现或宿主本地化服务。
 5. 为 Notice Prefab 添加 `TextMeshProNoticeView` 并设置 AssetId。
-6. 将旧 TMP Dropdown Policy 构造方式替换为 TMP Resolver 注入。
-7. 在 `AppUIRuntimeConfiguration` 中注入 TMP Focus Resolver。
+6. 对 TMP InputField，在 `AppUIRuntimeConfiguration` 中注入
+   `TextMeshProInputFieldPolicyResolver`。
+7. 对 TMP Dropdown，将旧基础程序集 Policy 替换为
+   `TextMeshProFocusDropdownControlPolicy`，仍由页面显式传入 Dropdown 和
+   `ChildRegionId`；Dropdown 不进入普通 Resolver。
 8. 重新生成 Binding。
-9. 运行项目自己的 EditMode、PlayMode、Mono 与 IL2CPP 验证。
+9. 检查 TextMeshPro Integration 诊断页与运行时 Host 快照。
+10. 运行项目自己的 EditMode、PlayMode、Mono 与 IL2CPP 验证。
 
 ### 13.2 已生成 Binding 文件
 
@@ -651,8 +754,9 @@ Phase B 不替代 Phase A。只有两阶段都通过，候选版本才允许发�
 2. **Controller 与 Notice**：删除 TMP Helper，建立中立内容和显式 Prefab 合同。
 3. **Focus**：建立 Resolver、确定性冲突检查和 Dropdown 拆分。
 4. **Binding Provider**：不可变规则、Settings 选择、冲突验证。
-5. **TMP 官方集成**：可选 asmdef、实现、测试、Sample 与文档。
-6. **Consumer 与发布门禁**：顺序执行基础/TMP 两阶段，形成候选发布证据。
+5. **TMP 官方集成与诊断**：可选 asmdef、实现、状态页、测试、Sample 与文档。
+6. **Consumer 与发布门禁**：从 pristine 模板生成相互隔离的 Base/TMP Consumer，
+   分别形成候选发布证据。
 
 每一阶段完成后定向清理已经被替代的代码、测试、诊断、文档和临时入口，再进入下一阶段。
 不在同一阶段顺带实现其他 UI 技术或旧 Unity 官方兼容线。
@@ -690,10 +794,20 @@ Phase B 不替代 Phase A。只有两阶段都通过，候选版本才允许发�
 - AppUI 不自动注入 Resolver；
 - AppUI 不自动为 Notice Prefab 添加或创建 TMP 组件。
 
-### 16.5 发布
+### 16.5 集成诊断
 
-- 基础和 TMP Consumer 两阶段全部通过；
-- Mono 与 IL2CPP 验证均有候选提交证据；
+- TMP Integration 页面显示 API、Define、程序集、Provider、规则和 Notice 状态；
+- Edit Mode 不把 Runtime Resolver 状态伪装成已验证；
+- Play Mode 按已初始化 Host 显示 Resolver ID 快照；
+- 每个 Warning/Failure 都包含稳定诊断码、影响和人工修复步骤；
+- 诊断不会自动修改 Define、Settings、Prefab 或 Runtime Configuration；
+- TMP Sample 和 TMP Consumer 的诊断报告无 Failure，且必需项全部 Pass。
+
+### 16.6 发布
+
+- Base 与 TMP Consumer 来自两个不共享缓存的 pristine 临时环境；
+- 两个 Consumer 的 EditMode、PlayMode、Mono 与 IL2CPP 均有候选提交证据；
+- 临时 Consumer 已删除，只保留验证报告和构建摘要；
 - `package.json`、README 和 Changelog 版本一致为 `0.4.0-pre.1`；
 - `v0.3.0-pre.1` Tag 指向保持不变；
 - 新 Tag 只在候选提交通过 Tag URL 冒烟后创建 Pre-release。
@@ -725,9 +839,11 @@ API、Editor API、C# 编译器和 Player 构建差异仍需社区 Fork 在真�
 
 当且仅当以下条件同时成立，0.4 的“TMP 可选化”才算完成：
 
-1. 基础包在无 TMP Define 模式独立通过完整消费验证；
-2. 同一包在显式 TMP 模式恢复 Binding、Focus、Input 和 Notice 能力；
+1. 基础包在无 TMP Define 的 pristine Base Consumer 中独立通过完整消费验证；
+2. 同一候选包在另一个 pristine TMP Consumer 中恢复 Binding、Focus、Input 和
+   Notice 能力；
 3. 所有扩展选择都是显式、确定、可诊断且不会自动修改项目；
-4. 迁移文档能让 0.3 TMP 用户完成升级；
-5. 发布证据来自干净 Consumer，而不是仅来自包内测试；
-6. 历史 Tag 未被移动或重写。
+4. Editor 和 Play Mode 诊断能区分 Pass、Warning、Failure 与 Not Verifiable；
+5. 迁移文档能让 0.3 TMP 用户完成升级；
+6. 发布证据来自两个相互隔离的干净 Consumer，而不是仅来自包内测试；
+7. 历史 Tag 未被移动或重写。
