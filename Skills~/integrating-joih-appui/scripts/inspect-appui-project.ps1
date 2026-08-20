@@ -9,6 +9,8 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $issues = New-Object 'System.Collections.Generic.List[object]'
+$validationEvidenceSchemaVersion = 'joih-appui-project-validation-evidence.v1'
+$validationEvidenceProducer = 'Joi.H.AppUI.Editor.ProjectValidation'
 
 function Add-Issue {
     param(
@@ -77,6 +79,47 @@ function Test-PathWithinRoot {
     }
     $prefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
     return $pathFull.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-SafeOutputPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [AllowNull()][string]$UnityRoot
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($UnityRoot)) {
+        foreach ($protectedDirectoryName in @('Assets', 'Packages', 'ProjectSettings')) {
+            $protectedDirectory = Join-Path $UnityRoot $protectedDirectoryName
+            if (Test-PathWithinRoot -Path $Path -Root $protectedDirectory) {
+                throw ("OutputPath cannot target the Unity {0} directory." -f $protectedDirectoryName)
+            }
+        }
+    }
+
+    $current = [System.IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if (Test-Path -LiteralPath $current) {
+            try {
+                $item = Get-Item -Force -LiteralPath $current
+                if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    throw ("OutputPath cannot target or traverse a reparse point: {0}" -f $current)
+                }
+            }
+            catch {
+                if ($_.Exception.Message -like 'OutputPath cannot target or traverse a reparse point:*') {
+                    throw
+                }
+                throw ("OutputPath safety could not be verified for: {0}" -f $current)
+            }
+        }
+
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or
+            $parent.Equals($current, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $current = $parent
+    }
 }
 
 function Resolve-UnityProjectRoot {
@@ -214,6 +257,63 @@ function Test-GitPackageReference {
         ($Reference -match '(?i:\.git)(?:[?#]|$)' -or $Reference -match '^(?i:git\+|git@|ssh://)'))
 }
 
+function Test-SemVer20 {
+    param([AllowNull()][string]$Version)
+
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        return $false
+    }
+    $numeric = '(?:0|[1-9]\d*)'
+    $prereleaseIdentifier = '(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+    $pattern = '\A{0}\.{0}\.{0}(?:-{1}(?:\.{1})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z' -f `
+        $numeric, $prereleaseIdentifier
+    return [regex]::IsMatch($Version, $pattern, [System.Text.RegularExpressions.RegexOptions]::CultureInvariant)
+}
+
+function Protect-PackageReference {
+    param([AllowNull()][string]$Reference)
+
+    if ([string]::IsNullOrWhiteSpace($Reference)) {
+        return $Reference
+    }
+
+    $sanitized = $Reference
+    if ($sanitized -match '^(?<scheme>[A-Za-z][A-Za-z0-9+.-]*://)(?<authority>[^/?#]*)(?<rest>.*)$') {
+        $authority = $Matches['authority']
+        $atIndex = $authority.LastIndexOf('@')
+        if ($atIndex -ge 0) {
+            $authority = $authority.Substring($atIndex + 1)
+        }
+        $sanitized = $Matches['scheme'] + $authority + $Matches['rest']
+    }
+
+    $fragment = ''
+    $fragmentIndex = $sanitized.IndexOf('#')
+    if ($fragmentIndex -ge 0) {
+        $fragment = $sanitized.Substring($fragmentIndex)
+        $sanitized = $sanitized.Substring(0, $fragmentIndex)
+    }
+    $queryIndex = $sanitized.IndexOf('?')
+    if ($queryIndex -ge 0) {
+        $base = $sanitized.Substring(0, $queryIndex)
+        $query = $sanitized.Substring($queryIndex + 1)
+        $protectedParts = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($part in ($query -split '&')) {
+            $separator = $part.IndexOf('=')
+            $key = if ($separator -ge 0) { $part.Substring(0, $separator) } else { $part }
+            $normalizedKey = $key.Replace('%5F', '_').Replace('%5f', '_').Replace('%2D', '-').Replace('%2d', '-')
+            if ($normalizedKey -match '(?i)(?:token|secret|password|passwd|credential|signature|api[_-]?key|access[_-]?key|authorization|(?:^|[_-])(?:auth|sig|code|key)(?:$|[_-]))') {
+                $protectedParts.Add($key + '=<redacted>') | Out-Null
+            }
+            else {
+                $protectedParts.Add($part) | Out-Null
+            }
+        }
+        $sanitized = $base + '?' + [string]::Join('&', $protectedParts.ToArray())
+    }
+    return $sanitized + $fragment
+}
+
 function Get-AppUIPackageFacts {
     param(
         [AllowNull()][string]$ManifestReference,
@@ -234,7 +334,9 @@ function Get-AppUIPackageFacts {
     $gitRef = $null
     $gitRefKind = $null
     $version = $null
-    $mutable = $false
+    $mutable = $null
+    $immutability = 'Unknown'
+    $tagIdentityVerified = $false
 
     if ($installed) {
         if (Test-GitPackageReference -Reference $reference -LockSource $lockSource) {
@@ -250,31 +352,37 @@ function Get-AppUIPackageFacts {
                 $gitRef = $null
                 $gitRefKind = 'Unversioned'
                 $mutable = $true
+                $immutability = 'Mutable'
             }
-            elseif ($gitRef -match '^v(?<version>0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
-                $gitRefKind = 'Tag'
+            elseif ($gitRef.StartsWith('v', [System.StringComparison]::Ordinal) -and
+                (Test-SemVer20 -Version $gitRef.Substring(1))) {
+                $gitRefKind = 'TagCandidate'
                 $version = $gitRef.Substring(1)
-                $mutable = $false
+                $mutable = $null
+                $immutability = 'UnverifiedOffline'
             }
             elseif ($gitRef -match '^[0-9a-fA-F]{40}$') {
                 $gitRefKind = 'Commit'
                 $mutable = $false
+                $immutability = 'PinnedCommit'
             }
             else {
                 $gitRefKind = 'Branch'
                 $mutable = $true
+                $immutability = 'Mutable'
             }
         }
         elseif (-not [string]::IsNullOrWhiteSpace($reference) -and
             $reference -match '^(?i:file:|\.\.?[\\/]|[A-Za-z]:[\\/])') {
             $installSource = 'LocalPath'
             $mutable = $true
+            $immutability = 'Mutable'
         }
-        elseif (-not [string]::IsNullOrWhiteSpace($reference) -and
-            $reference -match '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+        elseif (Test-SemVer20 -Version $reference) {
             $installSource = 'Registry'
             $version = $reference
             $mutable = $false
+            $immutability = 'VersionPinned'
         }
         else {
             $installSource = if (-not [string]::IsNullOrWhiteSpace($lockSource)) {
@@ -284,18 +392,21 @@ function Get-AppUIPackageFacts {
                 'Unknown'
             }
             $mutable = $true
+            $immutability = 'Mutable'
         }
     }
 
     return [pscustomobject][ordered]@{
         installed = $installed
-        manifestReference = $ManifestReference
-        lockReference = $lockReference
+        manifestReference = Protect-PackageReference -Reference $ManifestReference
+        lockReference = Protect-PackageReference -Reference $lockReference
         version = $version
         installSource = $installSource
         gitRef = $gitRef
         gitRefKind = $gitRefKind
         mutable = $mutable
+        immutability = $immutability
+        tagIdentityVerified = $tagIdentityVerified
     }
 }
 
@@ -319,12 +430,10 @@ function Get-PackageFacts {
         $null
     }
     $lockVersion = Get-LockVersion -LockEntry $lockEntry
-    $version = if (-not [string]::IsNullOrWhiteSpace($lockVersion) -and
-        $lockVersion -match '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+    $version = if (Test-SemVer20 -Version $lockVersion) {
         $lockVersion
     }
-    elseif (-not [string]::IsNullOrWhiteSpace($manifestReference) -and
-        $manifestReference -match '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
+    elseif (Test-SemVer20 -Version $manifestReference) {
         $manifestReference
     }
     else {
@@ -334,9 +443,9 @@ function Get-PackageFacts {
     return [pscustomobject][ordered]@{
         name = $Name
         installed = (-not [string]::IsNullOrWhiteSpace($manifestReference) -or $null -ne $lockEntry)
-        manifestReference = $manifestReference
-        lockReference = $lockVersion
-        version = $version
+        manifestReference = Protect-PackageReference -Reference $manifestReference
+        lockReference = Protect-PackageReference -Reference $lockVersion
+        version = Protect-PackageReference -Reference $version
         source = Get-LockSource -LockEntry $lockEntry
     }
 }
@@ -496,6 +605,7 @@ function Get-ValidationEvidenceState {
     param([Parameter(Mandatory = $true)]$Evidence)
 
     $hasPassed = $false
+    $hasPending = $false
     foreach ($item in $Evidence) {
         if ($item.status -eq 'Failed') {
             return 'Failed'
@@ -503,6 +613,12 @@ function Get-ValidationEvidenceState {
         if ($item.status -eq 'Passed') {
             $hasPassed = $true
         }
+        elseif ($item.status -eq 'Pending') {
+            $hasPending = $true
+        }
+    }
+    if ($hasPending) {
+        return 'Pending'
     }
     if ($hasPassed) {
         return 'Passed'
@@ -510,19 +626,217 @@ function Get-ValidationEvidenceState {
     return 'Unknown'
 }
 
-function Get-StatusFromValidationText {
-    param([Parameter(Mandatory = $true)][string]$Content)
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
 
-    if ($Content -match '(?im)^[\s"'']*(?:status|result|validationStatus)["'']?\s*:\s*["'']?(?<status>failed|fail|error|invalid)\b') {
-        return 'Failed'
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or
+        (Test-UnsafeKnownPath -Path $Path -Directory $false)) {
+        return $null
     }
-    if ($Content -match '(?im)^\s*(?:errorCount|errors)\s*:\s*[1-9]\d*\b') {
-        return 'Failed'
+
+    $stream = $null
+    $sha256 = $null
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        $bytes = $sha256.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant())
     }
-    if ($Content -match '(?im)^[\s"'']*(?:status|result|validationStatus)["'']?\s*:\s*["'']?(?<status>passed|pass|success|valid|ready)\b') {
+    catch {
+        return $null
+    }
+    finally {
+        if ($null -ne $sha256) {
+            $sha256.Dispose()
+        }
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+    }
+}
+
+function Get-ValidationCheckState {
+    param(
+        [Parameter(Mandatory = $true)]$Evidence,
+        [Parameter(Mandatory = $true)][string]$CheckName
+    )
+
+    $hasPassed = $false
+    $hasPending = $false
+    foreach ($item in $Evidence) {
+        $value = Get-ObjectPropertyValue -Object $item.checks -Name $CheckName
+        if ($value -eq 'Failed') {
+            return 'Failed'
+        }
+        if ($value -eq 'Passed') {
+            $hasPassed = $true
+        }
+        elseif ($value -eq 'Pending') {
+            $hasPending = $true
+        }
+    }
+    if ($hasPending) {
+        return 'Pending'
+    }
+    if ($hasPassed) {
         return 'Passed'
     }
     return 'Unknown'
+}
+
+function Get-BindingEvidenceAggregateStatus {
+    param([Parameter(Mandatory = $true)]$Fields)
+
+    $hasPassed = $false
+    $hasPending = $false
+    foreach ($name in @('hostBoundariesStatus', 'runtimeRootStatus', 'pageContractStatus', 'bindingStatus')) {
+        $value = $Fields[$name]
+        if ($value -eq 'Failed') {
+            return 'Failed'
+        }
+        if ($value -eq 'Pending') {
+            $hasPending = $true
+        }
+        elseif ($value -eq 'Passed') {
+            $hasPassed = $true
+        }
+    }
+    if ($hasPending) {
+        return 'Pending'
+    }
+    if ($hasPassed) {
+        return 'Passed'
+    }
+    return 'Pending'
+}
+
+function Test-ValidationEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Content,
+        [Parameter(Mandatory = $true)][ValidateSet('Binding', 'Runtime')][string]$Kind,
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [Parameter(Mandatory = $true)]$ProjectBinding
+    )
+
+    $fieldNames = @(
+        'schemaVersion', 'producer', 'validationKind', 'status', 'unityVersion',
+        'manifestSha256', 'packagesLockSha256', 'projectVersionSha256',
+        'hostBoundariesStatus', 'runtimeRootStatus', 'pageContractStatus',
+        'bindingStatus', 'runtimeLifecycleStatus'
+    )
+    $expectedNames = New-Object 'System.Collections.Generic.HashSet[string]' `
+        ([System.StringComparer]::Ordinal)
+    foreach ($name in $fieldNames) {
+        $expectedNames.Add($name) | Out-Null
+    }
+    $fields = New-Object 'System.Collections.Generic.Dictionary[string,string]' `
+        ([System.StringComparer]::Ordinal)
+    $duplicate = $false
+    foreach ($match in [regex]::Matches($Content,
+        '(?m)^[ \t]+(?<key>[A-Za-z][A-Za-z0-9]*):[ \t]*(?<value>[^\r\n]*?)[ \t]*$')) {
+        $key = $match.Groups['key'].Value
+        if (-not $expectedNames.Contains($key)) {
+            continue
+        }
+        $value = $match.Groups['value'].Value.Trim()
+        if ($value.Length -ge 2 -and
+            (($value[0] -eq '"' -and $value[$value.Length - 1] -eq '"') -or
+            ($value[0] -eq "'" -and $value[$value.Length - 1] -eq "'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        if ($fields.ContainsKey($key)) {
+            $duplicate = $true
+        }
+        else {
+            $fields.Add($key, $value)
+        }
+    }
+
+    $reason = $null
+    if (-not $fields.ContainsKey('schemaVersion') -or
+        $fields['schemaVersion'] -ne $validationEvidenceSchemaVersion) {
+        $reason = 'SchemaMismatch'
+    }
+    elseif (-not $fields.ContainsKey('producer') -or
+        $fields['producer'] -ne $validationEvidenceProducer) {
+        $reason = 'ProducerMismatch'
+    }
+    elseif (-not $fields.ContainsKey('validationKind') -or $fields['validationKind'] -ne $Kind) {
+        $reason = 'KindMismatch'
+    }
+    elseif (-not $fields.ContainsKey('unityVersion') -or
+        -not $fields.ContainsKey('manifestSha256') -or
+        -not $fields.ContainsKey('packagesLockSha256') -or
+        -not $fields.ContainsKey('projectVersionSha256') -or
+        $fields['unityVersion'] -ne $ProjectBinding.unityVersion -or
+        $fields['manifestSha256'] -ne $ProjectBinding.manifestSha256 -or
+        $fields['packagesLockSha256'] -ne $ProjectBinding.packagesLockSha256 -or
+        $fields['projectVersionSha256'] -ne $ProjectBinding.projectVersionSha256) {
+        $reason = 'ProjectFactsMismatch'
+    }
+    else {
+        foreach ($name in $fieldNames) {
+            if (-not $fields.ContainsKey($name)) {
+                $reason = 'ContractInvalid'
+                break
+            }
+        }
+        if ($null -eq $reason -and $duplicate) {
+            $reason = 'ContractInvalid'
+        }
+        if ($null -eq $reason -and $fields['status'] -notmatch '^(?:Passed|Failed|Pending)$') {
+            $reason = 'ContractInvalid'
+        }
+        if ($null -eq $reason) {
+            foreach ($name in @('hostBoundariesStatus', 'runtimeRootStatus', 'pageContractStatus',
+                'bindingStatus', 'runtimeLifecycleStatus')) {
+                if ($fields[$name] -notmatch '^(?:Passed|Failed|Pending|NotRun)$') {
+                    $reason = 'ContractInvalid'
+                    break
+                }
+            }
+        }
+        if ($null -eq $reason) {
+            $expectedStatus = if ($Kind -eq 'Binding') {
+                Get-BindingEvidenceAggregateStatus -Fields $fields
+            }
+            else {
+                $fields['runtimeLifecycleStatus']
+            }
+            if ($expectedStatus -eq 'NotRun' -or $fields['status'] -ne $expectedStatus) {
+                $reason = 'ContractInvalid'
+            }
+        }
+    }
+
+    if ($null -ne $reason) {
+        return [pscustomobject][ordered]@{
+            accepted = $false
+            rejectedEvidence = [pscustomobject][ordered]@{
+                path = $RelativePath
+                reason = $reason
+            }
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        accepted = $true
+        evidence = [pscustomobject][ordered]@{
+            path = $RelativePath
+            status = $fields['status']
+            binding = 'Bound'
+            schemaVersion = $fields['schemaVersion']
+            producer = $fields['producer']
+            validationKind = $fields['validationKind']
+            checks = [pscustomobject][ordered]@{
+                hostBoundariesStatus = $fields['hostBoundariesStatus']
+                runtimeRootStatus = $fields['runtimeRootStatus']
+                pageContractStatus = $fields['pageContractStatus']
+                bindingStatus = $fields['bindingStatus']
+                runtimeLifecycleStatus = $fields['runtimeLifecycleStatus']
+            }
+        }
+    }
 }
 
 function New-EmptyCandidates {
@@ -566,6 +880,15 @@ $projectFacts = [ordered]@{
     unityVersion = $null
     maxSourceFiles = $MaxSourceFiles
     scannedFileCount = 0
+    sourceFileLimitReached = $false
+    maxDirectories = [Math]::Max(32, ($MaxSourceFiles * 4))
+    visitedDirectoryCount = 0
+    directoryLimitReached = $false
+    maxEnumeratedEntries = [Math]::Max(64, ($MaxSourceFiles * 16))
+    enumeratedEntryCount = 0
+    enumeratedFileEntryCount = 0
+    enumeratedDirectoryEntryCount = 0
+    entryLimitReached = $false
     scanLimitReached = $false
 }
 $emptyAppUIFacts = [pscustomobject][ordered]@{
@@ -576,7 +899,9 @@ $emptyAppUIFacts = [pscustomobject][ordered]@{
     installSource = 'Unknown'
     gitRef = $null
     gitRefKind = $null
-    mutable = $false
+    mutable = $null
+    immutability = 'Unknown'
+    tagIdentityVerified = $false
 }
 $packageFacts = [ordered]@{
     appUI = $emptyAppUIFacts
@@ -597,15 +922,18 @@ $integrationFacts = [ordered]@{
         operationFactory = [ordered]@{ present = $false; candidates = @() }
         assetProvider = [ordered]@{ present = $false; candidates = @() }
         executionContext = [ordered]@{ present = $false; candidates = @() }
+        candidateCoverageComplete = $false
         complete = $false
     }
     runtimeRoot = [ordered]@{
+        candidateCoverageComplete = $false
         complete = $false
         layerRoots = @()
         profiles = @()
         registries = @()
     }
     pageContract = [ordered]@{
+        candidateCoverageComplete = $false
         complete = $false
         controllers = @()
         definitions = @()
@@ -613,11 +941,17 @@ $integrationFacts = [ordered]@{
     binding = [ordered]@{
         settings = @()
         generatedBindings = @()
+        candidateCoverageComplete = $false
         generationComplete = $false
     }
     validation = [ordered]@{
-        binding = [ordered]@{ status = 'Unknown'; evidence = @() }
-        runtime = [ordered]@{ status = 'Unknown'; evidence = @() }
+        contract = [ordered]@{
+            schemaVersion = $validationEvidenceSchemaVersion
+            producer = $validationEvidenceProducer
+            binding = 'UnityVersion+ManifestSha256+PackagesLockSha256+ProjectVersionSha256'
+        }
+        binding = [ordered]@{ status = 'Unknown'; evidence = @(); rejectedEvidence = @() }
+        runtime = [ordered]@{ status = 'Unknown'; evidence = @(); rejectedEvidence = @() }
     }
 }
 $sampleFacts = [ordered]@{
@@ -658,7 +992,8 @@ else {
     $manifestPath = Join-Path $unityRoot 'Packages\manifest.json'
     $lockPath = Join-Path $unityRoot 'Packages\packages-lock.json'
     $packagesDirectory = Join-Path $unityRoot 'Packages'
-    if (Test-UnsafeKnownPath -Path $packagesDirectory -Directory $true) {
+    $packageInputsSafe = -not (Test-UnsafeKnownPath -Path $packagesDirectory -Directory $true)
+    if (-not $packageInputsSafe) {
         Add-Issue -Code 'PACKAGE_DIRECTORY_UNSAFE' -Severity 'Warning' `
             -Message 'A hidden or reparse-point Packages directory was not read.' -Path 'Packages'
         $manifest = $null
@@ -672,6 +1007,12 @@ else {
     }
     $manifestDependencies = Get-DependencyMap -Json $manifest
     $lockDependencies = Get-DependencyMap -Json $lock
+    $projectBinding = [pscustomobject][ordered]@{
+        unityVersion = $projectFacts.unityVersion
+        manifestSha256 = if ($packageInputsSafe) { Get-FileSha256 -Path $manifestPath } else { $null }
+        packagesLockSha256 = if ($packageInputsSafe) { Get-FileSha256 -Path $lockPath } else { $null }
+        projectVersionSha256 = Get-FileSha256 -Path $projectVersionPath
+    }
 
     $appUIManifestReference = if ($manifestDependencies.ContainsKey('com.joih.appui')) {
         [string]$manifestDependencies['com.joih.appui']
@@ -695,9 +1036,14 @@ else {
     $packageFacts.assetCandidates = @(Get-PackageCandidates -ManifestDependencies $manifestDependencies `
         -LockDependencies $lockDependencies -Kind Asset)
 
-    if ($packageFacts.appUI.installed -and $packageFacts.appUI.mutable) {
+    if ($packageFacts.appUI.installed -and $packageFacts.appUI.immutability -eq 'Mutable') {
         Add-Issue -Code 'APPUI_MUTABLE_REFERENCE' -Severity 'Warning' `
             -Message 'The installed AppUI reference is mutable or cannot be proven immutable.' `
+            -Path 'Packages/manifest.json'
+    }
+    elseif ($packageFacts.appUI.installed -and $packageFacts.appUI.gitRefKind -eq 'TagCandidate') {
+        Add-Issue -Code 'APPUI_TAG_IDENTITY_UNVERIFIED' -Severity 'Info' `
+            -Message 'The SemVer-shaped Git fragment is only a Tag candidate until its remote identity is verified.' `
             -Path 'Packages/manifest.json'
     }
 
@@ -733,27 +1079,31 @@ else {
     $generatedBindingKeys = New-CandidateKeys
     $bindingValidationEvidence = New-Object 'System.Collections.Generic.List[object]'
     $runtimeValidationEvidence = New-Object 'System.Collections.Generic.List[object]'
+    $bindingRejectedEvidence = New-Object 'System.Collections.Generic.List[object]'
+    $runtimeRejectedEvidence = New-Object 'System.Collections.Generic.List[object]'
     $basicSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $customSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $tmpSamplePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
     $assetsRoot = Join-Path $unityRoot 'Assets'
-    $pendingDirectories = New-Object 'System.Collections.Generic.Stack[string]'
-    $pendingDirectories.Push($assetsRoot)
-    $directoryBudget = [Math]::Max(128, ($MaxSourceFiles * 16))
-    $visitedDirectoryCount = 0
+    $priorityDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+    $pendingDirectories = New-Object 'System.Collections.Generic.Queue[string]'
+    $pendingDirectories.Enqueue($assetsRoot)
     $stopScan = $false
 
-    while ($pendingDirectories.Count -gt 0 -and -not $stopScan) {
-        if ($visitedDirectoryCount -ge $directoryBudget) {
-            $projectFacts.scanLimitReached = $true
-            Add-Issue -Code 'SOURCE_DIRECTORY_LIMIT_REACHED' -Severity 'Warning' `
-                -Message 'The bounded Assets directory traversal stopped before inspecting every directory.'
+    while (($priorityDirectories.Count -gt 0 -or $pendingDirectories.Count -gt 0) -and -not $stopScan) {
+        if ($projectFacts.visitedDirectoryCount -ge $projectFacts.maxDirectories) {
+            $projectFacts.directoryLimitReached = $true
             break
         }
 
-        $directory = $pendingDirectories.Pop()
-        $visitedDirectoryCount++
+        $directory = if ($priorityDirectories.Count -gt 0) {
+            $priorityDirectories.Dequeue()
+        }
+        else {
+            $pendingDirectories.Dequeue()
+        }
+        $projectFacts.visitedDirectoryCount++
         $directoryInfo = New-Object System.IO.DirectoryInfo($directory)
         if (($directoryInfo.Attributes -band [System.IO.FileAttributes]::Hidden) -ne 0) {
             continue
@@ -776,17 +1126,47 @@ else {
             $tmpSamplePaths.Add($Matches['root']) | Out-Null
         }
 
+        $entryEnumerator = $null
         try {
-            $files = @([System.IO.Directory]::EnumerateFiles($directory) | Sort-Object)
-        }
-        catch {
-            Add-Issue -Code 'SOURCE_DIRECTORY_UNREADABLE' -Severity 'Warning' `
-                -Message 'An Assets directory could not be enumerated.' -Path $relativeDirectory
-            continue
-        }
+            $entryEnumerator = [System.IO.Directory]::EnumerateFileSystemEntries($directory).GetEnumerator()
+            while (-not $stopScan) {
+                if ($projectFacts.enumeratedEntryCount -ge $projectFacts.maxEnumeratedEntries) {
+                    $projectFacts.entryLimitReached = $true
+                    $stopScan = $true
+                    break
+                }
+                if (-not $entryEnumerator.MoveNext()) {
+                    break
+                }
+                $entryPath = $entryEnumerator.Current
+                $entryAttributes = [System.IO.File]::GetAttributes($entryPath)
+                $projectFacts.enumeratedEntryCount++
+                if (($entryAttributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                    $projectFacts.enumeratedDirectoryEntryCount++
+                    $subdirectoryInfo = New-Object System.IO.DirectoryInfo($entryPath)
+                    if (Test-ExcludedName -Name $subdirectoryInfo.Name) {
+                        continue
+                    }
+                    if (($entryAttributes -band [System.IO.FileAttributes]::Hidden) -ne 0) {
+                        continue
+                    }
+                    if (($entryAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                        $relativeReparse = Convert-ToPortableRelativePath -Root $unityRoot -Path $subdirectoryInfo.FullName
+                        Add-Issue -Code 'REPARSE_POINT_SKIPPED' -Severity 'Info' `
+                            -Message 'A reparse-point directory under Assets was not traversed.' -Path $relativeReparse
+                        continue
+                    }
+                    if ($subdirectoryInfo.FullName -match '(?i:[\\/]appui(?:[\\/]|$))') {
+                        $priorityDirectories.Enqueue($subdirectoryInfo.FullName)
+                    }
+                    else {
+                        $pendingDirectories.Enqueue($subdirectoryInfo.FullName)
+                    }
+                    continue
+                }
 
-        foreach ($filePath in $files) {
-            $fileInfo = New-Object System.IO.FileInfo($filePath)
+                $projectFacts.enumeratedFileEntryCount++
+            $fileInfo = New-Object System.IO.FileInfo($entryPath)
             if (($fileInfo.Attributes -band [System.IO.FileAttributes]::Hidden) -ne 0) {
                 continue
             }
@@ -800,7 +1180,7 @@ else {
                 continue
             }
             if ($projectFacts.scannedFileCount -ge $MaxSourceFiles) {
-                $projectFacts.scanLimitReached = $true
+                $projectFacts.sourceFileLimitReached = $true
                 $stopScan = $true
                 break
             }
@@ -923,57 +1303,53 @@ else {
                         -Candidate (New-Candidate -Path $relativePath -Evidence 'matches UIBindingSettings asset')
                 }
 
-                $validationStatus = Get-StatusFromValidationText -Content $content
-                if ($fileInfo.Name -match '(?i:binding.*validation|validation.*binding)') {
-                    $bindingValidationEvidence.Add([pscustomobject][ordered]@{
-                        path = $relativePath
-                        status = $validationStatus
-                        confidence = 'DiscoverableArtifact'
-                    }) | Out-Null
+                if ($fileInfo.Name -ceq 'AppUIBindingValidationEvidence.asset') {
+                    $validationResult = Test-ValidationEvidence -Content $content -Kind Binding `
+                        -RelativePath $relativePath -ProjectBinding $projectBinding
+                    if ($validationResult.accepted) {
+                        $bindingValidationEvidence.Add($validationResult.evidence) | Out-Null
+                    }
+                    else {
+                        $bindingRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
+                    }
                 }
-                elseif ($fileInfo.Name -match '(?i:runtime.*validation|validation.*runtime)') {
-                    $runtimeValidationEvidence.Add([pscustomobject][ordered]@{
-                        path = $relativePath
-                        status = $validationStatus
-                        confidence = 'DiscoverableArtifact'
-                    }) | Out-Null
+                elseif ($fileInfo.Name -ceq 'AppUIRuntimeValidationEvidence.asset') {
+                    $validationResult = Test-ValidationEvidence -Content $content -Kind Runtime `
+                        -RelativePath $relativePath -ProjectBinding $projectBinding
+                    if ($validationResult.accepted) {
+                        $runtimeValidationEvidence.Add($validationResult.evidence) | Out-Null
+                    }
+                    else {
+                        $runtimeRejectedEvidence.Add($validationResult.rejectedEvidence) | Out-Null
+                    }
                 }
             }
-        }
-
-        if ($stopScan) {
-            break
-        }
-
-        try {
-            $subdirectories = @([System.IO.Directory]::EnumerateDirectories($directory) | Sort-Object -Descending)
+            }
         }
         catch {
             Add-Issue -Code 'SOURCE_DIRECTORY_UNREADABLE' -Severity 'Warning' `
-                -Message 'An Assets directory could not enumerate child directories.' -Path $relativeDirectory
-            continue
+                -Message 'An Assets directory entry could not be enumerated.' -Path $relativeDirectory
         }
-        foreach ($subdirectory in $subdirectories) {
-            $subdirectoryInfo = New-Object System.IO.DirectoryInfo($subdirectory)
-            if (Test-ExcludedName -Name $subdirectoryInfo.Name) {
-                continue
+        finally {
+            if ($null -ne $entryEnumerator) {
+                $entryEnumerator.Dispose()
             }
-            if (($subdirectoryInfo.Attributes -band [System.IO.FileAttributes]::Hidden) -ne 0) {
-                continue
-            }
-            if (($subdirectoryInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-                $relativeReparse = Convert-ToPortableRelativePath -Root $unityRoot -Path $subdirectoryInfo.FullName
-                Add-Issue -Code 'REPARSE_POINT_SKIPPED' -Severity 'Info' `
-                    -Message 'A reparse-point directory under Assets was not traversed.' -Path $relativeReparse
-                continue
-            }
-            $pendingDirectories.Push($subdirectoryInfo.FullName)
         }
     }
 
-    if ($projectFacts.scanLimitReached) {
+    $projectFacts.scanLimitReached = ($projectFacts.sourceFileLimitReached -or
+        $projectFacts.directoryLimitReached -or $projectFacts.entryLimitReached)
+    if ($projectFacts.sourceFileLimitReached) {
         Add-Issue -Code 'SOURCE_SCAN_LIMIT_REACHED' -Severity 'Warning' `
             -Message ("Assets inspection stopped at MaxSourceFiles={0}." -f $MaxSourceFiles)
+    }
+    if ($projectFacts.directoryLimitReached) {
+        Add-Issue -Code 'SOURCE_DIRECTORY_LIMIT_REACHED' -Severity 'Warning' `
+            -Message ("Assets traversal stopped at MaxDirectories={0}." -f $projectFacts.maxDirectories)
+    }
+    if ($projectFacts.entryLimitReached) {
+        Add-Issue -Code 'SOURCE_ENTRY_LIMIT_REACHED' -Severity 'Warning' `
+            -Message ("Assets traversal stopped at MaxEnumeratedEntries={0}." -f $projectFacts.maxEnumeratedEntries)
     }
 
     $integrationFacts.defines = @($defines | Sort-Object)
@@ -999,33 +1375,65 @@ else {
         present = $executionCandidates.Count -gt 0
         candidates = @($executionCandidates.ToArray())
     }
-    $integrationFacts.hostBoundaries.complete =
-        ($operationCandidates.Count -gt 0 -and $assetProviderCandidates.Count -gt 0 -and $executionCandidates.Count -gt 0)
+    $hostBoundariesCandidateCoverage = ($operationCandidates.Count -gt 0 -and
+        $assetProviderCandidates.Count -gt 0 -and $executionCandidates.Count -gt 0)
+    $integrationFacts.hostBoundaries.candidateCoverageComplete = $hostBoundariesCandidateCoverage
 
     $integrationFacts.runtimeRoot.layerRoots = @($layerCandidates.ToArray())
     $integrationFacts.runtimeRoot.profiles = @($profileCandidates.ToArray())
     $integrationFacts.runtimeRoot.registries = @($registryCandidates.ToArray())
-    $integrationFacts.runtimeRoot.complete =
-        ($hostCandidates.Count -gt 0 -and $managerCandidates.Count -gt 0 -and
+    $runtimeRootCandidateCoverage = ($hostCandidates.Count -gt 0 -and $managerCandidates.Count -gt 0 -and
         $layerCandidates.Count -gt 0 -and $profileCandidates.Count -gt 0 -and $registryCandidates.Count -gt 0)
+    $integrationFacts.runtimeRoot.candidateCoverageComplete = $runtimeRootCandidateCoverage
     $integrationFacts.pageContract.controllers = @($controllerCandidates.ToArray())
     $integrationFacts.pageContract.definitions = @($definitionCandidates.ToArray())
-    $integrationFacts.pageContract.complete =
-        ($controllerCandidates.Count -gt 0 -and $definitionCandidates.Count -gt 0)
+    $pageContractCandidateCoverage = ($controllerCandidates.Count -gt 0 -and $definitionCandidates.Count -gt 0)
+    $integrationFacts.pageContract.candidateCoverageComplete = $pageContractCandidateCoverage
     $integrationFacts.binding.settings = @($bindingSettingsCandidates.ToArray())
     $integrationFacts.binding.generatedBindings = @($generatedBindingCandidates.ToArray())
-    $integrationFacts.binding.generationComplete =
-        ($bindingSettingsCandidates.Count -gt 0 -and $generatedBindingCandidates.Count -gt 0)
+    $bindingCandidateCoverage = ($bindingSettingsCandidates.Count -gt 0 -and $generatedBindingCandidates.Count -gt 0)
+    $integrationFacts.binding.candidateCoverageComplete = $bindingCandidateCoverage
 
     $bindingValidationStatus = Get-ValidationEvidenceState -Evidence $bindingValidationEvidence
     $runtimeValidationStatus = Get-ValidationEvidenceState -Evidence $runtimeValidationEvidence
+    $hostBoundariesValidationStatus = Get-ValidationCheckState -Evidence $bindingValidationEvidence `
+        -CheckName 'hostBoundariesStatus'
+    $runtimeRootValidationStatus = Get-ValidationCheckState -Evidence $bindingValidationEvidence `
+        -CheckName 'runtimeRootStatus'
+    $pageContractValidationStatus = Get-ValidationCheckState -Evidence $bindingValidationEvidence `
+        -CheckName 'pageContractStatus'
+    $bindingGenerationValidationStatus = Get-ValidationCheckState -Evidence $bindingValidationEvidence `
+        -CheckName 'bindingStatus'
+
+    $inspectionComplete = -not $projectFacts.scanLimitReached
+    $integrationFacts.hostBoundaries.complete = ($inspectionComplete -and $hostBoundariesCandidateCoverage -and
+        $hostBoundariesValidationStatus -eq 'Passed')
+    $integrationFacts.runtimeRoot.complete = ($inspectionComplete -and $runtimeRootCandidateCoverage -and
+        $runtimeRootValidationStatus -eq 'Passed')
+    $integrationFacts.pageContract.complete = ($inspectionComplete -and $pageContractCandidateCoverage -and
+        $pageContractValidationStatus -eq 'Passed')
+    $integrationFacts.binding.generationComplete = ($inspectionComplete -and $bindingCandidateCoverage -and
+        ($bindingGenerationValidationStatus -eq 'Passed' -or $bindingGenerationValidationStatus -eq 'Failed'))
+
+    $displayBindingValidationStatus = $bindingValidationStatus
+    $displayRuntimeValidationStatus = $runtimeValidationStatus
+    if ($projectFacts.scanLimitReached) {
+        if ($displayBindingValidationStatus -eq 'Passed') {
+            $displayBindingValidationStatus = 'Indeterminate'
+        }
+        if ($displayRuntimeValidationStatus -eq 'Passed') {
+            $displayRuntimeValidationStatus = 'Indeterminate'
+        }
+    }
     $integrationFacts.validation.binding = [ordered]@{
-        status = $bindingValidationStatus
+        status = $displayBindingValidationStatus
         evidence = @($bindingValidationEvidence.ToArray())
+        rejectedEvidence = @($bindingRejectedEvidence.ToArray())
     }
     $integrationFacts.validation.runtime = [ordered]@{
-        status = $runtimeValidationStatus
+        status = $displayRuntimeValidationStatus
         evidence = @($runtimeValidationEvidence.ToArray())
+        rejectedEvidence = @($runtimeRejectedEvidence.ToArray())
     }
 
     $sampleFacts.basicIntegration = [ordered]@{
@@ -1050,22 +1458,22 @@ else {
     elseif ($hostCandidates.Count -eq 0) {
         $status = 'InstalledNotInitialized'
     }
-    elseif (-not $integrationFacts.hostBoundaries.complete) {
+    elseif (-not $hostBoundariesCandidateCoverage -or $hostBoundariesValidationStatus -ne 'Passed') {
         $status = 'HostBoundariesMissing'
     }
-    elseif (-not $integrationFacts.runtimeRoot.complete) {
+    elseif (-not $runtimeRootCandidateCoverage -or $runtimeRootValidationStatus -ne 'Passed') {
         $status = 'RuntimeRootIncomplete'
     }
-    elseif (-not $integrationFacts.pageContract.complete) {
+    elseif (-not $pageContractCandidateCoverage -or $pageContractValidationStatus -ne 'Passed') {
         $status = 'PageContractIncomplete'
     }
-    elseif (-not $integrationFacts.binding.generationComplete) {
-        $status = 'BindingGenerationPending'
-    }
-    elseif ($bindingValidationStatus -eq 'Failed') {
+    elseif ($bindingValidationStatus -eq 'Failed' -or $bindingGenerationValidationStatus -eq 'Failed') {
         $status = 'BindingInvalid'
         Add-Issue -Code 'BINDING_VALIDATION_FAILED' -Severity 'Error' `
-            -Message 'Discoverable Binding validation evidence reports failure.'
+            -Message 'Bound Binding validation evidence reports failure.'
+    }
+    elseif (-not $bindingCandidateCoverage -or $bindingGenerationValidationStatus -ne 'Passed') {
+        $status = 'BindingGenerationPending'
     }
     elseif ($bindingValidationStatus -ne 'Passed' -or $runtimeValidationStatus -ne 'Passed') {
         $status = 'RuntimeValidationPending'
@@ -1083,7 +1491,14 @@ else {
         }
     }
     else {
-        $status = 'Ready'
+        if ($projectFacts.scanLimitReached) {
+            $status = 'RuntimeValidationPending'
+            Add-Issue -Code 'INSPECTION_TRUNCATED' -Severity 'Warning' `
+                -Message 'Truncated project inspection cannot produce a definitive Ready status.'
+        }
+        else {
+            $status = 'Ready'
+        }
     }
 }
 
@@ -1100,18 +1515,12 @@ $report = [pscustomobject][ordered]@{
 $json = $report | ConvertTo-Json -Depth 24
 
 if ($null -ne $resolvedOutputPath) {
-    if ($null -ne $unityRoot) {
-        foreach ($protectedDirectoryName in @('Assets', 'Packages', 'ProjectSettings')) {
-            $protectedDirectory = Join-Path $unityRoot $protectedDirectoryName
-            if (Test-PathWithinRoot -Path $resolvedOutputPath -Root $protectedDirectory) {
-                throw ("OutputPath cannot target the Unity {0} directory." -f $protectedDirectoryName)
-            }
-        }
-    }
+    Assert-SafeOutputPath -Path $resolvedOutputPath -UnityRoot $unityRoot
     $outputDirectory = Split-Path -Parent $resolvedOutputPath
     if (-not [string]::IsNullOrWhiteSpace($outputDirectory)) {
         [System.IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
     }
+    Assert-SafeOutputPath -Path $resolvedOutputPath -UnityRoot $unityRoot
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($resolvedOutputPath, $json, $utf8NoBom)
 }
