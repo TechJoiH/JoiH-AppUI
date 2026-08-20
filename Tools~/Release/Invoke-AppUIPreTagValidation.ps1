@@ -104,72 +104,119 @@ if ($buildEnvironment.Status -ne 'Passed') {
     throw "Build environment is blocked. Gate=$($buildEnvironment.gate) Reason=$($buildEnvironment.Reason). $($buildEnvironment.Details)"
 }
 
-$consumerRoot = Join-Path $resolvedRunRoot 'consumer'
-$logRoot = Join-Path $resolvedRunRoot 'logs'
-[System.IO.Directory]::CreateDirectory($logRoot) | Out-Null
-New-AppUIConsumerWorkspace `
+$layout = New-AppUIConsumerValidationLayout `
+    -RunRoot $resolvedRunRoot `
     -TemplatePath (Join-Path $snapshot.PackageRoot 'Validation~\Unity6000.0Consumer') `
-    -DestinationPath $consumerRoot `
-    -PackageReference $snapshot.PackageRoot | Out-Null
+    -PackageReference $snapshot.PackageRoot
+$previousExpectedPackageVersion = $env:APPUI_EXPECTED_PACKAGE_VERSION
 $env:APPUI_EXPECTED_PACKAGE_VERSION = $identity.PackageVersion
-$env:APPUI_VALIDATION_OUTPUT = $evidenceRoot
+$previousValidationOutput = $env:APPUI_VALIDATION_OUTPUT
 
 function Invoke-Gate {
-    param([string]$Name, [string[]]$Arguments)
+    param(
+        [string]$Mode,
+        [string]$Name,
+        [string[]]$Arguments
+    )
+
+    $consumerPath = if ($Mode -eq 'base') {
+        $layout.BaseConsumerPath
+    } else {
+        $layout.TextMeshProConsumerPath
+    }
+    $logs = if ($Mode -eq 'base') {
+        $layout.BaseLogRoot
+    } else {
+        $layout.TextMeshProLogRoot
+    }
 
     $result = Invoke-AppUIUnityProcess `
         -UnityPath $UnityPath `
-        -ProjectPath $consumerRoot `
-        -LogFile (Join-Path $logRoot ($Name + '.log')) `
+        -ProjectPath $consumerPath `
+        -LogFile (Join-Path $logs ($Name + '.log')) `
         -Arguments $Arguments `
         -TimeoutSeconds $TimeoutSeconds
     if ($result.Status -ne 'Passed') {
-        throw "Unity gate failed: $Name. Status=$($result.Status) ExitCode=$($result.ExitCode)"
+        throw "Unity gate failed: $Mode/$Name. Status=$($result.Status) ExitCode=$($result.ExitCode)"
     }
 }
 
 $pipelineFailure = $null
 try {
-    Invoke-Gate '01-import-sample' @(
+    $env:APPUI_VALIDATION_OUTPUT = $layout.BaseEvidenceRoot
+    Invoke-Gate 'base' '01-import-sample' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerFixtureCommand.ImportBasicIntegration')
-    Invoke-Gate '02-domain-reload' @('-quit')
-    Invoke-Gate '03-generate-fixtures' @(
+    Invoke-Gate 'base' '02-domain-reload' @('-quit')
+    Invoke-Gate 'base' '03-generate-fixtures' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerFixtureCommand.CreateFixturesAndGenerateBindings')
-    Invoke-Gate '04-binding-domain-reload' @('-quit')
-    Invoke-Gate '05-bind-validate' @(
+    Invoke-Gate 'base' '04-binding-domain-reload' @('-quit')
+    Invoke-Gate 'base' '05-bind-validate' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBindingCommand.BindAndValidate')
-    Invoke-Gate '06-editmode' @(
+    Invoke-Gate 'base' '06-editmode' @(
         '-runTests', '-testPlatform', 'EditMode',
-        '-testResults', (Join-Path $evidenceRoot 'editmode.xml'))
+        '-testResults', (Join-Path $layout.BaseEvidenceRoot 'editmode.xml'))
     Read-AppUINUnit3Result `
-        -Path (Join-Path $evidenceRoot 'editmode.xml') `
+        -Path (Join-Path $layout.BaseEvidenceRoot 'editmode.xml') `
         -RequirePassed | Out-Null
-    Invoke-Gate '07-playmode' @(
+    Invoke-Gate 'base' '07-playmode' @(
         '-runTests', '-testPlatform', 'PlayMode',
-        '-testResults', (Join-Path $evidenceRoot 'playmode.xml'))
+        '-testResults', (Join-Path $layout.BaseEvidenceRoot 'playmode.xml'))
     Read-AppUINUnit3Result `
-        -Path (Join-Path $evidenceRoot 'playmode.xml') `
+        -Path (Join-Path $layout.BaseEvidenceRoot 'playmode.xml') `
         -RequirePassed | Out-Null
-    Invoke-Gate '08-build-mono' @(
+    Invoke-Gate 'base' '08-build-mono' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildMono')
-    Invoke-Gate '09-build-il2cpp' @(
+    Invoke-Gate 'base' '09-build-il2cpp' @(
         '-quit', '-executeMethod',
         'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildIl2Cpp')
+
+    $env:APPUI_VALIDATION_OUTPUT = $layout.TextMeshProEvidenceRoot
+    Invoke-Gate 'textmeshpro' '01-configure-define' @(
+        '-quit', '-executeMethod',
+        'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerTextMeshProCommand.Configure')
+    Invoke-Gate 'textmeshpro' '02-domain-reload' @('-quit')
+    Invoke-Gate 'textmeshpro' '03-import-sample' @(
+        '-quit', '-executeMethod',
+        'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerTextMeshProCommand.ImportSample')
+    Invoke-Gate 'textmeshpro' '04-sample-domain-reload' @('-quit')
+    Invoke-Gate 'textmeshpro' '05-bind-validate' @(
+        '-quit', '-executeMethod',
+        'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerTextMeshProCommand.ValidateSample')
+    Invoke-Gate 'textmeshpro' '06-diagnostics' @(
+        '-executeMethod',
+        'Joi.H.AppUI.Integrations.TextMeshPro.Editor.TextMeshProIntegrationValidationCommandLine.Validate')
+    Invoke-Gate 'textmeshpro' '07-editmode' @(
+        '-runTests', '-testPlatform', 'EditMode',
+        '-assemblyNames',
+        'Joi.H.AppUI.Tests.TextMeshPro.Editor;Joi.H.AppUI.Tests.TextMeshPro.Runtime;Joi.H.AppUI.Samples.TextMeshPro.Tests',
+        '-testResults', (Join-Path $layout.TextMeshProEvidenceRoot 'editmode.xml'))
+    Read-AppUINUnit3Result `
+        -Path (Join-Path $layout.TextMeshProEvidenceRoot 'editmode.xml') `
+        -RequirePassed | Out-Null
+    Invoke-Gate 'textmeshpro' '08-playmode' @(
+        '-runTests', '-testPlatform', 'PlayMode',
+        '-assemblyNames', 'Joi.H.AppUI.Tests.Runtime',
+        '-testResults', (Join-Path $layout.TextMeshProEvidenceRoot 'playmode.xml'))
+    Read-AppUINUnit3Result `
+        -Path (Join-Path $layout.TextMeshProEvidenceRoot 'playmode.xml') `
+        -RequirePassed | Out-Null
+    Invoke-Gate 'textmeshpro' '09-build-mono' @(
+        '-quit', '-executeMethod',
+        'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildTextMeshProMono')
+    Invoke-Gate 'textmeshpro' '10-build-il2cpp' @(
+        '-quit', '-executeMethod',
+        'Joi.H.AppUI.Validation.Consumer.Editor.AppUIConsumerBuildCommand.BuildTextMeshProIl2Cpp')
 }
 catch {
     $pipelineFailure = $_
 }
 
 $reportPath = Join-Path $evidenceRoot 'pretag-report.json'
-if ((Test-Path -LiteralPath (Join-Path $evidenceRoot 'editmode.xml')) -and
-    (Test-Path -LiteralPath (Join-Path $evidenceRoot 'playmode.xml')) -and
-    (Test-Path -LiteralPath (Join-Path $evidenceRoot 'binding-validation.json')) -and
-    (Test-Path -LiteralPath (Join-Path $evidenceRoot 'build-windowsmono.json')) -and
-    (Test-Path -LiteralPath (Join-Path $evidenceRoot 'build-windowsil2cpp.json'))) {
+if ($null -eq $pipelineFailure) {
     New-AppUIReleaseReport `
         -IdentityPath (Join-Path $evidenceRoot 'candidate-identity.json') `
         -EvidenceRoot $evidenceRoot `
@@ -180,24 +227,44 @@ if ((Test-Path -LiteralPath (Join-Path $evidenceRoot 'editmode.xml')) -and
         -PlannedTag $PlannedTag | Out-Null
 }
 
-Test-AppUICandidateSnapshot `
-    -PackageRoot $snapshot.PackageRoot `
-    -IdentityPath $snapshot.IdentityPath `
-    -ManifestPath $snapshot.ManifestPath | Out-Null
+try {
+    Test-AppUICandidateSnapshot `
+        -PackageRoot $snapshot.PackageRoot `
+        -IdentityPath $snapshot.IdentityPath `
+        -ManifestPath $snapshot.ManifestPath | Out-Null
 
-if (Test-Path -LiteralPath $logRoot -PathType Container) {
-    Test-AppUIArtifactSecrets `
-        -Path $logRoot `
-        -ThrowOnSecret | Out-Null
-    $userProfilePath = [Environment]::GetFolderPath(
-        [Environment+SpecialFolder]::UserProfile)
-    New-AppUISanitizedLogArchive `
-        -InputDirectory $logRoot `
-        -OutputArchive (Join-Path $evidenceRoot (
-            'appui-' + $PlannedTag + '-logs.zip')) `
-        -RepositoryPath $resolvedRepository `
-        -ConsumerPath $consumerRoot `
-        -UserProfilePath $userProfilePath | Out-Null
+    $allLogRoot = Join-Path $resolvedRunRoot 'logs'
+    if (Test-Path -LiteralPath $allLogRoot -PathType Container) {
+        Test-AppUIArtifactSecrets -Path $allLogRoot -ThrowOnSecret | Out-Null
+        $userProfilePath = [Environment]::GetFolderPath(
+            [Environment+SpecialFolder]::UserProfile)
+        New-AppUISanitizedLogArchive `
+            -InputDirectory $allLogRoot `
+            -OutputArchive (Join-Path $evidenceRoot (
+                'appui-' + $PlannedTag + '-logs.zip')) `
+            -RepositoryPath $resolvedRepository `
+            -ConsumerPath $resolvedRunRoot `
+            -UserProfilePath $userProfilePath | Out-Null
+    }
+}
+catch {
+    if ($null -eq $pipelineFailure) { $pipelineFailure = $_ }
+}
+finally {
+    $env:APPUI_VALIDATION_OUTPUT = $previousValidationOutput
+    $env:APPUI_EXPECTED_PACKAGE_VERSION = $previousExpectedPackageVersion
+    foreach ($consumerPath in @(
+        $layout.BaseConsumerPath,
+        $layout.TextMeshProConsumerPath)) {
+        try {
+            Remove-AppUIEphemeralConsumerWorkspace `
+                -RunRoot $resolvedRunRoot `
+                -ConsumerPath $consumerPath
+        }
+        catch {
+            if ($null -eq $pipelineFailure) { $pipelineFailure = $_ }
+        }
+    }
 }
 
 if ($null -ne $pipelineFailure) {

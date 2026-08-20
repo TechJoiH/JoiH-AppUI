@@ -244,7 +244,8 @@ function New-ReleaseEvidenceFixture {
         [string]$Path,
         [string]$SourceCommit = '0123456789abcdef0123456789abcdef01234567',
         [string]$SourceTree = '89abcdef0123456789abcdef0123456789abcdef',
-        [string]$Version = '1.2.3-test.1'
+        [string]$Version = '1.2.3-test.1',
+        [string[]]$Modes = @()
     )
 
     [System.IO.Directory]::CreateDirectory($Path) | Out-Null
@@ -259,8 +260,18 @@ function New-ReleaseEvidenceFixture {
         packageManifestSha256 = ('a' * 64)
         files = @()
     } | ConvertTo-Json)
-    foreach ($name in @('editmode.xml', 'playmode.xml')) {
-        Set-Utf8NoBomContent (Join-Path $Path $name) @'
+    $gateRoots = if ($Modes.Count -gt 0) {
+        @($Modes | ForEach-Object {
+            $modeRoot = Join-Path $Path $_
+            [System.IO.Directory]::CreateDirectory($modeRoot) | Out-Null
+            $modeRoot
+        })
+    } else {
+        @($Path)
+    }
+    foreach ($gateRoot in $gateRoots) {
+        foreach ($name in @('editmode.xml', 'playmode.xml')) {
+            Set-Utf8NoBomContent (Join-Path $gateRoot $name) @'
 <?xml version="1.0" encoding="utf-8"?>
 <test-run total="3" passed="3" failed="0" skipped="0" duration="1.25" result="Passed">
   <test-suite result="Passed">
@@ -268,11 +279,16 @@ function New-ReleaseEvidenceFixture {
   </test-suite>
 </test-run>
 '@
-    }
+        }
 
-    Set-Utf8NoBomContent (Join-Path $Path 'binding-validation.json') '{"success":true,"errorCount":0,"durationMs":25,"unityVersion":"6000.0.25f1"}'
-    Set-Utf8NoBomContent (Join-Path $Path 'build-windowsmono.json') '{"result":"Succeeded","totalTimeMs":100}'
-    Set-Utf8NoBomContent (Join-Path $Path 'build-windowsil2cpp.json') '{"result":"Succeeded","totalTimeMs":200}'
+        Set-Utf8NoBomContent (Join-Path $gateRoot 'binding-validation.json') '{"success":true,"errorCount":0,"durationMs":25,"unityVersion":"6000.0.25f1"}'
+        Set-Utf8NoBomContent (Join-Path $gateRoot 'build-windowsmono.json') '{"result":"Succeeded","totalTimeMs":100}'
+        Set-Utf8NoBomContent (Join-Path $gateRoot 'build-windowsil2cpp.json') '{"result":"Succeeded","totalTimeMs":200}'
+        if ((Split-Path $gateRoot -Leaf) -ceq 'textmeshpro') {
+            Set-Utf8NoBomContent (Join-Path $gateRoot 'textmeshpro-integration.json') `
+                '{"schemaVersion":"appui-textmeshpro-integration.v1","success":true,"diagnostics":[]}'
+        }
+    }
     Set-Utf8NoBomContent (Join-Path $Path 'commit-git-install-smoke.json') (@{
         repository = 'TechJoiH/JoiH-AppUI'
         sourceCommit = $SourceCommit
@@ -284,6 +300,35 @@ function New-ReleaseEvidenceFixture {
         openPassed = $true
         closePassed = $true
     } | ConvertTo-Json)
+}
+
+function New-DualConsumerTestFixture {
+    param([string]$Root)
+
+    $template = Join-Path $Root 'template'
+    $packagePath = Join-Path $Root 'package'
+    [System.IO.Directory]::CreateDirectory($packagePath) | Out-Null
+    New-ConsumerTestTemplate $template
+    Set-Utf8NoBomContent (Join-Path $packagePath 'package.json') `
+        '{"name":"com.joih.appui","version":"0.4.0-pre.1"}'
+    return New-AppUIConsumerValidationLayout `
+        -RunRoot (Join-Path $Root 'run') `
+        -TemplatePath $template `
+        -PackageReference $packagePath
+}
+
+function New-DualReleaseReportArguments {
+    param([string]$EvidenceRoot)
+
+    return @{
+        IdentityPath = Join-Path $EvidenceRoot 'candidate-identity.json'
+        EvidenceRoot = $EvidenceRoot
+        OutputPath = Join-Path $EvidenceRoot 'pretag-report.json'
+        ExpectedSourceCommit = '0123456789abcdef0123456789abcdef01234567'
+        ExpectedSourceTree = '89abcdef0123456789abcdef0123456789abcdef'
+        ExpectedPackageVersion = '1.2.3-test.1'
+        PlannedTag = 'v1.2.3-test.1'
+    }
 }
 
 function Test-GroupRequested {
@@ -502,6 +547,42 @@ try {
             Assert-Throws {
                 New-AppUIConsumerWorkspace -TemplatePath $template -DestinationPath $destination -PackageReference 'https://github.com/TechJoiH/JoiH-AppUI.git#v1.0.0'
             } 'already exists' 'Existing consumer destination was overwritten.'
+        }
+
+        Invoke-Test 'Pre-tag validation materializes two distinct consumers and evidence roots' {
+            $layout = New-DualConsumerTestFixture `
+                -Root (Join-Path $testRoot 'layout-two-consumers')
+            Assert-True (Test-Path -LiteralPath $layout.BaseConsumerPath) `
+                'Base consumer missing.'
+            Assert-True (Test-Path -LiteralPath $layout.TextMeshProConsumerPath) `
+                'TMP consumer missing.'
+            Assert-True ($layout.BaseConsumerPath -cne $layout.TextMeshProConsumerPath) `
+                'Consumer paths were shared.'
+            Assert-True ($layout.BaseEvidenceRoot -cne $layout.TextMeshProEvidenceRoot) `
+                'Evidence roots were shared.'
+            Assert-True ($layout.BaseLogRoot -cne $layout.TextMeshProLogRoot) `
+                'Log roots were shared.'
+        }
+
+        Invoke-Test 'Consumer cleanup rejects escape and removes approved workspaces' {
+            $fixtureRoot = Join-Path $testRoot 'layout-cleanup'
+            $layout = New-DualConsumerTestFixture -Root $fixtureRoot
+            Assert-Throws {
+                Remove-AppUIEphemeralConsumerWorkspace `
+                    -RunRoot $layout.RunRoot `
+                    -ConsumerPath (Split-Path $layout.RunRoot -Parent)
+            } 'outside RunRoot' 'Cleanup escaped RunRoot.'
+
+            Remove-AppUIEphemeralConsumerWorkspace `
+                -RunRoot $layout.RunRoot `
+                -ConsumerPath $layout.BaseConsumerPath
+            Remove-AppUIEphemeralConsumerWorkspace `
+                -RunRoot $layout.RunRoot `
+                -ConsumerPath $layout.TextMeshProConsumerPath
+            Assert-True (-not (Test-Path -LiteralPath $layout.BaseConsumerPath)) `
+                'Base consumer survived cleanup.'
+            Assert-True (-not (Test-Path -LiteralPath $layout.TextMeshProConsumerPath)) `
+                'TMP consumer survived cleanup.'
         }
     }
 
@@ -815,6 +896,36 @@ set "PATH=$toolRoot;%PATH%"
                 -VsInstallationPathOverride $vsInstall
             Assert-Equal 'Blocked' $wrongUnity.Status 'Wrong Unity version was accepted.'
             Assert-Equal 'UnityVersionMismatch' $wrongUnity.Reason 'Wrong Unity block reason was wrong.'
+        }
+
+        Invoke-Test 'Release report v2 requires symmetric dual-consumer evidence and TMP diagnostics' {
+            $evidence = Join-Path $testRoot 'dual-report-evidence'
+            New-ReleaseEvidenceFixture `
+                -Path $evidence `
+                -Modes @('base', 'textmeshpro')
+            $arguments = New-DualReleaseReportArguments -EvidenceRoot $evidence
+            $report = New-AppUIReleaseReport @arguments
+            Assert-Equal 'appui-pretag-report.v2' $report.schemaVersion `
+                'Dual report schema version was wrong.'
+            Assert-Equal 'Passed' $report.base.status 'Base report failed.'
+            Assert-Equal 'Passed' $report.textMeshPro.status 'TMP report failed.'
+            Assert-Equal 'Passed' $report.textMeshPro.textMeshProDiagnostics.status `
+                'TMP diagnostics were not included.'
+
+            Remove-Item -LiteralPath `
+                (Join-Path $evidence 'textmeshpro\build-windowsmono.json') -Force
+            Assert-Throws {
+                New-AppUIReleaseReport @arguments
+            } 'build-windowsmono.json' 'TMP Mono evidence was optional.'
+
+            New-ReleaseEvidenceFixture `
+                -Path $evidence `
+                -Modes @('base', 'textmeshpro')
+            Remove-Item -LiteralPath `
+                (Join-Path $evidence 'textmeshpro\textmeshpro-integration.json') -Force
+            Assert-Throws {
+                New-AppUIReleaseReport @arguments
+            } 'textmeshpro-integration.json' 'TMP diagnostics were optional.'
         }
 
         Invoke-Test 'Release report enforces candidate identity and tag contract' {
@@ -1206,7 +1317,7 @@ set "PATH=$toolRoot;%PATH%"
             $repositoryRoot = [System.IO.Path]::GetFullPath(
                 (Join-Path $PSScriptRoot '..\..\..'))
             $package = Get-Content -LiteralPath (Join-Path $repositoryRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-            Assert-Equal '0.3.0-pre.1' $package.version 'Planned package version drifted.'
+            Assert-Equal '0.4.0-pre.1' $package.version 'Planned package version drifted.'
             Assert-Equal '6000.0' $package.unity 'Official Unity target drifted.'
             Assert-Equal 1 @($package.dependencies.PSObject.Properties).Count 'Package gained an undeclared dependency.'
             Assert-Equal '2.0.0' $package.dependencies.'com.unity.ugui' 'UGUI dependency drifted.'
@@ -1219,7 +1330,11 @@ set "PATH=$toolRoot;%PATH%"
                 'Tools~\Release\New-AppUIReleaseReport.ps1',
                 'Tools~\Release\New-AppUIReleaseArtifacts.ps1',
                 'Tools~\Release\Test-AppUIReleaseReadiness.ps1',
-                'Validation~\Unity6000.0Consumer\README.md'
+                'Validation~\Unity6000.0Consumer\README.md',
+                'Documentation~\notice-system.md',
+                'Documentation~\textmeshpro-integration.md',
+                'Documentation~\migration-0.4.md',
+                'Samples~\TextMeshPro Integration\README.md'
             )) {
                 Assert-True (Test-Path -LiteralPath (Join-Path $repositoryRoot $relativePath) -PathType Leaf) "Documented release file is missing: $relativePath"
             }
@@ -1236,6 +1351,9 @@ set "PATH=$toolRoot;%PATH%"
                 'AppUIConsumerBuildCommand',
                 'BuildMono',
                 'BuildIl2Cpp',
+                'AppUIConsumerTextMeshProCommand',
+                'BuildTextMeshProMono',
+                'BuildTextMeshProIl2Cpp',
                 'AppUIConsumerSmokeCommand'
             )) {
                 Assert-True ($editorSources.Contains($method)) "Documented executeMethod target is missing: $method"
@@ -1250,6 +1368,18 @@ set "PATH=$toolRoot;%PATH%"
             Assert-True ($readme.Contains('v0.2.0-pre.3') -and $readme.Contains('Failed Release Attempt')) 'README does not preserve the failed pre.3 release attempt.'
             Assert-True ($readme -notmatch 'git#main|\.git#main') 'README recommends main as a production install.'
             Assert-True ($readme.Contains('Historical Development Evidence')) 'README does not separate historical candidate evidence.'
+            Assert-True ($readme.Contains('0.4.0-pre.1')) 'README omits the current source version.'
+            Assert-True ($readme.Contains('Documentation~/textmeshpro-integration.md')) 'README does not link the optional TMP integration.'
+
+            $tmpSample = @($package.samples | Where-Object {
+                $_.displayName -ceq 'TextMeshPro Integration' -and
+                $_.path -ceq 'Samples~/TextMeshPro Integration'
+            })
+            Assert-Equal 1 $tmpSample.Count 'TextMeshPro Integration sample metadata is missing or duplicated.'
+            $index = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\index.md') -Raw -Encoding UTF8
+            foreach ($link in @('notice-system.md', 'textmeshpro-integration.md', 'migration-0.4.md')) {
+                Assert-True ($index.Contains($link)) "Documentation index omits $link."
+            }
 
             $validation = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\validation.md') -Raw -Encoding UTF8
             foreach ($evidenceBoundary in @(
@@ -1266,6 +1396,7 @@ set "PATH=$toolRoot;%PATH%"
             Assert-True ($supported.Contains('v0.3.0-pre.1') -and $supported.Contains('Officially Supported')) 'Supported Unity versions omit the verified 0.3 release.'
 
             $changelog = Get-Content -LiteralPath (Join-Path $repositoryRoot 'CHANGELOG.md') -Raw -Encoding UTF8
+            Assert-True ($changelog.Contains('## [0.4.0-pre.1] - Unreleased')) 'Changelog does not record the 0.4 candidate.'
             Assert-True ($changelog.Contains('## [0.3.0-pre.1] - 2026-08-14')) 'Changelog does not record the 0.3 release date.'
 
             $implementationPlan = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Documentation~\superpowers\plans\2026-08-12-single-official-unity-line-implementation.md') -Raw -Encoding UTF8

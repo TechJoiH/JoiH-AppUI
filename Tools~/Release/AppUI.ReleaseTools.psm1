@@ -974,6 +974,96 @@ function New-AppUIConsumerWorkspace {
     }
 }
 
+function New-AppUIConsumerValidationLayout {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RunRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TemplatePath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PackageReference
+    )
+
+    $resolvedRunRoot = [System.IO.Path]::GetFullPath($RunRoot)
+    [System.IO.Directory]::CreateDirectory($resolvedRunRoot) | Out-Null
+    $baseConsumer = Join-Path $resolvedRunRoot 'consumer-base'
+    $textMeshProConsumer = Join-Path $resolvedRunRoot 'consumer-textmeshpro'
+    $evidenceRoot = Join-Path $resolvedRunRoot 'evidence'
+    $logRoot = Join-Path $resolvedRunRoot 'logs'
+    $baseEvidence = Join-Path $evidenceRoot 'base'
+    $textMeshProEvidence = Join-Path $evidenceRoot 'textmeshpro'
+    $baseLogs = Join-Path $logRoot 'base'
+    $textMeshProLogs = Join-Path $logRoot 'textmeshpro'
+
+    try {
+        New-AppUIConsumerWorkspace `
+            -TemplatePath $TemplatePath `
+            -DestinationPath $baseConsumer `
+            -PackageReference $PackageReference | Out-Null
+        New-AppUIConsumerWorkspace `
+            -TemplatePath $TemplatePath `
+            -DestinationPath $textMeshProConsumer `
+            -PackageReference $PackageReference | Out-Null
+        foreach ($path in @($baseEvidence, $textMeshProEvidence, $baseLogs, $textMeshProLogs)) {
+            [System.IO.Directory]::CreateDirectory($path) | Out-Null
+        }
+    }
+    catch {
+        foreach ($path in @($baseConsumer, $textMeshProConsumer)) {
+            if (Test-Path -LiteralPath $path) {
+                Remove-AppUIEphemeralConsumerWorkspace `
+                    -RunRoot $resolvedRunRoot `
+                    -ConsumerPath $path
+            }
+        }
+        throw
+    }
+
+    return [PSCustomObject][ordered]@{
+        RunRoot = $resolvedRunRoot
+        BaseConsumerPath = $baseConsumer
+        TextMeshProConsumerPath = $textMeshProConsumer
+        BaseEvidenceRoot = $baseEvidence
+        TextMeshProEvidenceRoot = $textMeshProEvidence
+        BaseLogRoot = $baseLogs
+        TextMeshProLogRoot = $textMeshProLogs
+    }
+}
+
+function Remove-AppUIEphemeralConsumerWorkspace {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RunRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ConsumerPath
+    )
+
+    $root = [System.IO.Path]::GetFullPath($RunRoot).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $target = [System.IO.Path]::GetFullPath($ConsumerPath).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar)
+    $prefix = $root + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $target.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Consumer cleanup target is outside RunRoot: $target"
+    }
+
+    $leaf = Split-Path $target -Leaf
+    if ($leaf -notin @('consumer-base', 'consumer-textmeshpro')) {
+        throw "Consumer cleanup target is not an approved ephemeral workspace: $target"
+    }
+
+    if (Test-Path -LiteralPath $target) {
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+}
+
 function New-AppUIPolicyCheck {
     [CmdletBinding()]
     param(
@@ -1155,7 +1245,10 @@ function Test-AppUITmpIsolation {
     $violations = New-Object System.Collections.Generic.List[string]
     $scannedPaths = New-Object 'System.Collections.Generic.HashSet[string]' `
         ([System.StringComparer]::Ordinal)
-    $sourcePattern = '(?m)\bTMPro\b|\bTMP_[A-Za-z0-9_]*\b|TextMeshPro'
+    # Detect compile-time TMP dependencies, not technology-neutral command,
+    # sample, assembly, or documentation names that merely contain
+    # "TextMeshPro" as an integration identifier.
+    $sourcePattern = '(?m)^\s*using\s+(?:global::)?TMPro\s*;|\b(?:global::)?TMPro\.|\bTMP_[A-Za-z0-9_]*\b|"Unity\.TextMeshPro"|com\.unity\.textmeshpro'
     $sourceRoots = @(
         'Runtime',
         'Editor',
@@ -1198,7 +1291,7 @@ function Test-AppUITmpIsolation {
 
             $content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
             if ($content -match $sourcePattern) {
-                $violations.Add("$relativePath`: references TextMeshPro in a base file")
+                $violations.Add("$relativePath`: contains a compile-time TextMeshPro dependency in a base file")
             }
         }
     }
@@ -1383,6 +1476,17 @@ function Test-AppUIPackagePolicy {
             else { $documentationIssues -join '; ' }
         )))
 
+        $tmpIsolation = Test-AppUITmpIsolation -PackageRoot $packageRoot
+        $checks.Add((New-AppUIPolicyCheck -Name 'TextMeshProIsolation' `
+            -Success $tmpIsolation.Success -Details $(
+                if ($tmpIsolation.Success) {
+                    'Base Runtime, Editor, tests and Consumer contain no compile-time TextMeshPro dependency.'
+                }
+                else {
+                    $tmpIsolation.Violations -join '; '
+                }
+            )))
+
         $diffCheck = Invoke-AppUIGitText -RepositoryPath $RepositoryPath -Arguments @('diff-tree', '--check', '--root', '-r', $snapshot.SourceCommit) -AllowFailure
         $checks.Add((New-AppUIPolicyCheck -Name 'GitWhitespace' -Success ($diffCheck.ExitCode -eq 0) -Details $(
             if ($diffCheck.ExitCode -eq 0) { 'Commit tree has no Git whitespace errors.' }
@@ -1453,8 +1557,8 @@ function Read-AppUINUnit3Result {
     )
     $status = if ($failed -eq 0 -and
         [string]$run.result -notmatch '^Failed') { 'Passed' } else { 'Failed' }
-    if ($RequirePassed -and $status -ne 'Passed') {
-        throw "NUnit result failed: $resolvedPath. Failed=$failed. Tests=$($failedNames -join ', ')"
+    if ($RequirePassed -and ($status -ne 'Passed' -or $total -le 0)) {
+        throw "NUnit result failed or contains no tests: $resolvedPath. Total=$total Failed=$failed. Tests=$($failedNames -join ', ')"
     }
 
     return [PSCustomObject][ordered]@{
@@ -1770,7 +1874,7 @@ function Get-AppUIJsonEvidenceGate {
         [string]$Path,
 
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Binding', 'Build', 'Smoke')]
+        [ValidateSet('Binding', 'Build', 'Smoke', 'Diagnostics')]
         [string]$Kind
     )
 
@@ -1798,9 +1902,13 @@ function Get-AppUIJsonEvidenceGate {
         $passed = [string]$document.result -eq 'Succeeded'
         $duration = if ($document.PSObject.Properties['totalTimeMs']) { [long]$document.totalTimeMs } else { 0 }
     }
-    else {
+    elseif ($Kind -eq 'Smoke') {
         $passed = [bool]$document.initialized -and
             [bool]$document.openPassed -and [bool]$document.closePassed
+        $duration = if ($document.PSObject.Properties['durationMs']) { [long]$document.durationMs } else { 0 }
+    }
+    else {
+        $passed = [bool]$document.success
         $duration = if ($document.PSObject.Properties['durationMs']) { [long]$document.durationMs } else { 0 }
     }
 
@@ -1969,6 +2077,150 @@ function New-AppUIReleaseReport {
         if ($remoteTag.SourceTree -ne $ExpectedSourceTree) {
             throw "Remote tag sourceTree mismatch. Expected=$ExpectedSourceTree Actual=$($remoteTag.SourceTree)"
         }
+    }
+
+    $baseEvidenceRoot = Join-Path $resolvedEvidenceRoot 'base'
+    $textMeshProEvidenceRoot = Join-Path $resolvedEvidenceRoot 'textmeshpro'
+    $usesDualConsumerEvidence =
+        (Test-Path -LiteralPath $baseEvidenceRoot -PathType Container) -or
+        (Test-Path -LiteralPath $textMeshProEvidenceRoot -PathType Container)
+    if ($usesDualConsumerEvidence) {
+        if (-not (Test-Path -LiteralPath $baseEvidenceRoot -PathType Container) -or
+            -not (Test-Path -LiteralPath $textMeshProEvidenceRoot -PathType Container)) {
+            throw 'Release report requires both base and textmeshpro evidence directories.'
+        }
+
+        $requiredNames = @(
+            'editmode.xml',
+            'playmode.xml',
+            'binding-validation.json',
+            'build-windowsmono.json',
+            'build-windowsil2cpp.json'
+        )
+        foreach ($modeRoot in @($baseEvidenceRoot, $textMeshProEvidenceRoot)) {
+            foreach ($name in $requiredNames) {
+                $requiredPath = Join-Path $modeRoot $name
+                if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+                    throw "Release report evidence is missing: $requiredPath"
+                }
+            }
+        }
+
+        $diagnosticPath = Join-Path $textMeshProEvidenceRoot 'textmeshpro-integration.json'
+        if (-not (Test-Path -LiteralPath $diagnosticPath -PathType Leaf)) {
+            throw "Release report evidence is missing: $diagnosticPath"
+        }
+
+        function Get-ModeSummary {
+            param([string]$Root, [bool]$IncludeTextMeshProDiagnostics)
+
+            $edit = Read-AppUINUnit3Result -Path (Join-Path $Root 'editmode.xml')
+            $play = Read-AppUINUnit3Result -Path (Join-Path $Root 'playmode.xml')
+            $bindingGate = Get-AppUIJsonEvidenceGate `
+                -Path (Join-Path $Root 'binding-validation.json') -Kind Binding
+            $monoGate = Get-AppUIJsonEvidenceGate `
+                -Path (Join-Path $Root 'build-windowsmono.json') -Kind Build
+            $il2cppGate = Get-AppUIJsonEvidenceGate `
+                -Path (Join-Path $Root 'build-windowsil2cpp.json') -Kind Build
+            $diagnosticsGate = if ($IncludeTextMeshProDiagnostics) {
+                Get-AppUIJsonEvidenceGate -Path $diagnosticPath -Kind Diagnostics
+            } else { $null }
+            $statuses = @(
+                $edit.Status,
+                $play.Status,
+                $bindingGate.status,
+                $monoGate.status,
+                $il2cppGate.status
+            )
+            if ($null -ne $diagnosticsGate) { $statuses += $diagnosticsGate.status }
+            $status = if ($statuses -contains 'Failed') { 'Failed' }
+                elseif ($statuses -contains 'Blocked' -or $statuses -contains 'NotRun') { 'Blocked' }
+                else { 'Passed' }
+
+            return [ordered]@{
+                status = $status
+                editMode = [ordered]@{
+                    status = $edit.Status
+                    passed = $edit.Passed
+                    failed = $edit.Failed
+                    skipped = $edit.Skipped
+                    evidenceFile = $edit.EvidenceFile
+                    durationMs = $edit.DurationMs
+                }
+                playMode = [ordered]@{
+                    status = $play.Status
+                    passed = $play.Passed
+                    failed = $play.Failed
+                    skipped = $play.Skipped
+                    evidenceFile = $play.EvidenceFile
+                    durationMs = $play.DurationMs
+                }
+                bindingValidation = $bindingGate
+                monoBuild = $monoGate
+                il2cppBuild = $il2cppGate
+                textMeshProDiagnostics = $diagnosticsGate
+            }
+        }
+
+        $baseSummary = Get-ModeSummary -Root $baseEvidenceRoot -IncludeTextMeshProDiagnostics $false
+        $textMeshProSummary = Get-ModeSummary -Root $textMeshProEvidenceRoot -IncludeTextMeshProDiagnostics $true
+        $resolvedCommitSmokePath = if ([string]::IsNullOrWhiteSpace($CommitSmokePath)) {
+            Join-Path $resolvedEvidenceRoot 'commit-git-install-smoke.json'
+        } else { [System.IO.Path]::GetFullPath($CommitSmokePath) }
+        $resolvedTagSmokePath = if ([string]::IsNullOrWhiteSpace($TagSmokePath)) {
+            Join-Path $resolvedEvidenceRoot 'tag-git-install-smoke.json'
+        } else { [System.IO.Path]::GetFullPath($TagSmokePath) }
+        $commitSmoke = Get-AppUIJsonEvidenceGate -Path $resolvedCommitSmokePath -Kind Smoke
+        $tagSmoke = Get-AppUIJsonEvidenceGate -Path $resolvedTagSmokePath -Kind Smoke
+        Test-AppUISmokeIdentity -Path $resolvedCommitSmokePath `
+            -GateName 'commitGitInstallSmoke' -Identity $identity `
+            -Required:($Mode -eq 'Formal')
+        Test-AppUISmokeIdentity -Path $resolvedTagSmokePath `
+            -GateName 'tagGitInstallSmoke' -Identity $identity `
+            -Required:($Mode -eq 'Formal')
+        $dualStatuses = @($baseSummary.status, $textMeshProSummary.status)
+        if ($Mode -eq 'Formal') {
+            $dualStatuses += @($commitSmoke.status, $tagSmoke.status)
+        } else {
+            if ($commitSmoke.status -ne 'NotRun') { $dualStatuses += $commitSmoke.status }
+            if ($tagSmoke.status -ne 'NotRun') { $dualStatuses += $tagSmoke.status }
+        }
+        $dualStatus = if ($dualStatuses -contains 'Failed') {
+            'Failed'
+        } elseif ($dualStatuses -contains 'Blocked' -or $dualStatuses -contains 'NotRun') {
+            'Blocked'
+        } else {
+            'Passed'
+        }
+        $bindingDocument = Get-Content -LiteralPath `
+            (Join-Path $baseEvidenceRoot 'binding-validation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $dualReport = [ordered]@{
+            schemaVersion = 'appui-pretag-report.v2'
+            mode = $Mode
+            status = $dualStatus
+            repository = [string]$identity.repository
+            sourceCommit = [string]$identity.sourceCommit
+            sourceTree = [string]$identity.sourceTree
+            plannedTag = $PlannedTag
+            resolvedTag = if ([string]::IsNullOrWhiteSpace($ResolvedTag)) { $null } else { $ResolvedTag }
+            packageVersion = [string]$identity.packageVersion
+            packageManifestSha256 = [string]$identity.packageManifestSha256
+            unityVersion = if ($bindingDocument.PSObject.Properties['unityVersion']) {
+                [string]$bindingDocument.unityVersion
+            } else { '' }
+            operatingSystem = 'Windows'
+            uguiVersion = '2.0.0'
+            base = $baseSummary
+            textMeshPro = $textMeshProSummary
+            commitGitInstallSmoke = $commitSmoke
+            tagGitInstallSmoke = $tagSmoke
+            generatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+        $resolvedDualOutput = [System.IO.Path]::GetFullPath($OutputPath)
+        [System.IO.Directory]::CreateDirectory((Split-Path -Parent $resolvedDualOutput)) | Out-Null
+        Write-AppUIUtf8NoBom -Path $resolvedDualOutput `
+            -Value (($dualReport | ConvertTo-Json -Depth 12) + "`n")
+        return [PSCustomObject]$dualReport
     }
 
     $editMode = Read-AppUINUnit3Result -Path (Join-Path $resolvedEvidenceRoot 'editmode.xml')
@@ -2407,17 +2659,41 @@ function New-AppUIReleaseArtifacts {
         throw "Release artifact output already exists: $resolvedOutput"
     }
 
-    $mapping = [ordered]@{
-        'release-report.json' = "appui-v$Version-release-report.json"
-        'package-manifest.json' = "appui-v$Version-package-manifest.json"
-        'editmode.xml' = "appui-v$Version-editmode.xml"
-        'playmode.xml' = "appui-v$Version-playmode.xml"
-        'binding-validation.json' = "appui-v$Version-binding-validation.json"
-        'build-windowsmono.json' = "appui-v$Version-mono-build.json"
-        'build-windowsil2cpp.json' = "appui-v$Version-il2cpp-build.json"
-        'commit-git-install-smoke.json' = "appui-v$Version-commit-smoke.json"
-        'tag-git-install-smoke.json' = "appui-v$Version-tag-smoke.json"
-        'logs.zip' = "appui-v$Version-logs.zip"
+    $dualEvidence =
+        (Test-Path -LiteralPath (Join-Path $resolvedSource 'base') -PathType Container) -or
+        (Test-Path -LiteralPath (Join-Path $resolvedSource 'textmeshpro') -PathType Container)
+    $mapping = if ($dualEvidence) {
+        [ordered]@{
+            'release-report.json' = "appui-v$Version-release-report.json"
+            'package-manifest.json' = "appui-v$Version-package-manifest.json"
+            'base/editmode.xml' = "appui-v$Version-base-editmode.xml"
+            'base/playmode.xml' = "appui-v$Version-base-playmode.xml"
+            'base/binding-validation.json' = "appui-v$Version-base-binding-validation.json"
+            'base/build-windowsmono.json' = "appui-v$Version-base-mono-build.json"
+            'base/build-windowsil2cpp.json' = "appui-v$Version-base-il2cpp-build.json"
+            'textmeshpro/editmode.xml' = "appui-v$Version-textmeshpro-editmode.xml"
+            'textmeshpro/playmode.xml' = "appui-v$Version-textmeshpro-playmode.xml"
+            'textmeshpro/binding-validation.json' = "appui-v$Version-textmeshpro-binding-validation.json"
+            'textmeshpro/build-windowsmono.json' = "appui-v$Version-textmeshpro-mono-build.json"
+            'textmeshpro/build-windowsil2cpp.json' = "appui-v$Version-textmeshpro-il2cpp-build.json"
+            'textmeshpro/textmeshpro-integration.json' = "appui-v$Version-textmeshpro-diagnostics.json"
+            'commit-git-install-smoke.json' = "appui-v$Version-commit-smoke.json"
+            'tag-git-install-smoke.json' = "appui-v$Version-tag-smoke.json"
+            'logs.zip' = "appui-v$Version-logs.zip"
+        }
+    } else {
+        [ordered]@{
+            'release-report.json' = "appui-v$Version-release-report.json"
+            'package-manifest.json' = "appui-v$Version-package-manifest.json"
+            'editmode.xml' = "appui-v$Version-editmode.xml"
+            'playmode.xml' = "appui-v$Version-playmode.xml"
+            'binding-validation.json' = "appui-v$Version-binding-validation.json"
+            'build-windowsmono.json' = "appui-v$Version-mono-build.json"
+            'build-windowsil2cpp.json' = "appui-v$Version-il2cpp-build.json"
+            'commit-git-install-smoke.json' = "appui-v$Version-commit-smoke.json"
+            'tag-git-install-smoke.json' = "appui-v$Version-tag-smoke.json"
+            'logs.zip' = "appui-v$Version-logs.zip"
+        }
     }
 
     foreach ($sourceName in $mapping.Keys) {
@@ -2488,6 +2764,8 @@ Export-ModuleMember -Function @(
     'Export-AppUICandidateSnapshot',
     'Test-AppUICandidateSnapshot',
     'New-AppUIConsumerWorkspace',
+    'New-AppUIConsumerValidationLayout',
+    'Remove-AppUIEphemeralConsumerWorkspace',
     'Test-AppUITmpIsolation',
     'Test-AppUIPackagePolicy',
     'Read-AppUINUnit3Result',

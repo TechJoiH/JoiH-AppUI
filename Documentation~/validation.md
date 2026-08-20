@@ -4,16 +4,18 @@
 
 AppUI 当前唯一 Official Target 是 Unity 6.0 / `6000.0`，固定验证 Editor 为 `6000.0.25f1`。这个目标来自框架当前主要开发、真实项目和验证环境，不与 Unity 最新 LTS 自动同步。
 
-“仓库代码能编译”不足以证明包可接入。官方验证对象是一份从精确 Git Commit 导出的 UPM 候选包，以及一个位于仓库外、没有旧 `Library` 和本地缓存的 Consumer Project。
+“仓库代码能编译”不足以证明包可接入。0.4 的官方验证对象是一份从精确 Git Commit 导出的 UPM 候选包，以及两个位于仓库外、没有旧 `Library` 和本地缓存的 Consumer Project。Base 和 TextMeshPro 模式在运行任何门禁前同时物化，之后不共享 Library、生成 Binding、日志、证据或构建输出。
 
 ```text
 exact Commit
     ↓
 deterministic package snapshot
     ↓
-external Unity6000.0Consumer
-    ↓
-Sample → Fixture → Binding → Tests → Player Builds
+consumer-base                     consumer-textmeshpro
+    ↓                                  ↓
+UGUI Fixture / Binding             Define / TMP Sample / Diagnostics
+    ↓                                  ↓
+EditMode / PlayMode / Mono / IL2CPP（两边都必须完成）
     ↓
 external report + sanitized artifacts
 ```
@@ -58,7 +60,7 @@ Tag Smoke 失败时不移动、不删除并重建同名 Tag。修复必须发布
 
 ## 外部 Consumer 流程
 
-完整顺序固定为：
+Base 顺序固定为：
 
 ```text
 Static Policy
@@ -75,6 +77,25 @@ Static Policy
 → Windows IL2CPP Development Build
 → External Report
 ```
+
+TextMeshPro 顺序固定为：
+
+```text
+Configure JOIH_APPUI_TMP
+→ Domain Reload
+→ Import TextMeshPro Integration
+→ Domain Reload
+→ Sample Binding Validate
+→ Integration Diagnostics
+→ EditMode
+→ PlayMode
+→ Windows Mono Development Build
+→ Windows IL2CPP Development Build
+```
+
+完整流程在 `finally` 中只删除明确位于 Run Root 下的 `consumer-base` 和
+`consumer-textmeshpro`。证据与脱敏日志保留在 Consumer 外；任何越出 Run Root 或名称不
+匹配的清理目标都会被拒绝。
 
 Static Policy 会从精确 Commit 快照检查：根 `package.json` 是唯一包清单、版本符合严格 SemVer、唯一官方 Consumer 为 `Validation~/Unity6000.0Consumer/`、Unity 为 `6000.0`、依赖只有 UGUI `2.0.0`，并继续执行禁用依赖、版本宏、Compatibility、Unity Meta、文档链接与 Git 空白检查。
 
@@ -106,9 +127,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/New-AppUICons
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIPreTagValidation.ps1 `
   -RepositoryPath (Get-Location).Path `
   -SourceCommit <40-character-commit> `
-  -PlannedTag v0.3.0-pre.1 `
+  -PlannedTag v0.4.0-pre.1 `
   -UnityPath 'C:\Unity\Unity 6000.0.25f1\Editor\Unity.exe' `
-  -RunRoot D:\AppUIValidation\v0.3.0-pre.1-local
+  -RunRoot D:\AppUIValidation\v0.4.0-pre.1-local
 ```
 
 远端 Commit 或 Tag Smoke 使用 `Tools~/Release/Invoke-AppUIGitInstallSmoke.ps1`。该脚本只接受 TechJoiH 官方仓库的 40 位 Commit 或 SemVer Tag URL。
@@ -134,13 +155,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File Tools~/Release/Invoke-AppUIG
 
 ## 报告与 Artifact
 
-`pretag-report.json` 和正式 Release Report 都生成在候选 Commit 之外，至少绑定：
+`pretag-report.json` 和正式 Release Report 都生成在候选 Commit 之外。0.4 的
+`appui-pretag-report.v2` 除候选身份外，在 `base` 和 `textMeshPro` 下分别绑定：
 
 - Repository、Source Commit、Source Tree；
 - Planned Tag 与正式阶段解析到的 Remote Tag；
 - Package Version 与 `packageManifestSha256`；
 - Unity、UGUI 与操作系统；
 - EditMode、PlayMode、Binding、Mono、IL2CPP；
+- TextMeshPro 模式额外绑定 `textmeshpro-integration.json`；
 - Commit SHA Smoke 与 Tag Smoke；
 - 每个 Gate 的证据文件和耗时。
 
@@ -148,9 +171,9 @@ Commit 与 Tag Smoke 可以来自各自独立 Run Root；`New-AppUIReleaseReport
 
 正式报告必须通过 `git ls-remote origin refs/tags/<tag>` 解析远端 Tag，并确认 Commit/Tree 与候选一致。日志上传前先替换 Repository、Consumer 和 User Profile 路径，再把 Unity、SDK、工具链等其余本机绝对路径根泛化为 `<LOCAL_PATH_ROOT>/`，随后扫描残留绝对路径、`ghp_`、`github_pat_`、Authorization Header 和私钥标记；任一审计失败时不创建 Release。结构化 Release Artifact 不执行这种泛化，未列入替换边界的绝对路径仍会被拒绝。
 
-`Invoke-AppUIPreTagValidation.ps1` 将原始日志保留在外部 Run Root 的 `logs/`，在 `evidence/` 生成同时通过秘密与本机路径审计的 `appui-v0.3.0-pre.1-logs.zip`。候选仓库不接收这些运行产物。正式结构化 Artifact 还必须显式传入外部验证 Run Root，使 Binding 与 NUnit 中的已知路径替换为 `<VALIDATION_ROOT>`；未列入边界的路径仍会被拒绝。
+`Invoke-AppUIPreTagValidation.ps1` 将原始日志分别保留在外部 Run Root 的 `logs/base` 与 `logs/textmeshpro`，在 `evidence/` 生成同时通过秘密与本机路径审计的日志 ZIP。候选仓库不接收这些运行产物。正式结构化 Artifact 还必须显式传入外部验证 Run Root，使 Binding 与 NUnit 中的已知路径替换为 `<VALIDATION_ROOT>`；未列入边界的路径仍会被拒绝。
 
-Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式报告、Package Manifest、EditMode/PlayMode XML、Binding、Mono/IL2CPP、Commit/Tag Smoke 和日志 ZIP 复制到新的 `artifacts/` 目录。九个文本文件都会执行同样的路径脱敏与秘密审计；目录必须恰好包含十个文件才能进入 GitHub Release。
+Tag Smoke 完成后，`Tools~/Release/New-AppUIReleaseArtifacts.ps1` 将正式报告、Package Manifest、Base/TMP 两套 EditMode/PlayMode、Binding、Mono/IL2CPP、TMP 诊断、Commit/Tag Smoke 和日志 ZIP 复制到新的 `artifacts/` 目录。所有文本证据执行相同路径脱敏与秘密审计；文件数必须与双模式映射严格一致才能进入 GitHub Release。旧 Release 的十项证据不会被改写。
 
 创建 Tag 前可运行 `Tools~/Release/Test-AppUIReleaseReadiness.ps1`。它只读解析远端 `main` 和 Tag：只有远端 `main` 正好等于候选且 Tag 尚不存在时返回 `ReadyForTag`；未推送为 `NotPushed`，仅本地存在同名 Tag 为 `LocalTagExists`，远端同名 Tag 已指向候选为 `TagExists`，指向其他提交为 `TagConflict`。所有远端查询最多等待 30 秒；网络或远端错误返回 `Blocked/RemoteUnavailable`，超时返回 `Blocked/Timeout`，不会误报候选或 Tag 状态。它不会执行 push、Tag 或 Release 操作。
 
