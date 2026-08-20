@@ -3,6 +3,7 @@
   "rootNamespace": "Joi.H.AppUI.Integrations.TextMeshPro.Editor",
   "references": [
     "Joi.H.AppUI.Editor",
+    "Joi.H.AppUI.Runtime",
     "Joi.H.AppUI.Integrations.TextMeshPro.Runtime",
     "Unity.TextMeshPro",
     "Unity.TextMeshPro.Editor"
