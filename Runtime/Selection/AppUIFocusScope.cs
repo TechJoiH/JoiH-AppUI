@@ -251,6 +251,7 @@ namespace Joi.H.AppUI
         private readonly Transform pageRoot;
         private readonly AppUIFocusNodeRegistry nodeRegistry;
         private readonly IUIFocusCommitter focusCommitter;
+        private readonly AppUIFocusControlPolicyResolverSet policyResolverSet;
         private readonly AppUIFocusGroupNavigator navigator;
         private readonly ScopeAnchorProvider anchorProvider;
         private readonly IAppUIFocusMoveInputPolicy pageMoveInputPolicy;
@@ -302,7 +303,8 @@ namespace Joi.H.AppUI
             AppUIFocusNodeRegistry registry,
             IUIFocusCommitter committer,
             IAppUIFocusSelectionObservationSink selectionObserver,
-            IAppUIExecutionContext appUIExecutionContext)
+            IAppUIExecutionContext appUIExecutionContext,
+            AppUIFocusControlPolicyResolverSet resolverSet)
         {
             if (instance == null)
             {
@@ -327,6 +329,8 @@ namespace Joi.H.AppUI
 
             nodeRegistry = registry ?? throw new ArgumentNullException(nameof(registry));
             focusCommitter = committer ?? throw new ArgumentNullException(nameof(committer));
+            policyResolverSet = resolverSet ??
+                AppUIFocusControlPolicyResolverSet.Empty;
             executionContext = appUIExecutionContext;
             ScopeId = scopeId;
             pageId = instance.PageId ?? string.Empty;
@@ -344,7 +348,7 @@ namespace Joi.H.AppUI
                 pageId,
                 ScopeId,
                 traceEnabled);
-            navigator = new AppUIFocusGroupNavigator();
+            navigator = new AppUIFocusGroupNavigator(policyResolverSet);
             navigator.SetDiagnosticScopeId(ScopeId);
             navigator.SetDiagnosticPageInstanceId(pageInstanceId);
             pageMoveInputPolicy = definition.MoveInputPolicy;
@@ -539,9 +543,6 @@ namespace Joi.H.AppUI
             IAppUIFocusControlPolicy controlPolicy,
             int order = 0)
         {
-            CancelPendingRealization();
-            IAppUIFocusControlPolicy effectiveControlPolicy =
-                AppUIFocusControlPolicies.Resolve(selectable, controlPolicy);
             if (status == AppUIFocusScopeStatus.Disposed ||
                 string.IsNullOrEmpty(groupId) ||
                 !nodeKey.IsValid ||
@@ -553,6 +554,18 @@ namespace Joi.H.AppUI
                 LogRegistrationRejected(groupId, nodeKey, selectable);
                 return false;
             }
+
+            if (!TryResolveControlPolicy(
+                    groupId,
+                    nodeKey,
+                    selectable,
+                    controlPolicy,
+                    out IAppUIFocusControlPolicy effectiveControlPolicy))
+            {
+                return false;
+            }
+
+            CancelPendingRealization();
 
             if (group.NodesByKey.TryGetValue(
                     nodeKey,
@@ -771,9 +784,7 @@ namespace Joi.H.AppUI
                     {
                         Address = resolvedNode.NodeAddress,
                         Selectable = resolvedNode.Selectable,
-                        ControlPolicy = AppUIFocusControlPolicies.Resolve(
-                            resolvedNode.Selectable,
-                            stagedNode.ControlPolicy),
+                        ControlPolicy = stagedNode.ControlPolicy,
                         Order = stagedNode.Order,
                         Sequence = GetNextNodeSequence(),
                         RegistrationGeneration = resolvedNode.RegistrationGeneration,
@@ -810,6 +821,33 @@ namespace Joi.H.AppUI
             }
 
             group.ActiveTransaction = null;
+        }
+
+        internal bool TryResolveControlPolicy(
+            string groupId,
+            AppUIFocusNodeKey nodeKey,
+            Selectable selectable,
+            IAppUIFocusControlPolicy explicitPolicy,
+            out IAppUIFocusControlPolicy resolvedPolicy)
+        {
+            if (policyResolverSet.TryResolve(
+                    selectable,
+                    explicitPolicy,
+                    out resolvedPolicy,
+                    out string diagnostic))
+            {
+                return true;
+            }
+
+            Debug.LogError(
+                "<AppUIFocus> APPUI_FOCUS_POLICY_RESOLUTION_FAILED " +
+                "Scope=" + ScopeId +
+                ", Group=" + (groupId ?? string.Empty) +
+                ", NodeKey=" + nodeKey +
+                ", Object=" +
+                (selectable != null ? selectable.name : "null") +
+                ", " + diagnostic);
+            return false;
         }
 
         public bool OpenGroup(string groupId)

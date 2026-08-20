@@ -110,11 +110,22 @@ namespace Joi.H.AppUI
                 return false;
             }
 
+            if (!owner.TryResolveControlPolicy(
+                    GroupId,
+                    nodeKey,
+                    selectable,
+                    controlPolicy,
+                    out IAppUIFocusControlPolicy resolvedPolicy))
+            {
+                hasValidationFailure = true;
+                return false;
+            }
+
             stagedNodes.Add(
                 new AppUIFocusStagedNode(
                     nodeKey,
                     selectable,
-                    controlPolicy,
+                    resolvedPolicy,
                     order));
             return true;
         }

@@ -40,6 +40,19 @@ namespace Joi.H.AppUI
         private IAppUIFocusSelectionObservationSink selectionObservationSink;
         private string diagnosticScopeId = string.Empty;
         private long diagnosticPageInstanceId;
+        private readonly AppUIFocusControlPolicyResolverSet policyResolverSet;
+
+        public AppUIFocusGroupNavigator()
+            : this(AppUIFocusControlPolicyResolverSet.Empty)
+        {
+        }
+
+        internal AppUIFocusGroupNavigator(
+            AppUIFocusControlPolicyResolverSet resolverSet)
+        {
+            policyResolverSet = resolverSet ??
+                AppUIFocusControlPolicyResolverSet.Empty;
+        }
 
         internal void SetDiagnosticScopeId(string scopeId)
         {
@@ -127,7 +140,7 @@ namespace Joi.H.AppUI
 
         public void RegisterNode(string groupId, Selectable selectable)
         {
-            RegisterNode(groupId, selectable, null);
+            TryRegisterNode(groupId, selectable, null);
         }
 
         public void RegisterNode(
@@ -135,9 +148,30 @@ namespace Joi.H.AppUI
             Selectable selectable,
             IAppUIFocusControlPolicy controlPolicy)
         {
+            TryRegisterNode(groupId, selectable, controlPolicy);
+        }
+
+        private bool TryRegisterNode(
+            string groupId,
+            Selectable selectable,
+            IAppUIFocusControlPolicy controlPolicy)
+        {
             if (string.IsNullOrEmpty(groupId) || selectable == null)
             {
-                return;
+                return false;
+            }
+
+            if (!policyResolverSet.TryResolve(
+                    selectable,
+                    controlPolicy,
+                    out IAppUIFocusControlPolicy effectiveControlPolicy,
+                    out string diagnostic))
+            {
+                LogPolicyResolutionFailure(
+                    groupId,
+                    selectable,
+                    diagnostic);
+                return false;
             }
 
             FocusGroupState group = GetOrCreateGroup(groupId);
@@ -147,7 +181,8 @@ namespace Joi.H.AppUI
                 group.SpatialCache.Invalidate();
             }
 
-            ConfigureNode(groupId, selectable, controlPolicy);
+            ConfigureNode(groupId, selectable, effectiveControlPolicy);
+            return true;
         }
 
         public bool UnregisterNode(string groupId, Selectable selectable)
@@ -188,6 +223,38 @@ namespace Joi.H.AppUI
                 return;
             }
 
+            int count = selectables != null ? selectables.Count : 0;
+            List<IAppUIFocusControlPolicy> effectivePolicies =
+                new List<IAppUIFocusControlPolicy>(count);
+            for (int i = 0; i < count; i++)
+            {
+                Selectable selectable = selectables[i];
+                IAppUIFocusControlPolicy explicitPolicy =
+                    controlPolicies != null && i < controlPolicies.Count
+                        ? controlPolicies[i]
+                        : null;
+                if (selectable == null)
+                {
+                    effectivePolicies.Add(null);
+                    continue;
+                }
+
+                if (!policyResolverSet.TryResolve(
+                        selectable,
+                        explicitPolicy,
+                        out IAppUIFocusControlPolicy effectivePolicy,
+                        out string diagnostic))
+                {
+                    LogPolicyResolutionFailure(
+                        groupId,
+                        selectable,
+                        diagnostic);
+                    return;
+                }
+
+                effectivePolicies.Add(effectivePolicy);
+            }
+
             FocusGroupState group = GetOrCreateGroup(groupId);
             Selectable previousLast = group.LastIndex >= 0 && group.LastIndex < group.Nodes.Count
                 ? group.Nodes[group.LastIndex]
@@ -203,7 +270,6 @@ namespace Joi.H.AppUI
             }
 
             group.Nodes.Clear();
-            int count = selectables != null ? selectables.Count : 0;
             for (int i = 0; i < count; i++)
             {
                 Selectable selectable = selectables[i];
@@ -213,11 +279,10 @@ namespace Joi.H.AppUI
                 }
 
                 group.Nodes.Add(selectable);
-                IAppUIFocusControlPolicy controlPolicy =
-                    controlPolicies != null && i < controlPolicies.Count
-                        ? controlPolicies[i]
-                        : null;
-                ConfigureNode(groupId, selectable, controlPolicy);
+                ConfigureNode(
+                    groupId,
+                    selectable,
+                    effectivePolicies[i]);
             }
 
             group.SpatialCache.Invalidate();
@@ -881,7 +946,8 @@ namespace Joi.H.AppUI
                 AppUIFocusMoveStage.ControlPolicy,
                 rules);
             IAppUIFocusControlPolicy effectivePolicy =
-                AppUIFocusControlPolicies.Resolve(selectable, controlPolicy);
+                controlPolicy ??
+                AppUIFocusControlPolicies.ResolveBuiltIn(selectable);
 
             AppUIFocusControlMoveMode moveMode;
             try
@@ -1763,7 +1829,25 @@ namespace Joi.H.AppUI
                 node = selectable.gameObject.AddComponent<AppUIFocusGroupNode>();
             }
 
-            node.Initialize(this, groupId, selectable, controlPolicy);
+            node.InitializeResolved(
+                this,
+                groupId,
+                selectable,
+                controlPolicy);
+        }
+
+        private void LogPolicyResolutionFailure(
+            string groupId,
+            Selectable selectable,
+            string diagnostic)
+        {
+            Debug.LogError(
+                "<AppUIFocus> APPUI_FOCUS_POLICY_RESOLUTION_FAILED " +
+                "Scope=" + diagnosticScopeId +
+                ", Group=" + (groupId ?? string.Empty) +
+                ", Object=" +
+                (selectable != null ? selectable.name : "null") +
+                ", " + (diagnostic ?? string.Empty));
         }
 
         private void LogExtensionException(

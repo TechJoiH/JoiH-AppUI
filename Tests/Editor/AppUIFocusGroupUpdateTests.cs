@@ -218,6 +218,68 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
+        public void GroupUpdate_ResolverConflict_PreservesPreviousSnapshot()
+        {
+            ToggleFocusPolicyResolver first =
+                new ToggleFocusPolicyResolver("first");
+            ToggleFocusPolicyResolver second =
+                new ToggleFocusPolicyResolver("second");
+            TestRuntime runtime = CreateRuntimeWithResolvers(
+                "ResolverConflictUpdate",
+                new IAppUIFocusControlPolicyResolver[] { first, second },
+                "main");
+            Button oldButton = CreateButton(
+                runtime.Page.GameObject,
+                "Old");
+            Button stagedButton = CreateButton(
+                runtime.Page.GameObject,
+                "Staged",
+                Navigation.Mode.Automatic);
+            AppUIFocusNodeAddress oldAddress = Register(
+                runtime.ScopeHandle,
+                "main",
+                "old",
+                oldButton);
+            runtime.ScopeHandle.BeginGroupUpdate(
+                "main",
+                out AppUIFocusGroupUpdateTransaction update);
+            int oldRevision = update.CapturedGroupRevision;
+            first.Matches = true;
+            second.Matches = true;
+            LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex(
+                    "APPUI_FOCUS_POLICY_RESOLUTION_FAILED.*first.*second"));
+
+            Assert.That(
+                update.Register(
+                    new AppUIFocusNodeKey("staged"),
+                    stagedButton),
+                Is.False);
+            Assert.That(
+                update.Complete(),
+                Is.EqualTo(AppUIFocusGroupUpdateResult.ValidationFailed));
+
+            Assert.That(
+                runtime.ScopeHandle.TryResolveNode(
+                    oldAddress,
+                    out Selectable resolved),
+                Is.True);
+            Assert.That(resolved, Is.SameAs(oldButton));
+            Assert.That(
+                runtime.ScopeHandle.TryGetNodeAddress(stagedButton, out _),
+                Is.False);
+            Assert.That(
+                stagedButton.navigation.mode,
+                Is.EqualTo(Navigation.Mode.Automatic));
+            runtime.ScopeHandle.BeginGroupUpdate(
+                "main",
+                out AppUIFocusGroupUpdateTransaction next);
+            Assert.That(next.CapturedGroupRevision, Is.EqualTo(oldRevision));
+            next.Abort();
+        }
+
+        [Test]
         public void ScopeDispose_ForcesActiveTransactionToReturnScopeDisposed()
         {
             TestRuntime runtime = CreateRuntime("DisposedPage", "main");
@@ -295,6 +357,14 @@ namespace Joi.H.AppUI.Tests
 
         private TestRuntime CreateRuntime(string pageId, params string[] groupIds)
         {
+            return CreateRuntimeWithResolvers(pageId, null, groupIds);
+        }
+
+        private TestRuntime CreateRuntimeWithResolvers(
+            string pageId,
+            IReadOnlyList<IAppUIFocusControlPolicyResolver> resolvers,
+            params string[] groupIds)
+        {
             UIPageInstanceRegistry registry = new UIPageInstanceRegistry();
             GameObject pageObject = CreateObject(pageId, typeof(RectTransform));
             UIPageInstance page = new UIPageInstance
@@ -317,6 +387,7 @@ namespace Joi.H.AppUI.Tests
 
             UIFocusService focusService = new UIFocusService();
             focusService.ConfigureInstanceRegistry(registry);
+            focusService.ConfigurePolicyResolvers(resolvers);
             IAppUIFocusScopeHandle scopeHandle =
                 focusService.AttachScope(page, definitionBuilder.Build());
             return new TestRuntime(
@@ -402,6 +473,45 @@ namespace Joi.H.AppUI.Tests
             public IAppUIFocusScopeHandle ScopeHandle { get; }
 
             public AppUIFocusScope Scope { get; }
+        }
+
+        private sealed class ToggleFocusPolicyResolver :
+            IAppUIFocusControlPolicyResolver
+        {
+            private readonly IAppUIFocusControlPolicy policy =
+                new StubControlPolicy();
+
+            public ToggleFocusPolicyResolver(string resolverId)
+            {
+                ResolverId = resolverId;
+            }
+
+            public string ResolverId { get; }
+
+            public bool Matches { get; set; }
+
+            public bool TryResolve(
+                Selectable selectable,
+                out IAppUIFocusControlPolicy resolvedPolicy)
+            {
+                resolvedPolicy = Matches ? policy : null;
+                return Matches;
+            }
+        }
+
+        private sealed class StubControlPolicy : IAppUIFocusControlPolicy
+        {
+            public AppUIFocusControlMoveMode GetMoveMode(
+                in AppUIFocusMoveContext context)
+            {
+                return AppUIFocusControlMoveMode.FrameworkOnly;
+            }
+
+            public AppUIFocusCancelHandlingResult TryHandleCancel(
+                in AppUIFocusCancelContext context)
+            {
+                return AppUIFocusCancelHandlingResult.Continue;
+            }
         }
     }
 }

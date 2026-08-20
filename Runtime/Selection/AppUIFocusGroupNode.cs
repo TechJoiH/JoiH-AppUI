@@ -23,13 +23,29 @@ namespace Joi.H.AppUI
             Selectable focusSelectable,
             IAppUIFocusControlPolicy focusControlPolicy = null)
         {
+            Selectable resolvedSelectable = focusSelectable != null
+                ? focusSelectable
+                : GetComponent<Selectable>();
+            InitializeResolved(
+                focusNavigator,
+                focusGroupId,
+                resolvedSelectable,
+                AppUIFocusControlPolicies.Resolve(
+                    resolvedSelectable,
+                    focusControlPolicy));
+        }
+
+        internal void InitializeResolved(
+            AppUIFocusGroupNavigator focusNavigator,
+            string focusGroupId,
+            Selectable focusSelectable,
+            IAppUIFocusControlPolicy resolvedControlPolicy)
+        {
             navigator = focusNavigator;
             groupId = focusGroupId ?? string.Empty;
-            selectable = focusSelectable != null ? focusSelectable : GetComponent<Selectable>();
+            selectable = focusSelectable;
             toggleMember = GetComponent<AppUISelectionToggleMember>();
-            controlPolicy = AppUIFocusControlPolicies.Resolve(
-                selectable,
-                focusControlPolicy);
+            controlPolicy = resolvedControlPolicy;
         }
 
         internal void Detach(

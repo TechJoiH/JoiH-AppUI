@@ -26,6 +26,8 @@ namespace Joi.H.AppUI
         MissingNoticeLayer = 19,
         NoticePrefabLoadFailed = 20,
         InvalidNoticePrefab = 21,
+        InvalidFocusPolicyResolver = 22,
+        DuplicateFocusPolicyResolverId = 23,
     }
 
     /// <summary>

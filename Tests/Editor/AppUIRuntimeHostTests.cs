@@ -204,6 +204,102 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
+        public void RuntimeConfiguration_CopiesFocusResolvers()
+        {
+            StubFocusPolicyResolver resolver =
+                new StubFocusPolicyResolver("copied");
+            List<IAppUIFocusControlPolicyResolver> source =
+                new List<IAppUIFocusControlPolicyResolver> { resolver };
+
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(null, null, source);
+            source.Clear();
+
+            Assert.That(configuration.FocusPolicyResolvers, Has.Count.EqualTo(1));
+            Assert.That(configuration.FocusPolicyResolvers[0], Is.SameAs(resolver));
+            Assert.That(
+                new AppUIRuntimeConfiguration(null, null)
+                    .FocusPolicyResolvers,
+                Is.Empty);
+        }
+
+        [Test]
+        public void RuntimeConfiguration_DuplicateFocusResolverId_IsRejected()
+        {
+            fixture = HostFixture.CreateValid();
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(
+                    null,
+                    null,
+                    new IAppUIFocusControlPolicyResolver[]
+                    {
+                        new StubFocusPolicyResolver("duplicate"),
+                        new StubFocusPolicyResolver("duplicate"),
+                    });
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                configuration);
+
+            Assert.That(
+                result.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus
+                        .DuplicateFocusPolicyResolverId));
+            Assert.That(fixture.Host.IsInitialized, Is.False);
+            Assert.That(fixture.Manager.HasAssetProvider, Is.False);
+        }
+
+        [Test]
+        public void RuntimeConfiguration_InvalidFocusResolver_IsRejected()
+        {
+            fixture = HostFixture.CreateValid();
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(
+                    null,
+                    null,
+                    new IAppUIFocusControlPolicyResolver[]
+                    {
+                        new StubFocusPolicyResolver(string.Empty),
+                    });
+
+            AppUIInitializationResult result = fixture.Host.Initialize(
+                fixture.CreateDependencies(),
+                configuration);
+
+            Assert.That(
+                result.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus.InvalidFocusPolicyResolver));
+        }
+
+        [Test]
+        public void Host_ExposesActiveConfigurationOnlyWhileInitialized()
+        {
+            fixture = HostFixture.CreateValid();
+            AppUIRuntimeConfiguration configuration =
+                new AppUIRuntimeConfiguration(
+                    null,
+                    null,
+                    new IAppUIFocusControlPolicyResolver[]
+                    {
+                        new StubFocusPolicyResolver("active"),
+                    });
+
+            Assert.That(fixture.Host.Configuration, Is.Null);
+            Assert.That(
+                fixture.Host.Initialize(
+                    fixture.CreateDependencies(),
+                    configuration).Success,
+                Is.True);
+            Assert.That(fixture.Host.Configuration, Is.SameAs(configuration));
+
+            fixture.Host.Shutdown();
+
+            Assert.That(fixture.Host.Configuration, Is.Null);
+        }
+
+        [Test]
         public void Initialize_DuplicateLoadStrategyId_ReturnsStructuredFailureBeforeManagerMutation()
         {
             fixture = HostFixture.CreateValid();
@@ -587,6 +683,25 @@ namespace Joi.H.AppUI.Tests
                 UIPageInstanceCreationRequest request)
             {
                 throw new NotSupportedException();
+            }
+        }
+
+        private sealed class StubFocusPolicyResolver :
+            IAppUIFocusControlPolicyResolver
+        {
+            public StubFocusPolicyResolver(string resolverId)
+            {
+                ResolverId = resolverId;
+            }
+
+            public string ResolverId { get; }
+
+            public bool TryResolve(
+                UnityEngine.UI.Selectable selectable,
+                out IAppUIFocusControlPolicy policy)
+            {
+                policy = null;
+                return false;
             }
         }
 

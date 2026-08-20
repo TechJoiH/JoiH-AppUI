@@ -44,6 +44,213 @@ namespace Joi.H.AppUI.Tests
         }
 
         [Test]
+        public void FocusPolicy_ExplicitPolicy_WinsWithoutCallingResolvers()
+        {
+            GameObject root = CreateChild(null, "ExplicitRoot");
+            Button button = root.AddComponent<Button>();
+            StubControlPolicy explicitPolicy = new StubControlPolicy();
+            StubFocusPolicyResolver resolver =
+                StubFocusPolicyResolver.Matching("external");
+            AppUIFocusControlPolicyResolverSet set =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[] { resolver });
+
+            bool success = set.TryResolve(
+                button,
+                explicitPolicy,
+                out IAppUIFocusControlPolicy resolved,
+                out string diagnostic);
+
+            Assert.That(success, Is.True, diagnostic);
+            Assert.That(resolved, Is.SameAs(explicitPolicy));
+            Assert.That(resolver.CallCount, Is.Zero);
+        }
+
+        [Test]
+        public void FocusPolicy_OneExternalMatch_WinsBeforeBuiltIn()
+        {
+            GameObject root = CreateChild(null, "ExternalRoot");
+            Slider slider = root.AddComponent<Slider>();
+            StubControlPolicy externalPolicy = new StubControlPolicy();
+            StubFocusPolicyResolver resolver =
+                StubFocusPolicyResolver.Matching(
+                    "external",
+                    externalPolicy);
+            AppUIFocusControlPolicyResolverSet set =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[] { resolver });
+
+            bool success = set.TryResolve(
+                slider,
+                null,
+                out IAppUIFocusControlPolicy resolved,
+                out string diagnostic);
+
+            Assert.That(success, Is.True, diagnostic);
+            Assert.That(resolved, Is.SameAs(externalPolicy));
+            Assert.That(resolver.CallCount, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void FocusPolicy_NoExternalMatch_UsesBuiltInUGUI()
+        {
+            GameObject root = CreateChild(null, "BuiltInRoot");
+            Slider slider = root.AddComponent<Slider>();
+            StubFocusPolicyResolver resolver =
+                StubFocusPolicyResolver.NotMatching("external");
+            AppUIFocusControlPolicyResolverSet set =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[] { resolver });
+
+            bool success = set.TryResolve(
+                slider,
+                null,
+                out IAppUIFocusControlPolicy resolved,
+                out string diagnostic);
+
+            Assert.That(success, Is.True, diagnostic);
+            Assert.That(resolved, Is.InstanceOf<IAppUIFocusNativeMoveAdapter>());
+        }
+
+        [Test]
+        public void FocusPolicy_TwoExternalMatches_RejectsWithResolverIds()
+        {
+            GameObject root = CreateChild(null, "ConflictRoot");
+            Button button = root.AddComponent<Button>();
+            AppUIFocusControlPolicyResolverSet set =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[]
+                    {
+                        StubFocusPolicyResolver.Matching("first"),
+                        StubFocusPolicyResolver.Matching("second"),
+                    });
+
+            bool success = set.TryResolve(
+                button,
+                null,
+                out IAppUIFocusControlPolicy resolved,
+                out string diagnostic);
+
+            Assert.That(success, Is.False);
+            Assert.That(resolved, Is.Null);
+            StringAssert.Contains("first", diagnostic);
+            StringAssert.Contains("second", diagnostic);
+        }
+
+        [Test]
+        public void FocusPolicy_NullOrThrowingResolver_RejectsWithoutPolicy()
+        {
+            GameObject root = CreateChild(null, "InvalidResolverRoot");
+            Button button = root.AddComponent<Button>();
+            StubFocusPolicyResolver nullResolver =
+                StubFocusPolicyResolver.Matching("null-policy", null);
+            nullResolver.ReturnNull = true;
+            AppUIFocusControlPolicyResolverSet nullSet =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[] { nullResolver });
+
+            Assert.That(
+                nullSet.TryResolve(
+                    button,
+                    null,
+                    out IAppUIFocusControlPolicy nullPolicy,
+                    out string nullDiagnostic),
+                Is.False);
+            Assert.That(nullPolicy, Is.Null);
+            StringAssert.Contains("null-policy", nullDiagnostic);
+
+            StubFocusPolicyResolver throwing =
+                StubFocusPolicyResolver.NotMatching("throwing");
+            throwing.ThrowOnResolve = true;
+            AppUIFocusControlPolicyResolverSet throwingSet =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[] { throwing });
+            Assert.That(
+                throwingSet.TryResolve(
+                    button,
+                    null,
+                    out IAppUIFocusControlPolicy throwingPolicy,
+                    out string throwingDiagnostic),
+                Is.False);
+            Assert.That(throwingPolicy, Is.Null);
+            StringAssert.Contains("throwing", throwingDiagnostic);
+        }
+
+        [Test]
+        public void FocusPolicy_ResolverConflict_RejectsRegistrationWithoutMutation()
+        {
+            UIPageInstanceRegistry pageRegistry = new UIPageInstanceRegistry();
+            UIPageInstance page = CreatePageInstance(
+                pageRegistry,
+                "ResolverConflict");
+            UIFocusService focusService = new UIFocusService();
+            focusService.ConfigurePolicyResolvers(
+                new IAppUIFocusControlPolicyResolver[]
+                {
+                    StubFocusPolicyResolver.Matching("first"),
+                    StubFocusPolicyResolver.Matching("second"),
+                });
+            IAppUIFocusScopeHandle scope = focusService.AttachScope(
+                page,
+                new AppUIFocusDefinitionBuilder("resolver-conflict")
+                    .AddGroup("main")
+                    .Build());
+            Button button = CreateSelectable<Button>(
+                page.GameObject,
+                "ConflictButton");
+            Navigation navigation = button.navigation;
+            navigation.mode = Navigation.Mode.Automatic;
+            button.navigation = navigation;
+            LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex(
+                    "APPUI_FOCUS_POLICY_RESOLUTION_FAILED.*first.*second"));
+
+            bool registered = scope.RegisterNode(
+                "main",
+                new AppUIFocusNodeKey("conflict"),
+                button);
+
+            Assert.That(registered, Is.False);
+            Assert.That(scope.TryGetNodeAddress(button, out _), Is.False);
+            Assert.That(button.navigation.mode, Is.EqualTo(Navigation.Mode.Automatic));
+            Assert.That(button.GetComponent<AppUIFocusGroupNode>(), Is.Null);
+            focusService.DetachScope(page);
+        }
+
+        [Test]
+        public void FocusPolicy_LegacyNavigatorConflict_LogsAndPreservesGroup()
+        {
+            GameObject root = CreateChild(null, "LegacyConflictRoot");
+            Button button = root.AddComponent<Button>();
+            Navigation navigation = button.navigation;
+            navigation.mode = Navigation.Mode.Automatic;
+            button.navigation = navigation;
+            AppUIFocusControlPolicyResolverSet set =
+                new AppUIFocusControlPolicyResolverSet(
+                    new IAppUIFocusControlPolicyResolver[]
+                    {
+                        StubFocusPolicyResolver.Matching("first"),
+                        StubFocusPolicyResolver.Matching("second"),
+                    });
+            AppUIFocusGroupNavigator navigator =
+                new AppUIFocusGroupNavigator(set);
+            LogAssert.Expect(
+                LogType.Error,
+                new System.Text.RegularExpressions.Regex(
+                    "APPUI_FOCUS_POLICY_RESOLUTION_FAILED.*first.*second"));
+
+            navigator.RegisterNode("main", button);
+
+            Assert.That(
+                navigator.TryGetGroupFirst("main", out _),
+                Is.False);
+            Assert.That(button.navigation.mode, Is.EqualTo(Navigation.Mode.Automatic));
+            Assert.That(button.GetComponent<AppUIFocusGroupNode>(), Is.Null);
+            navigator.Dispose();
+        }
+
+        [Test]
         public void ScopeRegistration_MaintainsUniqueForwardAndReverseMappings()
         {
             UIPageInstanceRegistry pageRegistry = new UIPageInstanceRegistry();
@@ -200,7 +407,11 @@ namespace Joi.H.AppUI.Tests
         private GameObject CreateChild(GameObject pageRoot, string name)
         {
             GameObject child = new GameObject(name, typeof(RectTransform));
-            child.transform.SetParent(pageRoot.transform, false);
+            if (pageRoot != null)
+            {
+                child.transform.SetParent(pageRoot.transform, false);
+            }
+
             createdObjects.Add(child);
             return child;
         }
@@ -218,6 +429,80 @@ namespace Joi.H.AppUI.Tests
                 revision,
                 topInteractive ? handle : default,
                 states);
+        }
+
+        private sealed class StubControlPolicy : IAppUIFocusControlPolicy
+        {
+            public AppUIFocusControlMoveMode GetMoveMode(
+                in AppUIFocusMoveContext context)
+            {
+                return AppUIFocusControlMoveMode.FrameworkOnly;
+            }
+
+            public AppUIFocusCancelHandlingResult TryHandleCancel(
+                in AppUIFocusCancelContext context)
+            {
+                return AppUIFocusCancelHandlingResult.Continue;
+            }
+        }
+
+        private sealed class StubFocusPolicyResolver :
+            IAppUIFocusControlPolicyResolver
+        {
+            private readonly bool matches;
+            private readonly IAppUIFocusControlPolicy policy;
+
+            private StubFocusPolicyResolver(
+                string resolverId,
+                bool matches,
+                IAppUIFocusControlPolicy policy)
+            {
+                ResolverId = resolverId;
+                this.matches = matches;
+                this.policy = policy;
+            }
+
+            public string ResolverId { get; }
+
+            public int CallCount { get; private set; }
+
+            public bool ReturnNull { get; set; }
+
+            public bool ThrowOnResolve { get; set; }
+
+            public bool TryResolve(
+                Selectable selectable,
+                out IAppUIFocusControlPolicy resolvedPolicy)
+            {
+                CallCount++;
+                if (ThrowOnResolve)
+                {
+                    throw new InvalidOperationException(
+                        "intentional resolver failure");
+                }
+
+                resolvedPolicy = ReturnNull ? null : policy;
+                return matches;
+            }
+
+            public static StubFocusPolicyResolver Matching(
+                string resolverId,
+                IAppUIFocusControlPolicy policy = null)
+            {
+                return new StubFocusPolicyResolver(
+                    resolverId,
+                    true,
+                    policy ?? new StubControlPolicy());
+            }
+
+            public static StubFocusPolicyResolver NotMatching(
+                string resolverId)
+            {
+                return new StubFocusPolicyResolver(
+                    resolverId,
+                    false,
+                    null);
+            }
         }
     }
 }

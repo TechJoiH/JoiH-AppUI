@@ -34,6 +34,8 @@ namespace Joi.H.AppUI
             UIInteractionSnapshot.Empty;
         private AppUIFocusScope activeScope;
         private IAppUIExecutionContext executionContext;
+        private AppUIFocusControlPolicyResolverSet policyResolverSet =
+            AppUIFocusControlPolicyResolverSet.Empty;
 
         public UIFocusService()
         {
@@ -85,6 +87,20 @@ namespace Joi.H.AppUI
         {
             executionContext = context ??
                 throw new ArgumentNullException(nameof(context));
+        }
+
+        internal void ConfigurePolicyResolvers(
+            IReadOnlyList<IAppUIFocusControlPolicyResolver> resolvers)
+        {
+            if (scopesByPageInstance.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Focus policy resolvers cannot change while scopes are attached.");
+            }
+
+            policyResolverSet = resolvers == null || resolvers.Count == 0
+                ? AppUIFocusControlPolicyResolverSet.Empty
+                : new AppUIFocusControlPolicyResolverSet(resolvers);
         }
 
         internal IAppUIFocusScopeHandle AttachScope(
@@ -146,7 +162,8 @@ namespace Joi.H.AppUI
                 nodeRegistry,
                 focusCommitter,
                 selectionObserver,
-                executionContext);
+                executionContext,
+                policyResolverSet);
             scopesByPageInstance.Add(instance.RuntimeInstanceId, scope);
             pageInstanceByScopeId.Add(scopeId, instance.RuntimeInstanceId);
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

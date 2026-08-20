@@ -140,6 +140,8 @@ namespace Joi.H.AppUI
             operationFactory = dependencies.OperationFactory;
             executionContext = dependencies.ExecutionContext;
             focusService.ConfigureExecutionContext(executionContext);
+            focusService.ConfigurePolicyResolvers(
+                resolvedConfiguration.FocusPolicyResolvers);
             runtimeEpoch++;
             pageRegistry = registry;
             assetProvider = dependencies.AssetProvider;

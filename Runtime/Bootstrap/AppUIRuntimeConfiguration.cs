@@ -16,16 +16,30 @@ namespace Joi.H.AppUI
         private readonly ReadOnlyCollection<IUILoadStrategy> loadStrategies;
         private readonly ReadOnlyCollection<IUIPageInstanceStrategy>
             instanceStrategies;
+        private readonly ReadOnlyCollection<
+            IAppUIFocusControlPolicyResolver> focusPolicyResolvers;
 
         public AppUIRuntimeConfiguration(
             IEnumerable<IUILoadStrategy> loadStrategies,
             IEnumerable<IUIPageInstanceStrategy> instanceStrategies)
+            : this(loadStrategies, instanceStrategies, null)
+        {
+        }
+
+        public AppUIRuntimeConfiguration(
+            IEnumerable<IUILoadStrategy> loadStrategies,
+            IEnumerable<IUIPageInstanceStrategy> instanceStrategies,
+            IEnumerable<IAppUIFocusControlPolicyResolver>
+                focusPolicyResolvers)
         {
             this.loadStrategies = new ReadOnlyCollection<IUILoadStrategy>(
                 Copy(loadStrategies));
             this.instanceStrategies =
                 new ReadOnlyCollection<IUIPageInstanceStrategy>(
                     Copy(instanceStrategies));
+            this.focusPolicyResolvers =
+                new ReadOnlyCollection<IAppUIFocusControlPolicyResolver>(
+                    Copy(focusPolicyResolvers));
         }
 
         public static AppUIRuntimeConfiguration Empty
@@ -41,6 +55,12 @@ namespace Joi.H.AppUI
         public IReadOnlyList<IUIPageInstanceStrategy> InstanceStrategies
         {
             get { return instanceStrategies; }
+        }
+
+        public IReadOnlyList<IAppUIFocusControlPolicyResolver>
+            FocusPolicyResolvers
+        {
+            get { return focusPolicyResolvers; }
         }
 
         internal AppUIInitializationResult Validate(
@@ -62,6 +82,13 @@ namespace Joi.H.AppUI
             if (!instanceValidation.Success)
             {
                 return instanceValidation;
+            }
+
+            AppUIInitializationResult focusValidation =
+                ValidateFocusPolicyResolvers();
+            if (!focusValidation.Success)
+            {
+                return focusValidation;
             }
 
             if (registry == null)
@@ -153,6 +180,37 @@ namespace Joi.H.AppUI
                             .DuplicateInstanceStrategyId,
                         "instance",
                         strategy.StrategyId);
+                }
+            }
+
+            return AppUIInitializationResult.Ok();
+        }
+
+        private AppUIInitializationResult ValidateFocusPolicyResolvers()
+        {
+            HashSet<string> resolverIds =
+                new HashSet<string>(StringComparer.Ordinal);
+            for (int i = 0; i < focusPolicyResolvers.Count; i++)
+            {
+                IAppUIFocusControlPolicyResolver resolver =
+                    focusPolicyResolvers[i];
+                if (resolver == null ||
+                    string.IsNullOrWhiteSpace(resolver.ResolverId))
+                {
+                    return InvalidStrategy(
+                        AppUIInitializationStatus
+                            .InvalidFocusPolicyResolver,
+                        "focus policy resolver",
+                        i);
+                }
+
+                if (!resolverIds.Add(resolver.ResolverId))
+                {
+                    return DuplicateStrategy(
+                        AppUIInitializationStatus
+                            .DuplicateFocusPolicyResolverId,
+                        "focus policy resolver",
+                        resolver.ResolverId);
                 }
             }
 

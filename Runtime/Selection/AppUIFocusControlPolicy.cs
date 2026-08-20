@@ -1,4 +1,6 @@
 ﻿using TMPro;
+using System;
+using System.Collections.Generic;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
@@ -46,6 +48,104 @@ namespace Joi.H.AppUI
 
         AppUIFocusCancelHandlingResult TryHandleCancel(
             in AppUIFocusCancelContext context);
+    }
+
+    /// <summary>
+    /// Host-owned adapter that maps a concrete Selectable technology to an
+    /// AppUI focus policy without adding that technology to AppUI Core.
+    /// </summary>
+    public interface IAppUIFocusControlPolicyResolver
+    {
+        string ResolverId { get; }
+
+        bool TryResolve(
+            Selectable selectable,
+            out IAppUIFocusControlPolicy policy);
+    }
+
+    internal sealed class AppUIFocusControlPolicyResolverSet
+    {
+        internal static readonly AppUIFocusControlPolicyResolverSet Empty =
+            new AppUIFocusControlPolicyResolverSet(null);
+
+        private readonly IReadOnlyList<
+            IAppUIFocusControlPolicyResolver> resolvers;
+
+        internal AppUIFocusControlPolicyResolverSet(
+            IReadOnlyList<IAppUIFocusControlPolicyResolver>
+                policyResolvers)
+        {
+            resolvers = policyResolvers ??
+                Array.Empty<IAppUIFocusControlPolicyResolver>();
+        }
+
+        internal bool TryResolve(
+            Selectable selectable,
+            IAppUIFocusControlPolicy explicitPolicy,
+            out IAppUIFocusControlPolicy policy,
+            out string diagnostic)
+        {
+            policy = null;
+            diagnostic = string.Empty;
+            if (explicitPolicy != null)
+            {
+                policy = explicitPolicy;
+                return true;
+            }
+
+            List<string> matchingIds = null;
+            IAppUIFocusControlPolicy matchingPolicy = null;
+            for (int i = 0; i < resolvers.Count; i++)
+            {
+                IAppUIFocusControlPolicyResolver resolver = resolvers[i];
+                bool matched;
+                IAppUIFocusControlPolicy candidate;
+                try
+                {
+                    matched = resolver.TryResolve(
+                        selectable,
+                        out candidate);
+                }
+                catch (Exception exception)
+                {
+                    diagnostic =
+                        "ResolverId=" + resolver.ResolverId +
+                        ", Failure=Exception, Exception=" +
+                        exception.GetType().Name + ": " +
+                        exception.Message;
+                    return false;
+                }
+
+                if (!matched)
+                {
+                    continue;
+                }
+
+                if (candidate == null)
+                {
+                    diagnostic =
+                        "ResolverId=" + resolver.ResolverId +
+                        ", Failure=NullPolicy.";
+                    return false;
+                }
+
+                matchingIds ??= new List<string>(2);
+                matchingIds.Add(resolver.ResolverId);
+                matchingPolicy ??= candidate;
+            }
+
+            if (matchingIds != null && matchingIds.Count > 1)
+            {
+                diagnostic =
+                    "Failure=ResolverConflict, ResolverIds=" +
+                    string.Join(",", matchingIds) + ".";
+                return false;
+            }
+
+            policy = matchingPolicy ??
+                AppUIFocusControlPolicies.ResolveBuiltIn(selectable);
+            return true;
+        }
     }
 
     /// <summary>
@@ -158,6 +258,12 @@ namespace Joi.H.AppUI
                 return explicitPolicy;
             }
 
+            return ResolveBuiltIn(selectable);
+        }
+
+        internal static IAppUIFocusControlPolicy ResolveBuiltIn(
+            Selectable selectable)
+        {
             if (selectable is Slider)
             {
                 return SliderPolicyInstance;

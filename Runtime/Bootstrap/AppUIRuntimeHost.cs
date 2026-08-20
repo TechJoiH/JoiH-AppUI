@@ -46,6 +46,11 @@ namespace Joi.H.AppUI
             get { return dependencies; }
         }
 
+        public AppUIRuntimeConfiguration Configuration
+        {
+            get { return initialized ? configuration : null; }
+        }
+
         public IUIAssetProvider AssetProvider
         {
             get
