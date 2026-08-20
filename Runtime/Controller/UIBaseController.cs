@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -16,9 +15,6 @@ namespace Joi.H.AppUI
         private List<Action> eventDisposables;
         private bool initialized;
         private bool disposed;
-
-        /// <summary>全局文本本地化委托；SetText 会优先使用该委托转换 localizationKey。</summary>
-        public static Func<string, string> LocalizeText { get; set; }
 
         internal bool IsInitialized
         {
@@ -290,31 +286,6 @@ namespace Joi.H.AppUI
                     toggle.onValueChanged.RemoveListener(action);
                 }
             });
-        }
-
-        /// <summary>设置本地化文本；如果 LocalizeText 未设置，则直接显示 localizationKey。</summary>
-        protected void SetText(TMP_Text target, string localizationKey)
-        {
-            if (target == null)
-            {
-                return;
-            }
-
-            Func<string, string> localizer = LocalizeText;
-            target.text = localizer != null
-                ? localizer.Invoke(localizationKey ?? string.Empty)
-                : localizationKey ?? string.Empty;
-        }
-
-        /// <summary>设置普通字符串文本，不经过本地化委托。</summary>
-        protected void SetTextStr(TMP_Text target, string value)
-        {
-            if (target == null)
-            {
-                return;
-            }
-
-            target.text = value ?? string.Empty;
         }
 
         /// <summary>安全切换 GameObject active，目标为空或状态一致时不做额外操作。</summary>
