@@ -6,8 +6,7 @@
     "Joi.H.AppUI.Runtime",
     "Joi.H.AppUI.Editor",
     "Joi.H.AppUI.Tests.Shared",
-    "Joi.H.AppUI.Tests.HostIntegration",
-    "Unity.TextMeshPro"
+    "Joi.H.AppUI.Tests.HostIntegration"
   ],
   "optionalUnityReferences": [
     "TestAssemblies"

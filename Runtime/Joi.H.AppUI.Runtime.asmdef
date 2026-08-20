@@ -3,7 +3,6 @@
   "rootNamespace": "Joi.H.AppUI",
   "references": [
     "Joi.H.AppUI.Core",
-    "Unity.TextMeshPro",
     "UnityEngine.UI"
   ],
   "includePlatforms": [],

@@ -1,5 +1,4 @@
-﻿using TMPro;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -204,13 +203,6 @@ namespace Joi.H.AppUI
             public AppUIFocusCancelHandlingResult TryHandleCancel(
                 in AppUIFocusCancelContext context)
             {
-                if (context.CurrentSelectable is TMP_InputField tmpInputField &&
-                    tmpInputField.isFocused)
-                {
-                    tmpInputField.DeactivateInputField();
-                    return AppUIFocusCancelHandlingResult.Consumed;
-                }
-
                 if (context.CurrentSelectable is InputField inputField &&
                     inputField.isFocused)
                 {
@@ -274,7 +266,7 @@ namespace Joi.H.AppUI
                 return ScrollbarPolicyInstance;
             }
 
-            if (selectable is TMP_InputField || selectable is InputField)
+            if (selectable is InputField)
             {
                 return InputFieldPolicyInstance;
             }
