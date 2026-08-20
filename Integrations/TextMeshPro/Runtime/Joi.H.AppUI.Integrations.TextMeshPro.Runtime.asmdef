@@ -1,0 +1,20 @@
+{
+  "name": "Joi.H.AppUI.Integrations.TextMeshPro.Runtime",
+  "rootNamespace": "Joi.H.AppUI.Integrations.TextMeshPro",
+  "references": [
+    "Joi.H.AppUI.Runtime",
+    "UnityEngine.UI",
+    "Unity.TextMeshPro"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [
+    "JOIH_APPUI_TMP"
+  ],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
