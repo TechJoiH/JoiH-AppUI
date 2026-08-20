@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace Joi.H.AppUI
 {
@@ -16,8 +14,11 @@ namespace Joi.H.AppUI
         private readonly NoticePool tooltipPool = new NoticePool(UINoticeKind.Tooltip);
         private readonly NoticePool floatingTextPool = new NoticePool(UINoticeKind.FloatingText);
         private readonly NoticePool damageNumberPool = new NoticePool(UINoticeKind.DamageNumber);
+        private readonly HashSet<NoticeDisabledWarningKey> disabledWarnings =
+            new HashSet<NoticeDisabledWarningKey>();
 
         private int nextId;
+        private int runtimeEpoch;
         private RectTransform noticeRoot;
         private Canvas noticeCanvas;
         private IUIAssetProvider assetProvider;
@@ -28,10 +29,11 @@ namespace Joi.H.AppUI
         /// 初始化 NoticeService。
         /// 每次 UI Runtime/Profile 重新初始化时都会调用，旧池会先释放，避免跨 Root 持有无效 Transform。
         /// </summary>
-        public void Initialize(
+        public AppUIInitializationResult Initialize(
             RectTransform root,
             IUIAssetProvider provider,
-            AppUINoticeSettings noticeSettings)
+            AppUINoticeSettings noticeSettings,
+            int currentRuntimeEpoch)
         {
             Dispose();
             noticeRoot = root;
@@ -39,16 +41,62 @@ namespace Joi.H.AppUI
             assetProvider = provider;
             settings = noticeSettings ?? AppUINoticeSettings.CreateDefault();
             warnedMissingRoot = false;
+            runtimeEpoch = currentRuntimeEpoch;
+            disabledWarnings.Clear();
 
-            ConfigurePool(toastPool, settings.Toast);
-            ConfigurePool(tooltipPool, settings.Tooltip);
-            ConfigurePool(floatingTextPool, settings.FloatingText);
-            ConfigurePool(damageNumberPool, settings.DamageNumber);
+            AppUIInitializationResult validation =
+                ValidateEnabledConfiguration();
+            if (!validation.Success)
+            {
+                Dispose();
+                return validation;
+            }
 
-            PrewarmPool(toastPool);
-            PrewarmPool(tooltipPool);
-            PrewarmPool(floatingTextPool);
-            PrewarmPool(damageNumberPool);
+            AppUIInitializationResult configured =
+                ConfigurePool(toastPool, settings.Toast);
+            if (configured.Success)
+            {
+                configured = ConfigurePool(
+                    tooltipPool,
+                    settings.Tooltip);
+            }
+
+            if (configured.Success)
+            {
+                configured = ConfigurePool(
+                    floatingTextPool,
+                    settings.FloatingText);
+            }
+
+            if (configured.Success)
+            {
+                configured = ConfigurePool(
+                    damageNumberPool,
+                    settings.DamageNumber);
+            }
+
+            if (!configured.Success)
+            {
+                Dispose();
+                return configured;
+            }
+
+            try
+            {
+                PrewarmPool(toastPool);
+                PrewarmPool(tooltipPool);
+                PrewarmPool(floatingTextPool);
+                PrewarmPool(damageNumberPool);
+            }
+            catch (Exception exception)
+            {
+                Dispose();
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.InvalidNoticePrefab,
+                    exception);
+            }
+
+            return AppUIInitializationResult.Ok();
         }
 
         /// <summary>显示一条默认全局 Toast。</summary>
@@ -76,6 +124,11 @@ namespace Joi.H.AppUI
         /// <summary>显示 Tooltip；Tooltip 不自动关闭，直到 HideTooltip、ClearScope 或 ClearAll。</summary>
         public TooltipHandle ShowTooltip(in TooltipNoticeRequest request)
         {
+            if (!EnsurePoolEnabled(tooltipPool, request.Scope))
+            {
+                return new TooltipHandle(0);
+            }
+
             if (!TryResolvePosition(
                     request.CoordinateMode,
                     request.ScreenPosition,
@@ -124,6 +177,11 @@ namespace Joi.H.AppUI
         /// <summary>显示一条自动上浮淡出的 FloatingText。</summary>
         public FloatingTextHandle FloatingText(in FloatingTextNoticeRequest request)
         {
+            if (!EnsurePoolEnabled(floatingTextPool, request.Scope))
+            {
+                return new FloatingTextHandle(0);
+            }
+
             if (!TryResolvePosition(
                     request.CoordinateMode,
                     request.ScreenPosition,
@@ -152,6 +210,11 @@ namespace Joi.H.AppUI
         /// <summary>显示一条自动上浮淡出的 DamageNumber。</summary>
         public DamageNumberHandle DamageNumber(in DamageNumberNoticeRequest request)
         {
+            if (!EnsurePoolEnabled(damageNumberPool, request.Scope))
+            {
+                return new DamageNumberHandle(0);
+            }
+
             if (!TryResolvePosition(
                     request.CoordinateMode,
                     request.ScreenPosition,
@@ -251,37 +314,102 @@ namespace Joi.H.AppUI
             noticeRoot = null;
             noticeCanvas = null;
             assetProvider = null;
+            disabledWarnings.Clear();
         }
 
         /// <summary>
         /// 配置单类 Notice 对象池。
-        /// 这里会尝试同步加载配置 prefab；失败时不阻断服务，而是降级到内置 fallback 视图。
+        /// 启用项必须同步加载到显式实现 NoticeViewBase 的 authored prefab。
         /// </summary>
-        private void ConfigurePool(NoticePool pool, AppUINoticeVisualSettings visualSettings)
+        private AppUIInitializationResult ConfigurePool(
+            NoticePool pool,
+            AppUINoticeVisualSettings visualSettings)
         {
             pool.Settings = visualSettings;
             pool.Prefab = null;
             pool.AssetLease = null;
-            string assetId = visualSettings != null ? visualSettings.PrefabAssetId : string.Empty;
-            if (string.IsNullOrEmpty(assetId) || assetProvider == null)
+            if (visualSettings == null || !visualSettings.Enabled)
             {
-                return;
+                return AppUIInitializationResult.Ok();
             }
 
-            if (assetProvider.TryLoad(
-                    assetId,
-                    out UIAssetLoadResult<GameObject> result) &&
-                result.IsSuccess)
+            string assetId = visualSettings.PrefabAssetId;
+            bool loaded = assetProvider.TryLoad(
+                assetId,
+                out UIAssetLoadResult<GameObject> result);
+            if (!loaded || !result.IsSuccess)
             {
-                pool.Prefab = result.Asset;
-                pool.AssetLease = result.Lease;
-                return;
+                result.Lease?.Dispose();
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.NoticePrefabLoadFailed,
+                    new InvalidOperationException(
+                        "Notice prefab load failed. Kind=" + pool.Kind +
+                        ", AssetId=" + assetId +
+                        ", Error=" + result.ErrorMessage));
             }
 
-            Debug.LogWarning(
-                "<Joi.H.AppUI> Notice prefab load failed; using fallback view. " +
-                "AssetId=" + assetId + ", Error=" + result.ErrorMessage);
-            result.Lease?.Dispose();
+            NoticeViewBase view =
+                result.Asset.GetComponent<NoticeViewBase>();
+            if (view == null)
+            {
+                result.Lease?.Dispose();
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.InvalidNoticePrefab,
+                    new InvalidOperationException(
+                        "Notice prefab has no NoticeViewBase. Kind=" +
+                        pool.Kind + ", AssetId=" + assetId + "."));
+            }
+
+            try
+            {
+                view.EnsureInitialized();
+            }
+            catch (Exception exception)
+            {
+                result.Lease?.Dispose();
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.InvalidNoticePrefab,
+                    exception);
+            }
+
+            pool.Prefab = result.Asset;
+            pool.AssetLease = result.Lease;
+            return AppUIInitializationResult.Ok();
+        }
+
+        private AppUIInitializationResult ValidateEnabledConfiguration()
+        {
+            AppUINoticeVisualSettings[] visualSettings =
+            {
+                settings.Toast,
+                settings.Tooltip,
+                settings.FloatingText,
+                settings.DamageNumber,
+            };
+            bool hasEnabledPool = false;
+            for (int i = 0; i < visualSettings.Length; i++)
+            {
+                AppUINoticeVisualSettings visual = visualSettings[i];
+                if (visual == null || !visual.Enabled)
+                {
+                    continue;
+                }
+
+                hasEnabledPool = true;
+                if (string.IsNullOrWhiteSpace(visual.PrefabAssetId))
+                {
+                    return AppUIInitializationResult.Failure(
+                        AppUIInitializationStatus.InvalidNoticeConfiguration);
+                }
+            }
+
+            if (hasEnabledPool && noticeRoot == null)
+            {
+                return AppUIInitializationResult.Failure(
+                    AppUIInitializationStatus.MissingNoticeLayer);
+            }
+
+            return AppUIInitializationResult.Ok();
         }
 
         /// <summary>
@@ -290,7 +418,9 @@ namespace Joi.H.AppUI
         /// </summary>
         private void PrewarmPool(NoticePool pool)
         {
-            if (noticeRoot == null || pool.Settings == null)
+            if (noticeRoot == null ||
+                pool.Settings == null ||
+                !pool.Settings.Enabled)
             {
                 return;
             }
@@ -322,7 +452,7 @@ namespace Joi.H.AppUI
             Vector2 anchoredPosition,
             bool useProvidedPosition)
         {
-            if (!EnsureReady())
+            if (!EnsurePoolEnabled(pool, scope) || !EnsureReady())
             {
                 return null;
             }
@@ -337,8 +467,18 @@ namespace Joi.H.AppUI
             float fade = requestFade > 0f ? requestFade : pool.Settings.FadeDuration;
             float rise = requestRise > 0f ? requestRise : pool.Settings.RiseDistance;
             Vector2 startPosition = useProvidedPosition ? anchoredPosition : GetToastPosition(pool.Active.Count - 1);
-            ActivateInstance(instance, text, color, scope, startPosition, true, duration, fade, rise);
-            return instance;
+            return TryActivateInstance(
+                instance,
+                text,
+                color,
+                scope,
+                startPosition,
+                true,
+                duration,
+                fade,
+                rise)
+                ? instance
+                : null;
         }
 
         /// <summary>
@@ -352,7 +492,7 @@ namespace Joi.H.AppUI
             UINoticeScope scope,
             Vector2 anchoredPosition)
         {
-            if (!EnsureReady())
+            if (!EnsurePoolEnabled(pool, scope) || !EnsureReady())
             {
                 return null;
             }
@@ -363,8 +503,57 @@ namespace Joi.H.AppUI
                 return null;
             }
 
-            ActivateInstance(instance, text, color, scope, anchoredPosition, false, 0f, 0f, 0f);
-            return instance;
+            return TryActivateInstance(
+                instance,
+                text,
+                color,
+                scope,
+                anchoredPosition,
+                false,
+                0f,
+                0f,
+                0f)
+                ? instance
+                : null;
+        }
+
+        private bool TryActivateInstance(
+            NoticeInstance instance,
+            string text,
+            Color color,
+            UINoticeScope scope,
+            Vector2 anchoredPosition,
+            bool autoRelease,
+            float duration,
+            float fade,
+            float rise)
+        {
+            try
+            {
+                ActivateInstance(
+                    instance,
+                    text,
+                    color,
+                    scope,
+                    anchoredPosition,
+                    autoRelease,
+                    duration,
+                    fade,
+                    rise);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(
+                    "<Joi.H.AppUI> APPUI_NOTICE_APPLY_FAILED " +
+                    "Kind=" + instance.Kind +
+                    ", Scope=" + scope.Scope +
+                    ", ScopeId=" + scope.SceneScopeId +
+                    ", Exception=" + exception.GetType().Name +
+                    ": " + exception.Message);
+                ReleaseInstance(instance, false);
+                return false;
+            }
         }
 
         /// <summary>
@@ -397,8 +586,11 @@ namespace Joi.H.AppUI
             NoticeViewBase view = instance.View;
             view.gameObject.SetActive(true);
             view.EnsureInitialized();
-            view.SetFallbackFontSize(instance.Pool.Settings.FontSize);
-            view.SetText(text, color);
+            view.ApplyContent(
+                new UINoticeContent(
+                    text,
+                    color,
+                    instance.Pool.Settings.FontSize));
             view.SetAlpha(1f);
             view.SetAnchoredPosition(anchoredPosition);
         }
@@ -456,14 +648,20 @@ namespace Joi.H.AppUI
         }
 
         /// <summary>
-        /// 创建一个可池化 Notice 视图。
-        /// 优先实例化配置 prefab；没有 prefab 时创建最小可用的 uGUI/TMP fallback。
+        /// Instantiates one authored view. Missing prefabs or view components
+        /// are configuration failures; the framework never creates a fallback.
         /// </summary>
         private NoticeViewBase CreateView(NoticePool pool)
         {
-            GameObject viewObject = pool.Prefab != null
-                ? UnityEngine.Object.Instantiate(pool.Prefab, noticeRoot, false)
-                : CreateFallbackViewObject(pool);
+            if (pool.Prefab == null)
+            {
+                return null;
+            }
+
+            GameObject viewObject = UnityEngine.Object.Instantiate(
+                pool.Prefab,
+                noticeRoot,
+                false);
             if (viewObject == null)
             {
                 return null;
@@ -472,107 +670,18 @@ namespace Joi.H.AppUI
             viewObject.name = "Notice_" + pool.Kind;
             viewObject.transform.SetParent(noticeRoot, false);
 
-            NoticeViewBase view = EnsureViewComponent(viewObject, pool.Kind);
+            NoticeViewBase view =
+                viewObject.GetComponent<NoticeViewBase>();
+            if (view == null)
+            {
+                UnityEngine.Object.Destroy(viewObject);
+                return null;
+            }
+
             view.EnsureInitialized();
-            view.SetFallbackFontSize(pool.Settings.FontSize);
             view.SetAlpha(1f);
             view.gameObject.SetActive(false);
             return view;
-        }
-
-        /// <summary>
-        /// 构建内置 fallback 视图。
-        /// 该视图只保证功能可运行，美术项目后续可以通过 AppUINoticeSettings 替换 prefab。
-        /// </summary>
-        private GameObject CreateFallbackViewObject(NoticePool pool)
-        {
-            GameObject viewObject = new GameObject(
-                "Notice_" + pool.Kind,
-                typeof(RectTransform),
-                typeof(CanvasGroup),
-                typeof(Image));
-            RectTransform rectTransform = (RectTransform)viewObject.transform;
-            rectTransform.sizeDelta = GetFallbackSize(pool.Kind);
-            rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
-            rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
-            rectTransform.pivot = new Vector2(0.5f, 0.5f);
-
-            Image background = viewObject.GetComponent<Image>();
-            background.raycastTarget = false;
-            background.color = GetFallbackBackgroundColor(pool.Kind);
-
-            GameObject textObject = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
-            textObject.transform.SetParent(viewObject.transform, false);
-            RectTransform textRect = (RectTransform)textObject.transform;
-            textRect.anchorMin = Vector2.zero;
-            textRect.anchorMax = Vector2.one;
-            textRect.offsetMin = new Vector2(12f, 6f);
-            textRect.offsetMax = new Vector2(-12f, -6f);
-
-            TextMeshProUGUI text = textObject.GetComponent<TextMeshProUGUI>();
-            text.alignment = TextAlignmentOptions.Center;
-            text.textWrappingMode = TextWrappingModes.NoWrap;
-            text.raycastTarget = false;
-            text.fontSize = pool.Settings.FontSize;
-            text.color = pool.Settings.TextColor;
-            return viewObject;
-        }
-
-        /// <summary>根据 Notice 类型返回 fallback 视图尺寸。</summary>
-        private static Vector2 GetFallbackSize(UINoticeKind kind)
-        {
-            switch (kind)
-            {
-                case UINoticeKind.Tooltip:
-                    return new Vector2(280f, 56f);
-                case UINoticeKind.DamageNumber:
-                    return new Vector2(180f, 56f);
-                case UINoticeKind.FloatingText:
-                    return new Vector2(220f, 52f);
-                default:
-                    return new Vector2(360f, 56f);
-            }
-        }
-
-        /// <summary>
-        /// 返回 fallback 背景色。
-        /// 飘字和伤害数字默认无背景，Toast/Tooltip 默认带半透明底避免读不清。
-        /// </summary>
-        private static Color GetFallbackBackgroundColor(UINoticeKind kind)
-        {
-            if (kind == UINoticeKind.FloatingText || kind == UINoticeKind.DamageNumber)
-            {
-                return new Color(0f, 0f, 0f, 0f);
-            }
-
-            return new Color(0f, 0f, 0f, 0.58f);
-        }
-
-        /// <summary>
-        /// 确保视图对象带有 NoticeViewBase 派生组件。
-        /// prefab 已经自带组件时保持原组件，fallback 或简易 prefab 缺失时按类型补齐。
-        /// </summary>
-        private static NoticeViewBase EnsureViewComponent(GameObject viewObject, UINoticeKind kind)
-        {
-            NoticeViewBase view = viewObject.GetComponent<NoticeViewBase>();
-            if (view != null)
-            {
-                return view;
-            }
-
-            switch (kind)
-            {
-                case UINoticeKind.Toast:
-                    return viewObject.AddComponent<ToastNoticeView>();
-                case UINoticeKind.Tooltip:
-                    return viewObject.AddComponent<TooltipNoticeView>();
-                case UINoticeKind.FloatingText:
-                    return viewObject.AddComponent<FloatingTextNoticeView>();
-                case UINoticeKind.DamageNumber:
-                    return viewObject.AddComponent<DamageNumberNoticeView>();
-                default:
-                    return viewObject.AddComponent<NoticeViewBase>();
-            }
         }
 
         /// <summary>
@@ -590,6 +699,39 @@ namespace Joi.H.AppUI
             {
                 warnedMissingRoot = true;
                 Debug.LogError("<Joi.H.AppUI> NoticeService is not ready because NoticeLayer root is missing.");
+            }
+
+            return false;
+        }
+
+        private bool EnsurePoolEnabled(
+            NoticePool pool,
+            UINoticeScope scope)
+        {
+            if (pool != null &&
+                pool.Settings != null &&
+                pool.Settings.Enabled)
+            {
+                return true;
+            }
+
+            UINoticeKind kind = pool != null
+                ? pool.Kind
+                : UINoticeKind.Toast;
+            NoticeDisabledWarningKey key =
+                new NoticeDisabledWarningKey(
+                    runtimeEpoch,
+                    kind,
+                    scope.Scope,
+                    scope.SceneScopeId);
+            if (disabledWarnings.Add(key))
+            {
+                Debug.LogWarning(
+                    "<Joi.H.AppUI> APPUI_NOTICE_DISABLED " +
+                    "Kind=" + kind +
+                    ", Scope=" + scope.Scope +
+                    ", ScopeId=" + scope.SceneScopeId +
+                    ", RuntimeEpoch=" + runtimeEpoch + ".");
             }
 
             return false;
@@ -814,8 +956,21 @@ namespace Joi.H.AppUI
                 return;
             }
 
-            view.ResetForPool();
-            view.gameObject.SetActive(false);
+            try
+            {
+                view.ResetForPool();
+                view.gameObject.SetActive(false);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError(
+                    "<Joi.H.AppUI> APPUI_NOTICE_RECYCLE_FAILED " +
+                    "Kind=" + instance.Kind +
+                    ", Exception=" + exception.GetType().Name +
+                    ": " + exception.Message);
+                destroy = true;
+            }
+
             if (destroy)
             {
                 UnityEngine.Object.Destroy(view.gameObject);
@@ -878,7 +1033,7 @@ namespace Joi.H.AppUI
 
         /// <summary>
         /// Notice 内部分类。
-        /// 不暴露到公开 API，服务仅用它选择对象池、fallback 视图和默认布局。
+        /// 不暴露到公开 API，服务仅用它选择对象池和默认布局。
         /// </summary>
         private enum UINoticeKind
         {
@@ -907,6 +1062,58 @@ namespace Joi.H.AppUI
                 Kind = kind;
                 Settings = AppUINoticeSettings.CreateDefault().Toast;
                 AssetLease = null;
+            }
+        }
+
+        private readonly struct NoticeDisabledWarningKey :
+            IEquatable<NoticeDisabledWarningKey>
+        {
+            private readonly int epoch;
+            private readonly UINoticeKind kind;
+            private readonly UIPageScope scope;
+            private readonly string sceneScopeId;
+
+            public NoticeDisabledWarningKey(
+                int epoch,
+                UINoticeKind kind,
+                UIPageScope scope,
+                string sceneScopeId)
+            {
+                this.epoch = epoch;
+                this.kind = kind;
+                this.scope = scope;
+                this.sceneScopeId = sceneScopeId ?? string.Empty;
+            }
+
+            public bool Equals(NoticeDisabledWarningKey other)
+            {
+                return epoch == other.epoch &&
+                       kind == other.kind &&
+                       scope == other.scope &&
+                       string.Equals(
+                           sceneScopeId,
+                           other.sceneScopeId,
+                           StringComparison.Ordinal);
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is NoticeDisabledWarningKey other &&
+                       Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = epoch;
+                    hash = (hash * 397) ^ (int)kind;
+                    hash = (hash * 397) ^ (int)scope;
+                    hash = (hash * 397) ^
+                           StringComparer.Ordinal.GetHashCode(
+                               sceneScopeId ?? string.Empty);
+                    return hash;
+                }
             }
         }
 

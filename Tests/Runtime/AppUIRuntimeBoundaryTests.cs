@@ -19,6 +19,45 @@ namespace Joi.H.AppUI.Tests
         private const string PageAssetId = "ui/integration-page";
         private const string NoticeAssetId = "ui/provider-toast";
 
+        [Test]
+        public void NoticeSettings_DefaultsDisabled()
+        {
+            AppUINoticeSettings settings =
+                AppUINoticeSettings.CreateDefault();
+
+            Assert.That(settings.Toast.Enabled, Is.False);
+            Assert.That(settings.Tooltip.Enabled, Is.False);
+            Assert.That(settings.FloatingText.Enabled, Is.False);
+            Assert.That(settings.DamageNumber.Enabled, Is.False);
+        }
+
+        [Test]
+        public void NoticeContent_NormalizesNullTextAndNegativeFontSize()
+        {
+            UINoticeContent content =
+                new UINoticeContent(null, Color.red, -4f);
+
+            Assert.That(content.Text, Is.EqualTo(string.Empty));
+            Assert.That(content.Color, Is.EqualTo(Color.red));
+            Assert.That(content.FontSize, Is.Zero);
+        }
+
+        [Test]
+        public void NoticeView_MissingCanvasGroup_FailsWithoutAddingComponent()
+        {
+            GameObject viewObject = new GameObject(
+                "InvalidNoticeView",
+                typeof(RectTransform),
+                typeof(TestNoticeView));
+            TestNoticeView view = viewObject.GetComponent<TestNoticeView>();
+
+            Assert.Throws<InvalidOperationException>(
+                () => view.EnsureInitialized());
+            Assert.That(viewObject.GetComponent<CanvasGroup>(), Is.Null);
+
+            Object.DestroyImmediate(viewObject);
+        }
+
         [UnityTest]
         public IEnumerator AssetLease_RemainsIdempotentAcrossFrames()
         {
@@ -136,33 +175,179 @@ namespace Joi.H.AppUI.Tests
         }
 
         [UnityTest]
-        public IEnumerator NoticeFallback_CreatesViewAndClearsWithSceneScope()
+        public IEnumerator NoticeDisabled_ReturnsInvalidHandle_DoesNotLoad_AndWarnsOncePerEpoch()
         {
-            RuntimeFixture fixture = RuntimeFixture.Create(false, false);
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                false,
+                true);
             ToastNoticeRequest request = ToastNoticeRequest.Create(
-                "fallback-toast");
+                "disabled-toast");
             request.Scope = UINoticeScope.Scene("scene-notice");
             request.Duration = 10f;
-            ToastHandle handle = fixture.Manager.Notices.Toast(request);
 
-            Assert.That(handle.IsValid, Is.True);
-            Assert.That(
-                CountActiveToastViews(fixture.NoticeRoot),
-                Is.EqualTo(1));
+            LogAssert.Expect(
+                LogType.Warning,
+                new Regex("APPUI_NOTICE_DISABLED.*Toast"));
+            ToastHandle first = fixture.Manager.Notices.Toast(request);
+            ToastHandle second = fixture.Manager.Notices.Toast(request);
+
+            Assert.That(first.IsValid, Is.False);
+            Assert.That(second.IsValid, Is.False);
             Assert.That(fixture.Provider.SyncLoadCount, Is.Zero);
+            yield return fixture.Dispose();
+            LogAssert.NoUnexpectedReceived();
+        }
 
-            IUIOperation<UIScopeReleaseResult> releaseOperation =
+        [UnityTest]
+        public IEnumerator NoticeEnabledWithoutAssetId_InitializationFails()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                noticeOptions: new NoticeFixtureOptions
+                {
+                    Enabled = true,
+                });
+
+            Assert.That(
+                fixture.InitializationResult.Status,
+                Is.EqualTo(
+                    AppUIInitializationStatus.InvalidNoticeConfiguration));
+            Assert.That(fixture.Provider.SyncLoadCount, Is.Zero);
+            Assert.Throws<InvalidOperationException>(
+                () => fixture.Manager.Notices.Toast("not-initialized"));
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
+        public IEnumerator NoticeEnabledWithoutNoticeLayer_InitializationFailsWithoutLoading()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                noticeOptions: NoticeFixtureOptions.Valid(
+                    includeNoticeLayer: false));
+
+            Assert.That(
+                fixture.InitializationResult.Status,
+                Is.EqualTo(AppUIInitializationStatus.MissingNoticeLayer));
+            Assert.That(fixture.Provider.SyncLoadCount, Is.Zero);
+            yield return fixture.Dispose();
+        }
+
+        [UnityTest]
+        public IEnumerator NoticeEnabledPrefabLoadFailure_InitializationFailsAndReleasesLease()
+        {
+            NoticeFixtureOptions options = NoticeFixtureOptions.Valid();
+            options.EnableTooltip = true;
+            options.FailNoticeLoadAtCall = 2;
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                noticeOptions: options);
+
+            Assert.That(
+                fixture.InitializationResult.Status,
+                Is.EqualTo(AppUIInitializationStatus.NoticePrefabLoadFailed));
+            Assert.That(fixture.Provider.SyncLoadCount, Is.EqualTo(2));
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(2));
+            yield return fixture.Dispose();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(2));
+        }
+
+        [UnityTest]
+        public IEnumerator NoticeEnabledPrefabWithoutView_InitializationFailsAndReleasesLease()
+        {
+            NoticeFixtureOptions options = NoticeFixtureOptions.Valid();
+            options.IncludeView = false;
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                noticeOptions: options);
+
+            Assert.That(
+                fixture.InitializationResult.Status,
+                Is.EqualTo(AppUIInitializationStatus.InvalidNoticePrefab));
+            Assert.That(fixture.Provider.SyncLoadCount, Is.EqualTo(1));
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            yield return fixture.Dispose();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+        }
+
+        [UnityTest]
+        public IEnumerator NoticeApplyContentFailure_ReturnsInvalidHandleAndRecyclesInstance()
+        {
+            NoticeFixtureOptions options = NoticeFixtureOptions.Valid();
+            options.ThrowOnApply = true;
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                noticeOptions: options);
+
+            Assert.That(fixture.InitializationResult.Success, Is.True);
+            int viewCount = fixture.NoticeRoot
+                .GetComponentsInChildren<TestNoticeView>(true).Length;
+            LogAssert.Expect(
+                LogType.Error,
+                new Regex("APPUI_NOTICE_APPLY_FAILED.*Toast"));
+
+            ToastHandle failed = fixture.Manager.Notices.Toast("fails-once");
+
+            Assert.That(failed.IsValid, Is.False);
+            Assert.That(CountActiveNoticeViews(fixture.NoticeRoot), Is.Zero);
+            Assert.That(
+                fixture.NoticeRoot
+                    .GetComponentsInChildren<TestNoticeView>(true).Length,
+                Is.EqualTo(viewCount));
+            TestNoticeView[] views = fixture.NoticeRoot
+                .GetComponentsInChildren<TestNoticeView>(true);
+            for (int i = 0; i < views.Length; i++)
+            {
+                views[i].ThrowOnApply = false;
+            }
+
+            ToastHandle recovered = fixture.Manager.Notices.Toast("recovered");
+
+            Assert.That(recovered.IsValid, Is.True);
+            Assert.That(CountActiveNoticeViews(fixture.NoticeRoot), Is.EqualTo(1));
+            yield return fixture.Dispose();
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [UnityTest]
+        public IEnumerator NoticeConfiguredView_ClearsWithSceneScopeAndShutdown()
+        {
+            RuntimeFixture fixture = RuntimeFixture.Create(
+                false,
+                false,
+                noticeOptions: NoticeFixtureOptions.Valid());
+            ToastNoticeRequest request = ToastNoticeRequest.Create(
+                "scene-notice");
+            request.Scope = UINoticeScope.Scene("scene-cleanup");
+            request.Duration = 10f;
+            Assert.That(
+                fixture.Manager.Notices.Toast(request).IsValid,
+                Is.True);
+            Assert.That(CountActiveNoticeViews(fixture.NoticeRoot), Is.EqualTo(1));
+
+            IUIOperation<UIScopeReleaseResult> release =
                 fixture.Manager.ReleaseScope(
                     UIPageScope.SceneScope,
-                    "scene-notice");
-            yield return WaitFor(releaseOperation);
-            AssertSucceeded(
-                releaseOperation,
-                out UIScopeReleaseResult result);
+                    "scene-cleanup");
+            yield return WaitFor(release);
 
-            Assert.That(result.Success, Is.True);
+            Assert.That(CountActiveNoticeViews(fixture.NoticeRoot), Is.Zero);
             Assert.That(
-                CountActiveToastViews(fixture.NoticeRoot),
+                fixture.Manager.Notices.Toast("global-notice").IsValid,
+                Is.True);
+            fixture.Manager.Shutdown();
+            Assert.That(fixture.Provider.ReleaseCount, Is.EqualTo(1));
+            yield return null;
+            Assert.That(
+                fixture.NoticeRoot
+                    .GetComponentsInChildren<TestNoticeView>(true).Length,
                 Is.Zero);
             yield return fixture.Dispose();
         }
@@ -438,8 +623,7 @@ namespace Joi.H.AppUI.Tests
             RuntimeFixture fixture = RuntimeFixture.Create(
                 false,
                 false,
-                false,
-                true);
+                noticeOptions: NoticeFixtureOptions.Valid());
             Assert.That(fixture.Provider.SyncLoadCount, Is.EqualTo(1));
 
             ToastHandle handle =
@@ -447,7 +631,7 @@ namespace Joi.H.AppUI.Tests
 
             Assert.That(handle.IsValid, Is.True);
             Assert.That(
-                CountActiveProviderNoticeViews(fixture.NoticeRoot),
+                CountActiveNoticeViews(fixture.NoticeRoot),
                 Is.EqualTo(1));
             Assert.That(fixture.Provider.ReleaseCount, Is.Zero);
 
@@ -500,21 +684,6 @@ namespace Joi.H.AppUI.Tests
             yield return fixture.Dispose();
         }
 
-        private static int CountActiveToastViews(RectTransform root)
-        {
-            ToastNoticeView[] views = root.GetComponentsInChildren<ToastNoticeView>(true);
-            int count = 0;
-            for (int i = 0; i < views.Length; i++)
-            {
-                if (views[i] != null && views[i].gameObject.activeSelf)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
         private static T GetPrivateField<T>(
             object target,
             Type declaringType,
@@ -528,9 +697,10 @@ namespace Joi.H.AppUI.Tests
             return (T)field.GetValue(target);
         }
 
-        private static int CountActiveProviderNoticeViews(RectTransform root)
+        private static int CountActiveNoticeViews(RectTransform root)
         {
-            ProviderNoticeMarker[] views = root.GetComponentsInChildren<ProviderNoticeMarker>(true);
+            TestNoticeView[] views =
+                root.GetComponentsInChildren<TestNoticeView>(true);
             int count = 0;
             for (int i = 0; i < views.Length; i++)
             {
@@ -543,6 +713,30 @@ namespace Joi.H.AppUI.Tests
             return count;
         }
 
+        private sealed class NoticeFixtureOptions
+        {
+            public bool Enabled;
+            public bool IncludeNoticeLayer = true;
+            public string AssetId = string.Empty;
+            public bool ProvidePrefab;
+            public bool IncludeView = true;
+            public bool EnableTooltip;
+            public int FailNoticeLoadAtCall;
+            public bool ThrowOnApply;
+
+            public static NoticeFixtureOptions Valid(
+                bool includeNoticeLayer = true)
+            {
+                return new NoticeFixtureOptions
+                {
+                    Enabled = true,
+                    IncludeNoticeLayer = includeNoticeLayer,
+                    AssetId = NoticeAssetId,
+                    ProvidePrefab = true,
+                };
+            }
+        }
+
         private sealed class RuntimeFixture
         {
             private readonly List<Object> ownedObjects = new List<Object>(4);
@@ -551,23 +745,40 @@ namespace Joi.H.AppUI.Tests
             public RectTransform NoticeRoot { get; private set; }
             public AppUIManager Manager { get; private set; }
             public CountingAssetProvider Provider { get; private set; }
+            public AppUIInitializationResult InitializationResult
+            {
+                get;
+                private set;
+            }
 
             public static RuntimeFixture Create(
                 bool delayPageLoad,
                 bool includePage,
                 bool closeOnCancel = false,
                 bool includeProviderNotice = false,
-                IUIPageInstanceStrategy instanceStrategy = null)
+                IUIPageInstanceStrategy instanceStrategy = null,
+                NoticeFixtureOptions noticeOptions = null)
             {
                 TestPanelController.ResetState();
                 RuntimeFixture fixture = new RuntimeFixture();
                 fixture.Root = new GameObject("AppUI Runtime Integration Root", typeof(RectTransform), typeof(Canvas));
                 fixture.Manager = fixture.Root.AddComponent<AppUIManager>();
 
-                UILayerRoot[] roots = new UILayerRoot[UILayerRuntimeConfigurator.BuiltInLayerIds.Length];
-                for (int i = 0; i < roots.Length; i++)
+                NoticeFixtureOptions resolvedNoticeOptions =
+                    noticeOptions ?? new NoticeFixtureOptions();
+                List<UILayerRoot> rootList = new List<UILayerRoot>(
+                    UILayerRuntimeConfigurator.BuiltInLayerIds.Length);
+                for (int i = 0;
+                     i < UILayerRuntimeConfigurator.BuiltInLayerIds.Length;
+                     i++)
                 {
                     UILayerId layerId = UILayerRuntimeConfigurator.BuiltInLayerIds[i];
+                    if (layerId == UILayerId.NoticeLayer &&
+                        !resolvedNoticeOptions.IncludeNoticeLayer)
+                    {
+                        continue;
+                    }
+
                     UILayerRuntimeConfigurator.TryGetDefaultLayerSetting(
                         layerId,
                         out UICanvasDomain canvasDomain,
@@ -577,13 +788,15 @@ namespace Joi.H.AppUI.Tests
                     layerObject.transform.SetParent(fixture.Root.transform, false);
                     UILayerRoot layerRoot = layerObject.AddComponent<UILayerRoot>();
                     layerRoot.Configure(layerId, canvasDomain, (RectTransform)layerObject.transform);
-                    roots[i] = layerRoot;
+                    rootList.Add(layerRoot);
 
                     if (layerId == UILayerId.NoticeLayer)
                     {
                         fixture.NoticeRoot = (RectTransform)layerObject.transform;
                     }
                 }
+
+                UILayerRoot[] roots = rootList.ToArray();
 
                 UIPageDefinitionRegistry registry = ScriptableObject.CreateInstance<UIPageDefinitionRegistry>();
                 fixture.ownedObjects.Add(registry);
@@ -620,30 +833,59 @@ namespace Joi.H.AppUI.Tests
 
                 GameObject noticePrefab = null;
                 AppUINoticeSettings noticeSettings = AppUINoticeSettings.CreateDefault();
-                if (includeProviderNotice)
+                if (includeProviderNotice ||
+                    resolvedNoticeOptions.ProvidePrefab)
                 {
                     noticePrefab = new GameObject(
                         "ProviderToastPrefab",
                         typeof(RectTransform),
-                        typeof(CanvasGroup),
-                        typeof(ProviderNoticeMarker));
+                        typeof(CanvasGroup));
+                    if (resolvedNoticeOptions.IncludeView)
+                    {
+                        TestNoticeView noticeView =
+                            noticePrefab.AddComponent<TestNoticeView>();
+                        noticeView.ThrowOnApply =
+                            resolvedNoticeOptions.ThrowOnApply;
+                    }
                     noticePrefab.SetActive(false);
                     fixture.ownedObjects.Add(noticePrefab);
-                    SetPrivateField(
-                        noticeSettings.Toast,
-                        typeof(AppUINoticeVisualSettings),
-                        "prefabAssetId",
-                        NoticeAssetId);
                 }
+
+                SetPrivateField(
+                    noticeSettings.Toast,
+                    typeof(AppUINoticeVisualSettings),
+                    "enabled",
+                    resolvedNoticeOptions.Enabled);
+                SetPrivateField(
+                    noticeSettings.Toast,
+                    typeof(AppUINoticeVisualSettings),
+                    "prefabAssetId",
+                    string.IsNullOrEmpty(resolvedNoticeOptions.AssetId) &&
+                    includeProviderNotice
+                        ? NoticeAssetId
+                        : resolvedNoticeOptions.AssetId);
+                SetPrivateField(
+                    noticeSettings.Tooltip,
+                    typeof(AppUINoticeVisualSettings),
+                    "enabled",
+                    resolvedNoticeOptions.EnableTooltip);
+                SetPrivateField(
+                    noticeSettings.Tooltip,
+                    typeof(AppUINoticeVisualSettings),
+                    "prefabAssetId",
+                    resolvedNoticeOptions.EnableTooltip
+                        ? NoticeAssetId + "-tooltip"
+                        : string.Empty);
 
                 fixture.Provider = new CountingAssetProvider(
                     pagePrefab,
                     noticePrefab,
-                    delayPageLoad);
+                    delayPageLoad,
+                    resolvedNoticeOptions.FailNoticeLoadAtCall);
                 ManualUIOperationFactory operationFactory =
                     new ManualUIOperationFactory();
                 fixture.Provider.SetOperationFactory(operationFactory);
-                fixture.Manager.Initialize(
+                fixture.InitializationResult = fixture.Manager.Initialize(
                     registry,
                     new AppUIRuntimeDependencies(
                         operationFactory,
@@ -718,6 +960,7 @@ namespace Joi.H.AppUI.Tests
             private readonly GameObject pagePrefab;
             private readonly GameObject noticePrefab;
             private readonly bool delayPageLoad;
+            private readonly int failNoticeLoadAtCall;
             private IUIOperationFactory operationFactory;
             private readonly Queue<Action> pendingLoadCompletions =
                 new Queue<Action>();
@@ -725,11 +968,13 @@ namespace Joi.H.AppUI.Tests
             public CountingAssetProvider(
                 GameObject pagePrefab,
                 GameObject noticePrefab,
-                bool delayPageLoad)
+                bool delayPageLoad,
+                int failNoticeLoadAtCall)
             {
                 this.pagePrefab = pagePrefab;
                 this.noticePrefab = noticePrefab;
                 this.delayPageLoad = delayPageLoad;
+                this.failNoticeLoadAtCall = failNoticeLoadAtCall;
             }
 
             public int AsyncLoadCount { get; private set; }
@@ -747,7 +992,23 @@ namespace Joi.H.AppUI.Tests
                 where T : Object
             {
                 SyncLoadCount++;
-                if (assetId == NoticeAssetId && noticePrefab != null && typeof(T) == typeof(GameObject))
+                bool isNoticeAsset = assetId.StartsWith(
+                    NoticeAssetId,
+                    StringComparison.Ordinal);
+                if (isNoticeAsset &&
+                    failNoticeLoadAtCall == SyncLoadCount &&
+                    typeof(T) == typeof(GameObject))
+                {
+                    result = UIAssetLoadResult<T>.Failure(
+                        UIAssetLoadStatus.NotFound,
+                        "Intentional Notice load failure.",
+                        new UIAssetLease(() => ReleaseCount++));
+                    return false;
+                }
+
+                if (isNoticeAsset &&
+                    noticePrefab != null &&
+                    typeof(T) == typeof(GameObject))
                 {
                     result = UIAssetLoadResult<T>.Success(
                         noticePrefab as T,
@@ -898,8 +1159,30 @@ namespace Joi.H.AppUI.Tests
             }
         }
 
-        private sealed class ProviderNoticeMarker : MonoBehaviour
+        private sealed class TestNoticeView : NoticeViewBase
         {
+            [SerializeField]
+            private bool throwOnApply;
+
+            public UINoticeContent LastContent { get; private set; }
+
+            public bool ThrowOnApply
+            {
+                get { return throwOnApply; }
+                set { throwOnApply = value; }
+            }
+
+            public override void ApplyContent(
+                in UINoticeContent content)
+            {
+                if (throwOnApply)
+                {
+                    throw new InvalidOperationException(
+                        "intentional notice apply failure");
+                }
+
+                LastContent = content;
+            }
         }
 
         private sealed class ClaimThenThrowInstanceStrategy :

@@ -154,8 +154,25 @@ namespace Joi.H.AppUI
                 noticeSettings = appNoticeSettings;
             }
 
-            InitializeInternal(resolvedConfiguration);
-            return AppUIInitializationResult.Ok();
+            try
+            {
+                AppUIInitializationResult initialization =
+                    InitializeInternal(resolvedConfiguration);
+                if (initialization.Success)
+                {
+                    return initialization;
+                }
+
+                ClearPartialInitialization();
+                ClearRuntimeDependencies();
+                return initialization;
+            }
+            catch
+            {
+                ClearPartialInitialization();
+                ClearRuntimeDependencies();
+                throw;
+            }
         }
 
         private void Update()
@@ -277,7 +294,7 @@ namespace Joi.H.AppUI
             assetProvider = null;
         }
 
-        private void InitializeInternal(
+        private AppUIInitializationResult InitializeInternal(
             AppUIRuntimeConfiguration configuration)
         {
             EnsureRuntimeServices();
@@ -317,9 +334,16 @@ namespace Joi.H.AppUI
             layerController.Initialize(layerRoots);
             layerRuntimeConfigurator = new UILayerRuntimeConfigurator(layerSettings);
             layerRuntimeConfigurator.ApplyLayerSortingSafe(layerRoots);
-            ConfigureNoticeService();
+            AppUIInitializationResult noticeInitialization =
+                ConfigureNoticeService();
+            if (!noticeInitialization.Success)
+            {
+                return noticeInitialization;
+            }
+
             ValidateConfiguration();
             initialized = true;
+            return AppUIInitializationResult.Ok();
         }
 
         public IUIOperation<UISceneBindResult> BindScene(
@@ -561,7 +585,7 @@ namespace Joi.H.AppUI
         /// 将 NoticeService 绑定到当前 NoticeLayer。
         /// 该方法在 Manager 初始化和资源服务重新注入时调用，保证池对象挂载到当前 Runtime Root 下。
         /// </summary>
-        private void ConfigureNoticeService()
+        private AppUIInitializationResult ConfigureNoticeService()
         {
             EnsureRuntimeServices();
             RectTransform noticeRoot = null;
@@ -571,7 +595,11 @@ namespace Joi.H.AppUI
                 noticeRoot = layerRoot.ContentRoot;
             }
 
-            noticeService.Initialize(noticeRoot, assetProvider, noticeSettings ?? AppUINoticeSettings.CreateDefault());
+            return noticeService.Initialize(
+                noticeRoot,
+                assetProvider,
+                noticeSettings ?? AppUINoticeSettings.CreateDefault(),
+                runtimeEpoch);
         }
 
         private bool EnsureInitialized()

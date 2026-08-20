@@ -22,6 +22,10 @@ namespace Joi.H.AppUI
         UnknownDefinitionLoadStrategy = 15,
         UnknownDefinitionInstanceStrategy = 16,
         AlreadyInitializedWithDifferentConfiguration = 17,
+        InvalidNoticeConfiguration = 18,
+        MissingNoticeLayer = 19,
+        NoticePrefabLoadFailed = 20,
+        InvalidNoticePrefab = 21,
     }
 
     /// <summary>

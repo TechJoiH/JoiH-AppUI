@@ -6,11 +6,14 @@ namespace Joi.H.AppUI
 {
     /// <summary>
     /// Notice 单类表现配置。
-    /// 资源 ID 可为空；为空或加载失败时 NoticeService 会创建内置 fallback uGUI 视图。
+    /// 默认关闭；显式启用后必须提供可同步加载且实现 NoticeViewBase 的 prefab。
     /// </summary>
     [Serializable]
     public sealed class AppUINoticeVisualSettings
     {
+        [SerializeField]
+        private bool enabled;
+
         [SerializeField]
         [FormerlySerializedAs("prefabResourceId")]
         private string prefabAssetId;
@@ -36,7 +39,13 @@ namespace Joi.H.AppUI
         [SerializeField]
         private Color textColor = Color.white;
 
-        /// <summary>可选 prefab 资源 ID；第一版走 IUIAssetProvider 的同步加载。</summary>
+        /// <summary>是否启用这一类 Notice 视觉；默认关闭，必须由接入项目显式配置。</summary>
+        public bool Enabled
+        {
+            get { return enabled; }
+        }
+
+        /// <summary>启用后必填的 prefab 资源 ID；通过 IUIAssetProvider 同步加载。</summary>
         public string PrefabAssetId
         {
             get { return prefabAssetId ?? string.Empty; }
@@ -72,7 +81,7 @@ namespace Joi.H.AppUI
             get { return maxActiveCount; }
         }
 
-        /// <summary>fallback 视图的默认字号。</summary>
+        /// <summary>传给接入项目 NoticeViewBase 实现的默认字号。</summary>
         public int FontSize
         {
             get { return Mathf.Max(8, fontSize); }
@@ -109,7 +118,7 @@ namespace Joi.H.AppUI
 
     /// <summary>
     /// App UI Notice 总配置。
-    /// 挂在 AppUIRuntimeProfile 上，允许正式项目替换美术 prefab；未配置时使用内置默认视觉。
+    /// 挂在 AppUIRuntimeProfile 上；框架不提供默认视觉，也不自动创建视图组件。
     /// </summary>
     [Serializable]
     public sealed class AppUINoticeSettings
@@ -152,7 +161,7 @@ namespace Joi.H.AppUI
 
         /// <summary>
         /// 创建一份内置默认配置。
-        /// 手动测试场景或旧 asset 没有序列化 noticeSettings 字段时使用它兜底。
+        /// 手动测试场景或旧 asset 没有序列化 noticeSettings 字段时使用；所有视觉默认关闭。
         /// </summary>
         public static AppUINoticeSettings CreateDefault()
         {
