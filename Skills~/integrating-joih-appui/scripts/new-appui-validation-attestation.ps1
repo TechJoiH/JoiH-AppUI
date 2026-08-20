@@ -346,6 +346,7 @@ function Get-ProjectBinding {
 
     $assetsBinding = Get-CanonicalAssetsBinding -Entries $entries
     return [pscustomobject][ordered]@{
+        scanComplete = $true
         unityVersion = $unityVersion
         manifestSha256 = Get-FileSha256 -Path $manifestPath
         packagesLockSha256 = Get-FileSha256 -Path $lockPath
@@ -354,6 +355,34 @@ function Get-ProjectBinding {
         assetsDigest = $assetsBinding.digest
         assetsFileCount = $assetsBinding.fileCount
         newestInputWriteTimeUtc = $newestInput
+    }
+}
+
+function Assert-StableProjectBinding {
+    param(
+        [Parameter(Mandatory = $true)]$Before,
+        [Parameter(Mandatory = $true)]$After
+    )
+
+    foreach ($propertyName in @(
+        'scanComplete',
+        'unityVersion',
+        'manifestSha256',
+        'packagesLockSha256',
+        'projectVersionSha256',
+        'projectSettingsSha256',
+        'assetsDigest',
+        'assetsFileCount',
+        'newestInputWriteTimeUtc'
+    )) {
+        $beforeValue = Get-ExactPropertyValue -Object $Before -Name $propertyName
+        $afterValue = Get-ExactPropertyValue -Object $After -Name $propertyName
+        if ($beforeValue -cne $afterValue) {
+            throw ("Unity project changed during validation: {0}." -f $propertyName)
+        }
+    }
+    if ($Before.scanComplete -ne $true -or $After.scanComplete -ne $true) {
+        throw 'Unity project binding was incomplete before or after validation.'
     }
 }
 
@@ -813,7 +842,7 @@ try {
     $runtimeProcess = $null
     if ($provisionalBindingReport.status -ceq 'Passed') {
         $runtimeArguments = @(
-            '-batchmode', '-nographics',
+            '-batchmode', '-nographics', '-quit',
             '-projectPath', $unityRoot,
             '-runTests', '-testPlatform', 'EditMode',
             '-testFilter', $LifecycleTestFilter,
@@ -830,6 +859,7 @@ try {
     }
 
     $binding = Get-ProjectBinding -UnityRoot $unityRoot -MaximumFiles $MaxSourceFiles
+    Assert-StableProjectBinding -Before $initialBinding -After $binding
     $bindingReport = Get-BindingReportFacts -Path $bindingReportPath `
         -UnityVersion $binding.unityVersion -SettingsPath $bindingSettingsUnityPath `
         -ProcessResult $bindingProcess -NewestProjectInput $binding.newestInputWriteTimeUtc

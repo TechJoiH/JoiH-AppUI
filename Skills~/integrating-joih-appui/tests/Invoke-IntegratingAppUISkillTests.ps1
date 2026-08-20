@@ -243,6 +243,7 @@ using System.IO;
 using System.Linq;
 using System.Security;
 using System.Text;
+using System.Threading;
 
 public static class FakeUnityCommandLine
 {
@@ -259,6 +260,62 @@ public static class FakeUnityCommandLine
     private static bool Has(string[] args, string value)
     {
         return args.Any(item => String.Equals(item, value, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ExactBindingArguments(string[] args)
+    {
+        try
+        {
+            if (args.Length != 13 ||
+                args[0] != "-batchmode" || args[1] != "-nographics" || args[2] != "-quit" ||
+                args[3] != "-projectPath" || !Path.IsPathRooted(args[4]) ||
+                args[5] != "-executeMethod" ||
+                args[6] != "Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll" ||
+                args[7] != "-appUIBindingSettingsPath" ||
+                args[8] != "Assets/AppUI/Settings/MainUIBindingSettings.asset" ||
+                args[9] != "-appUIValidationReportPath" ||
+                Path.GetFileName(args[10]) != "app-ui-binding-validation.v2.json" ||
+                args[11] != "-logFile" || Path.GetFileName(args[12]) != "binding-unity.log")
+                return false;
+            return String.Equals(Path.GetDirectoryName(Path.GetFullPath(args[10])),
+                Path.GetDirectoryName(Path.GetFullPath(args[12])), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ExactRuntimeArguments(string[] args)
+    {
+        try
+        {
+            if (args.Length != 14 ||
+                args[0] != "-batchmode" || args[1] != "-nographics" || args[2] != "-quit" ||
+                args[3] != "-projectPath" || !Path.IsPathRooted(args[4]) ||
+                args[5] != "-runTests" || args[6] != "-testPlatform" || args[7] != "EditMode" ||
+                args[8] != "-testFilter" || String.IsNullOrEmpty(args[9]) ||
+                args[10] != "-testResults" ||
+                Path.GetFileName(args[11]) != "app-ui-lifecycle-tests.xml" ||
+                args[12] != "-logFile" || Path.GetFileName(args[13]) != "runtime-unity.log")
+                return false;
+            return String.Equals(Path.GetDirectoryName(Path.GetFullPath(args[11])),
+                Path.GetDirectoryName(Path.GetFullPath(args[13])), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void MutateProjectDuringValidation(string projectPath)
+    {
+        string sourcePath = Path.Combine(projectPath,
+            "Assets", "AppUI", "Runtime", "ProjectAppUIHost.cs");
+        string manifestPath = Path.Combine(projectPath, "Packages", "manifest.json");
+        File.AppendAllText(sourcePath, Environment.NewLine + "// mutated during validation",
+            new UTF8Encoding(false));
+        File.AppendAllText(manifestPath, " ", new UTF8Encoding(false));
     }
 
     private static string Json(string value)
@@ -285,6 +342,8 @@ public static class FakeUnityCommandLine
         if (String.IsNullOrEmpty(path)) return 2;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
         DateTime started = DateTime.UtcNow.AddMilliseconds(-2);
+        if (scenario == "MutateProjectDuringValidation")
+            MutateProjectDuringValidation(Arg(args, "-projectPath"));
         DateTime finished = DateTime.UtcNow;
         bool validationFailed = scenario == "BindingFail";
         bool commandFailed = scenario == "BindingCommandFail";
@@ -312,6 +371,11 @@ public static class FakeUnityCommandLine
     private static int WriteRuntime(string[] args, string scenario)
     {
         string path = Arg(args, "-testResults");
+        if (scenario == "RuntimeTimeout")
+        {
+            Thread.Sleep(5000);
+            return 0;
+        }
         if (scenario == "RuntimeNoReport") return 0;
         if (scenario == "RuntimeProcessFail") return 3;
         if (String.IsNullOrEmpty(path)) return 3;
@@ -355,10 +419,16 @@ public static class FakeUnityCommandLine
     {
         LogInvocation(args);
         string scenario = Environment.GetEnvironmentVariable("APPUI_FAKE_UNITY_SCENARIO") ?? "Pass";
-        if (Has(args, "Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll"))
+        if (Has(args, "-executeMethod"))
+        {
+            if (!ExactBindingArguments(args)) return 91;
             return WriteBinding(args, scenario);
+        }
         if (Has(args, "-runTests"))
+        {
+            if (!ExactRuntimeArguments(args)) return 92;
             return WriteRuntime(args, scenario);
+        }
         return 9;
     }
 }
@@ -389,7 +459,8 @@ function Invoke-ValidationProducer {
         [Parameter(Mandatory = $true)][string]$OutputPath,
         [string]$Scenario = 'Pass',
         [string]$LifecycleTestFilter = 'Joi.H.AppUI.Tests.Lifecycle',
-        [string]$InvocationLogPath = ''
+        [string]$InvocationLogPath = '',
+        [ValidateRange(1, 30)][int]$TimeoutSeconds = 10
     )
 
     if ([string]::IsNullOrWhiteSpace($InvocationLogPath)) {
@@ -404,7 +475,7 @@ function Invoke-ValidationProducer {
             -UnityPath $script:FakeUnityPath `
             -BindingSettingsPath (Join-Path $ProjectPath 'Assets\AppUI\Settings\MainUIBindingSettings.asset') `
             -LifecycleTestFilter $LifecycleTestFilter -OutputPath $OutputPath `
-            -TimeoutSeconds 10 -MaxSourceFiles 10000)
+            -TimeoutSeconds $TimeoutSeconds -MaxSourceFiles 10000)
     }
     finally {
         [Environment]::SetEnvironmentVariable('APPUI_FAKE_UNITY_SCENARIO', $priorScenario)
@@ -597,6 +668,75 @@ try {
         }
         Assert-Equal -Expected $prewrittenHash -Actual (Get-FileSha256 -Path $prewritten) `
             -Message 'Producer read or changed a caller-prewritten report.'
+    }
+
+    Invoke-Test -Name 'Project mutation during Unity validation prevents attestation' -Body {
+        $fixture = New-UnityFixture -RunRoot $runRoot -Name 'mid-run-project-mutation' `
+            -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $fixture
+        Add-RuntimeRoot -Root $fixture
+        Add-PageContract -Root $fixture
+        Add-GeneratedBinding -Root $fixture
+        $sourcePath = Join-Path $fixture 'Assets\AppUI\Runtime\ProjectAppUIHost.cs'
+        $manifestPath = Join-Path $fixture 'Packages\manifest.json'
+        $sourceHashBefore = Get-FileSha256 -Path $sourcePath
+        $manifestHashBefore = Get-FileSha256 -Path $manifestPath
+        $artifactRoot = Join-Path $runRoot 'mid-run-project-mutation-artifacts'
+        [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
+        $output = Join-Path $artifactRoot 'must-not-exist.json'
+
+        $blocked = $false
+        try {
+            Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $output `
+                -Scenario 'MutateProjectDuringValidation' | Out-Null
+        }
+        catch {
+            $blocked = $true
+        }
+
+        Assert-True -Condition $blocked `
+            -Message 'Producer attested a post-run snapshot different from its pre-run snapshot.'
+        Assert-Equal -Expected $false -Actual (Test-Path -LiteralPath $output) `
+            -Message 'Mid-run project mutation left a false current attestation.'
+        Assert-True -Condition ((Get-FileSha256 -Path $sourcePath) -cne $sourceHashBefore) `
+            -Message 'Fake Unity did not leave its validation-relevant Assets mutation in place.'
+        Assert-True -Condition ((Get-FileSha256 -Path $manifestPath) -cne $manifestHashBefore) `
+            -Message 'Fake Unity did not leave its manifest mutation in place.'
+        foreach ($path in @($sourcePath, $manifestPath)) {
+            $ageSeconds = ([datetime]::UtcNow - (Get-Item -LiteralPath $path).LastWriteTimeUtc).TotalSeconds
+            Assert-True -Condition ($ageSeconds -ge 0 -and $ageSeconds -lt 30) `
+                -Message 'Fake Unity mutation did not use an ordinary current file timestamp.'
+        }
+    }
+
+    Invoke-Test -Name 'Runtime replay future and timeout evidence remain pending' -Body {
+        $fixture = New-UnityFixture -RunRoot $runRoot -Name 'runtime-window-adversaries' `
+            -AppUIReference $officialTag
+        Add-AppUIHostAndPorts -Root $fixture
+        Add-RuntimeRoot -Root $fixture
+        Add-PageContract -Root $fixture
+        Add-GeneratedBinding -Root $fixture
+        $artifactRoot = Join-Path $runRoot 'runtime-window-adversaries-artifacts'
+        [System.IO.Directory]::CreateDirectory($artifactRoot) | Out-Null
+        foreach ($case in @(
+            @{ scenario = 'RuntimeReplay'; reason = 'RuntimeReportRejected'; timeout = 10 },
+            @{ scenario = 'RuntimeFuture'; reason = 'RuntimeReportRejected'; timeout = 10 },
+            @{ scenario = 'RuntimeTimeout'; reason = 'RuntimeProcessTimedOut'; timeout = 1 }
+        )) {
+            $output = Join-Path $artifactRoot ($case.scenario + '.json')
+            Invoke-ValidationProducer -ProjectPath $fixture -OutputPath $output `
+                -Scenario $case.scenario -TimeoutSeconds $case.timeout | Out-Null
+            $attestation = [System.IO.File]::ReadAllText($output) | ConvertFrom-Json
+            Assert-Equal -Expected 'Passed' -Actual $attestation.binding.status `
+                -Message ($case.scenario + ' discarded genuine Binding evidence.')
+            Assert-Equal -Expected 'Pending' -Actual $attestation.runtime.status `
+                -Message ($case.scenario + ' produced a definitive runtime outcome.')
+            Assert-Equal -Expected $case.reason -Actual $attestation.runtime.reason `
+                -Message ($case.scenario + ' was not rejected for the expected boundary.')
+            $inspection = Invoke-Inspection -ProjectPath $fixture -AttestationPath $output
+            Assert-Equal -Expected 'RuntimeValidationPending' -Actual $inspection.status `
+                -Message ($case.scenario + ' produced Ready.')
+        }
     }
 
     Invoke-Test -Name 'Secret-named explicit attestations are never trusted' -Body {
@@ -1379,25 +1519,35 @@ public sealed class SamplePanelController : PanelBaseController {
         $invocations = @(Read-FakeUnityInvocations -Path $invocationLog)
         Assert-Equal -Expected 2 -Actual $invocations.Count `
             -Message 'Producer did not invoke exactly Binding then Unity Test Runner.'
-        Assert-True -Condition ($invocations[0] -contains '-executeMethod') `
-            -Message 'First Unity invocation omitted -executeMethod.'
-        Assert-True -Condition ($invocations[0] -contains `
-            'Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll') `
-            -Message 'Producer invoked the wrong Binding validation method.'
-        Assert-True -Condition ($invocations[0] -contains ([System.IO.Path]::GetFullPath($produced))) `
-            -Message 'Binding invocation did not use the exact Unity project root.'
-        Assert-True -Condition ($invocations[0] -contains 'Assets/AppUI/Settings/MainUIBindingSettings.asset') `
-            -Message 'Binding invocation did not use the exact project settings asset.'
-        Assert-True -Condition ($invocations[1] -contains '-runTests') `
-            -Message 'Second Unity invocation did not run Unity Test Runner.'
-        Assert-True -Condition ($invocations[1] -contains 'Joi.H.AppUI.Tests.Lifecycle') `
-            -Message 'Unity Test Runner did not receive the bounded lifecycle filter.'
         $bindingOutputIndex = [Array]::IndexOf($invocations[0], '-appUIValidationReportPath')
         $runtimeOutputIndex = [Array]::IndexOf($invocations[1], '-testResults')
         Assert-True -Condition ($bindingOutputIndex -ge 0 -and $runtimeOutputIndex -ge 0) `
             -Message 'Unity commands omitted run-owned output paths.'
         $bindingRunPath = $invocations[0][$bindingOutputIndex + 1]
         $runtimeRunPath = $invocations[1][$runtimeOutputIndex + 1]
+        $validationRunRoot = Split-Path -Parent $bindingRunPath
+        $expectedBindingArguments = @(
+            '-batchmode', '-nographics', '-quit',
+            '-projectPath', ([System.IO.Path]::GetFullPath($produced)),
+            '-executeMethod', 'Joi.H.AppUI.Editor.Binding.UIBindingValidationCommandLine.ValidateAll',
+            '-appUIBindingSettingsPath', 'Assets/AppUI/Settings/MainUIBindingSettings.asset',
+            '-appUIValidationReportPath', (Join-Path $validationRunRoot 'app-ui-binding-validation.v2.json'),
+            '-logFile', (Join-Path $validationRunRoot 'binding-unity.log')
+        )
+        $expectedRuntimeArguments = @(
+            '-batchmode', '-nographics', '-quit',
+            '-projectPath', ([System.IO.Path]::GetFullPath($produced)),
+            '-runTests', '-testPlatform', 'EditMode',
+            '-testFilter', 'Joi.H.AppUI.Tests.Lifecycle',
+            '-testResults', (Join-Path $validationRunRoot 'app-ui-lifecycle-tests.xml'),
+            '-logFile', (Join-Path $validationRunRoot 'runtime-unity.log')
+        )
+        Assert-Equal -Expected ([string]::Join([char]0, $expectedBindingArguments)) `
+            -Actual ([string]::Join([char]0, $invocations[0])) `
+            -Message 'Binding Unity argument array was not exact or ordered.'
+        Assert-Equal -Expected ([string]::Join([char]0, $expectedRuntimeArguments)) `
+            -Actual ([string]::Join([char]0, $invocations[1])) `
+            -Message 'Runtime Unity argument array was not exact or ordered.'
         Assert-True -Condition ($bindingRunPath -ne $runtimeRunPath -and
             -not (Test-Path -LiteralPath $bindingRunPath) -and
             -not (Test-Path -LiteralPath $runtimeRunPath)) `
