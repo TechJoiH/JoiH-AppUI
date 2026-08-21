@@ -1,0 +1,6 @@
+interface:
+  display_name: "Integrate Joi.H AppUI"
+  short_description: "Inspect and integrate AppUI into a Unity project"
+  default_prompt: "Use $integrating-joih-appui to inspect this Unity project and build the next safe AppUI integration step."
+policy:
+  allow_implicit_invocation: true
