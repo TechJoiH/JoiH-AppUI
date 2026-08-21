@@ -17,7 +17,7 @@
 3. Task 3：通过标准 Skill 初始化器创建 `Skills~/integrating-joih-appui`，补齐 `SKILL.md` 与 `agents/openai.yaml`。
 4. Task 4：实现只读项目检查器和独立验证证明生成器；覆盖安装状态、版本引用、宿主边界、Binding/Runtime 证据、扫描预算、路径与秘密信息安全。
 5. Task 5：完成安装、宿主边界、运行时根节点三篇核心接入文档，并加入 Skill 路由。
-6. 维护者 Skill 已在开发机单独保存；公开仓库只包含面向用户的接入 Skill。
+6. 维护者 Skill 仍与公开用户 Skill 分离，并以换机归档形式保存于 `Handoff~/2026-08-21/maintaining-joih-appui-08f03ef.zip`。
 
 ## 最近验证证据
 
@@ -56,13 +56,15 @@ git clone https://github.com/TechJoiH/JoiH-AppUI.git
 Set-Location JoiH-AppUI
 git fetch origin codex/appui-skill-handoff-2026-08-21
 git switch --track origin/codex/appui-skill-handoff-2026-08-21
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\skills"
+Expand-Archive -LiteralPath ".\Handoff~\2026-08-21\maintaining-joih-appui-08f03ef.zip" -DestinationPath "$env:USERPROFILE\.codex\skills" -Force
 ```
 
-接管后先阅读本文件和实施计划，从“独立复核 Task 5”开始。不要复用已有的 `v0.4.0-pre.1` Tag；它与当前候选提交冲突，而且本快照不包含任何发布授权。
+确认 `$env:USERPROFILE\.codex\skills\maintaining-joih-appui\SKILL.md` 存在并重启 Codex。然后先阅读本文件和实施计划，从“独立复核 Task 5”开始。不要复用已有的 `v0.4.0-pre.1` Tag；它与当前候选提交冲突，而且本快照不包含任何发布授权。
 
 ## 边界
 
 - 本快照不修改 `main`。
 - 本快照不创建 PR、Tag 或 GitHub Release。
-- 本快照不把维护者本地 Skill 混入公开用户 Skill。
+- 维护者 Skill 仅作为 `Handoff~` 下的换机归档，不混入公开用户 Skill 的运行目录或 UPM 内容。
 - 继续工作时保持 AppUI Core 的接口边界，不恢复 UniTask、Odin 或强制 TMP 依赖。
